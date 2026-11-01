@@ -34,6 +34,8 @@ internal class DpadSeekPreview {
         distanceInDirection = (distanceInDirection + kotlin.math.abs(position - previous)).coerceAtMost(900_000)
         return position
     }
+    /** A fresh press of the key (not a held repeat) starts again from precise one-second steps. */
+    fun newPress() { distanceInDirection = 0 }
     fun finish(cancelled: Boolean = false): Long? {
         val result = if (active && !cancelled) position else null
         active = false

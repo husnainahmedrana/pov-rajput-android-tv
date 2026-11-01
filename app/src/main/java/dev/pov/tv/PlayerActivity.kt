@@ -50,6 +50,9 @@ class PlayerActivity : Activity() {
     private var gestures: PhonePlayerGestures? = null
     private val seekPreview = DpadSeekPreview()
     private var seekKey = KeyEvent.KEYCODE_UNKNOWN
+    /** Set when a horizontal key goes down fresh (not a held repeat), so steps restart at one second. */
+    private var pressStarted = false
+    private val commitSeek = Runnable { finishSeek() }
     private var resumeAfterSeek = false
     private lateinit var seekLabel: TextView
     private lateinit var seekThumb: ImageView
@@ -145,7 +148,10 @@ class PlayerActivity : Activity() {
         timeline.addListener(object : androidx.media3.ui.TimeBar.OnScrubListener {
             override fun onScrubStart(timeBar: androidx.media3.ui.TimeBar, position: Long) = showThumb(position)
             override fun onScrubMove(timeBar: androidx.media3.ui.TimeBar, position: Long) = showThumb(position)
-            override fun onScrubStop(timeBar: androidx.media3.ui.TimeBar, position: Long, canceled: Boolean) = showThumb(null)
+            // The preview stays up a moment after the finger lifts, so the scene it landed on can be seen.
+            override fun onScrubStop(timeBar: androidx.media3.ui.TimeBar, position: Long, canceled: Boolean) {
+                view.removeCallbacks(hideCard); view.postDelayed(hideCard, SEEK_LINGER_MS)
+            }
         })
         if (DeviceLayout.phone) {
             // A view focusable in touch mode spends a tap on taking focus, so taps never reached the
@@ -558,6 +564,9 @@ class PlayerActivity : Activity() {
             resumeAfterSeek = exo.playWhenReady
             exo.pause()
         }
+        view.removeCallbacks(commitSeek)
+        if (seekKey == KeyEvent.KEYCODE_UNKNOWN || pressStarted) seekPreview.newPress()
+        pressStarted = false
         seekKey = keyCode
         seekPreview.step(if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1)
         controls.show(); timeline.requestFocus()
@@ -603,7 +612,9 @@ class PlayerActivity : Activity() {
     }
 
     /** The Seekr thumbnail nearest [position] above the seek label, or hide it when null. */
+    private val hideCard = Runnable { showThumb(null) }
     private fun showThumb(position: Long?, offset: String? = null) {
+        view.removeCallbacks(hideCard)
         if (position == null) { seekrFrame?.cancel(); seekCard.visibility = View.GONE; seekThumb.setImageDrawable(null); return }
         val track = activeSeekr
         // The card carries the time, so the big centre label steps aside. Without a Seekr picture the card is just the
@@ -654,6 +665,7 @@ class PlayerActivity : Activity() {
     }
 
     private fun finishSeek(cancelled: Boolean = false, restorePlayback: Boolean = true) {
+        view.removeCallbacks(commitSeek)
         if (!seekPreview.active) return
         val target = seekPreview.finish(cancelled)
         timeline.previewPosition = null
@@ -695,15 +707,24 @@ class PlayerActivity : Activity() {
         if (backHold.intercept(event)) return true
         val horizontal = event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT || event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
         if (event.action == KeyEvent.ACTION_UP && horizontal && seekPreview.active) {
-            if (event.keyCode == seekKey) finishSeek(cancelled = event.isCanceled)
+            // Releasing the key leaves the preview up for a moment, so the scene can be seen and another press can
+            // fine-tune it; the video jumps once the presses stop (or at once with OK).
+            if (event.keyCode == seekKey) {
+                if (event.isCanceled) finishSeek(cancelled = true)
+                else { view.removeCallbacks(commitSeek); view.postDelayed(commitSeek, SEEK_LINGER_MS) }
+            }
             return true
         }
         if (event.action == KeyEvent.ACTION_DOWN && seekPreview.active && !horizontal) {
             if (event.keyCode == KeyEvent.KEYCODE_BACK) {
                 finishSeek(cancelled = true); revealKey = KeyEvent.KEYCODE_BACK; return true
             }
+            if (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER || event.keyCode == KeyEvent.KEYCODE_ENTER) {
+                finishSeek(); revealKey = event.keyCode; return true // OK lands on the previewed scene now
+            }
             finishSeek()
         }
+        if (event.action == KeyEvent.ACTION_DOWN && horizontal && event.repeatCount == 0) pressStarted = true
         if (event.action == KeyEvent.ACTION_DOWN && horizontal && activeDialog?.isShowing != true &&
             (seekPreview.active || !view.isControllerFullyVisible || currentFocus?.id == androidx.media3.ui.R.id.exo_progress || currentFocus === view)) {
             if (beginOrMoveSeek(event.keyCode)) return true
@@ -819,6 +840,8 @@ class PlayerActivity : Activity() {
 
     companion object {
         private const val SEEKR_LOOKUP_MS = 3_000L
+        /** How long the seek preview stays after the key or finger is released, before the video jumps there. */
+        private const val SEEK_LINGER_MS = 500L
         /** A seek may land up to this far from its target to reach a keyframe. */
         const val SEEK_SNAP_MS = 2_000L
         const val QUIET_SEEK_MS = 4_000L

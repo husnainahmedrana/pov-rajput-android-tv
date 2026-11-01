@@ -67,6 +67,15 @@ class DpadSeekPreviewTest {
         assertEquals(1_942_000, seek.step(1))
     }
 
+    @Test fun `a fresh press in the same seek starts again from one second steps`() {
+        val seek = DpadSeekPreview()
+        seek.begin(0, 7_200_000)
+        repeat(12) { seek.step(1) } // 10 x 1 s, then 2 x 5 s
+        assertEquals(20_000, seek.position)
+        seek.newPress()
+        assertEquals(21_000, seek.step(1))
+    }
+
     @Test fun `timer always includes seconds and a long movie includes hours`() {
         assertEquals("00:00", DpadSeekPreview.time(0))
         assertEquals("01:01", DpadSeekPreview.time(61_999))
