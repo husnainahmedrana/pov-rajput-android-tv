@@ -1559,24 +1559,23 @@ class MainActivity : Activity() {
         view.setTag(R.id.pov_continue_identity, identity?.let(::identityKey) ?: key)
         view.setOnLongClickListener {
             val account = wetrakr.accountRevision()
-            AlertDialog.Builder(this).setTitle(title)
-                .setItems(if (identity != null) arrayOf("Open Media", "Remove from Continue Watching", "☰  Streams") else arrayOf("Open Media", "Remove from Continue Watching")) { _, choice ->
-                    if (choice == 2 && identity != null) { navigate { showSources(identity, manual = true) }; return@setItems }
-                    if (choice == 0) {
-                        if (identity != null) {
-                            if (identity.type == "series") selectedSeasons[identity.imdbId] = identity.season
-                            navigate { detailsFor(MediaItemData(identity.imdbId, identity.type, identity.title), identity.takeIf { it.type == "series" }) }
-                        } else navigate { selectedCloud() }
-                        return@setItems
-                    }
-                    if (identity != null && wetrakr.connected()) {
-                        load(generation, {
-                            wetrakr.removeContinueWatching(identity, account)
-                            wetrakrOutbox.discard(identity)
-                            history.hide(key, identity)
-                        }) { remoteProgress.remove(identityKey(identity)); toast("Removed from ${wetrakr.name} Continue Watching"); removeContinueViews(view) }
-                    } else { history.hide(key, identity); toast("Removed from Continue Watching on this TV"); removeContinueViews(view) }
-                }.setNegativeButton("Cancel", null).show()
+            val options = mutableListOf<Pair<String, () -> Unit>>("Open Media" to {
+                if (identity != null) {
+                    if (identity.type == "series") selectedSeasons[identity.imdbId] = identity.season
+                    navigate { detailsFor(MediaItemData(identity.imdbId, identity.type, identity.title), identity.takeIf { it.type == "series" }) }
+                } else navigate { selectedCloud() }
+            })
+            if (identity != null) options += "☰  Streams" to { navigate { showSources(identity, manual = true) } }
+            options += "Remove from Continue Watching" to {
+                if (identity != null && wetrakr.connected()) {
+                    load(generation, {
+                        wetrakr.removeContinueWatching(identity, account)
+                        wetrakrOutbox.discard(identity)
+                        history.hide(key, identity)
+                    }) { remoteProgress.remove(identityKey(identity)); toast("Removed from ${wetrakr.name} Continue Watching"); removeContinueViews(view) }
+                } else { history.hide(key, identity); toast("Removed from Continue Watching on this TV"); removeContinueViews(view) }
+            }
+            holdMenu(title, options)
             true
         }
     }
@@ -2411,8 +2410,9 @@ class MainActivity : Activity() {
         }, margin(-1, -2, top = 5))
         row.addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
         row.setOnFocusChangeListener { view, focused ->
-            view.background = rounded(if (focused) withAlpha(Color.WHITE, 46) else withAlpha(Color.WHITE, 14), 6)
-            still.foreground = if (focused) FocusRingDrawable(Color.WHITE, dp(4).toFloat(), true, dp(1).toFloat()) else null
+            // One highlight glides up and down the episode list instead of each row lighting up on its own.
+            listGlide(view)?.focusChanged(view, focused)
+            FadeDrawable.foreground(still, if (focused) FocusRingDrawable(Color.WHITE, dp(4).toFloat(), true, dp(1).toFloat()) else null)
         }
         row.setOnClickListener { if (future) toast("This episode has not been released yet") else navigate { showSources(identity) } }
         row.pressable(6)
@@ -3922,8 +3922,9 @@ class MainActivity : Activity() {
         }
         frame.foreground = if (flix) null else FocusRingDrawable(theme.palette.border, dp(theme.layout.cornerRadiusDp).toFloat(), false, dp(1).toFloat())
         frame.setOnFocusChangeListener { view, focused ->
-            view.foreground = if (flix) { if (focused) FocusRingDrawable(Color.WHITE, dp(theme.layout.cornerRadiusDp).toFloat(), true, dp(1).toFloat()) else null }
-                else FocusRingDrawable(if (focused) accent else theme.palette.border, dp(theme.layout.cornerRadiusDp).toFloat(), focused, dp(1).toFloat())
+            // The white outline cross-fades: the old card's fades out while the new one's fades in.
+            if (flix) FadeDrawable.foreground(view, if (focused) FocusRingDrawable(Color.WHITE, dp(theme.layout.cornerRadiusDp).toFloat(), true, dp(1).toFloat()) else null)
+            else view.foreground = FocusRingDrawable(if (focused) accent else theme.palette.border, dp(theme.layout.cornerRadiusDp).toFloat(), focused, dp(1).toFloat())
             view.animate().scaleX(if (focused) theme.layout.focusScale else 1f).scaleY(if (focused) theme.layout.focusScale else 1f).setDuration(130).start()
             if (focused) scheduleFeature(item)
         }
@@ -3931,6 +3932,13 @@ class MainActivity : Activity() {
         // Holding OK gives the same choices everywhere: play, pick a stream by hand, details, mark watched.
         frame.setOnLongClickListener { titleMenu(item, action); true }
         return frame.pressable(theme.layout.cornerRadiusDp)
+    }
+
+    private val listGlides = java.util.WeakHashMap<ViewGroup, SlidingFocusPill>()
+    /** The gliding highlight of the list holding [row] (episodes), created the first time one of its rows takes focus. */
+    private fun listGlide(row: View): SlidingFocusPill? {
+        val list = row.parent as? ViewGroup ?: return null
+        return listGlides.getOrPut(list) { SlidingFocusPill(list, fill = withAlpha(Color.WHITE, 40), radius = dp(6).toFloat(), fadeText = false) }
     }
 
     /** One hold-OK menu for a title anywhere (rows, search, anime): [open] is what a normal press does. */
@@ -3971,10 +3979,7 @@ class MainActivity : Activity() {
         holdMenu("${identity.title} · $number", options)
     }
 
-    private fun holdMenu(title: String, options: List<Pair<String, () -> Unit>>) {
-        AlertDialog.Builder(this).setTitle(title).setItems(options.map { it.first }.toTypedArray()) { _, index -> options[index].second() }
-            .setNegativeButton("Cancel", null).show()
-    }
+    private fun holdMenu(title: String, options: List<Pair<String, () -> Unit>>) { HoldMenu.show(this, title, options) }
 
     private fun image(view: ImageView, address: String, keep: Boolean = false, feature: Boolean = false, loaded: ((Boolean) -> Unit)? = null) {
         if (!address.startsWith("https://")) { loaded?.invoke(false); return }

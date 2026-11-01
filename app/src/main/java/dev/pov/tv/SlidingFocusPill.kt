@@ -17,47 +17,53 @@ import android.widget.ImageView
 import android.widget.TextView
 
 /**
- * The player's button-row highlight as one white pill that glides from the old button to the new one, stretching to
- * each button's width, while text and icon colours cross-fade. Drawn as the row's background, behind the buttons.
- * Each move restarts from where the pill is, so holding a key never queues animations.
+ * One highlight that glides from the old focused child of [row] to the new one, stretching to its size, drawn as the
+ * row's background behind the children. Used for the player's button row (white pill, text and icons cross-fading to
+ * black), the episode list and the hold-OK menu. Each move restarts from where the highlight is, so holding a key never
+ * queues animations. Children must be direct children of [row].
  */
-internal class SlidingFocusPill(private val row: ViewGroup, private val buttons: List<View>) {
-    private val pill = PillDrawable()
+internal class SlidingFocusPill(
+    private val row: ViewGroup,
+    buttons: List<View> = emptyList(),
+    fill: Int = Color.WHITE,
+    /** Corner radius in px; null rounds the ends fully (a pill). */
+    radius: Float? = null,
+    /** Text and icons of [buttons] fade white → black under the highlight. */
+    private val fadeText: Boolean = true,
+) {
+    private val pill = PillDrawable(fill, radius)
     private var motion: ValueAnimator? = null
     private val colours = HashMap<View, ValueAnimator>()
 
     init {
         row.background = pill
-        buttons.forEach { button ->
-            button.background = null
-            paint(button, Color.WHITE)
-        }
+        if (fadeText) buttons.forEach { button -> button.background = null; paint(button, Color.WHITE) }
     }
 
-    /** Call from each button's focus listener. */
-    fun focusChanged(button: View, focused: Boolean) {
-        fade(button, if (focused) Color.BLACK else Color.WHITE)
-        if (focused) moveTo(button)
-        else row.post { if (buttons.none { it.isFocused }) animateTo(pill.rect, 0) }
+    /** Call from each child's focus listener. */
+    fun focusChanged(child: View, focused: Boolean) {
+        if (fadeText) fade(child, if (focused) Color.BLACK else Color.WHITE)
+        if (focused) moveTo(child)
+        else row.post { if (!row.hasFocus()) animateTo(pill.rect, 0) }
     }
 
-    private fun moveTo(button: View) {
-        val target = RectF(button.left.toFloat(), button.top.toFloat(), button.right.toFloat(), button.bottom.toFloat())
-        // Arriving from outside the row (the seek bar, or controls just shown): appear in place rather than slide in.
-        if (pill.fill == 0) { motion?.cancel(); pill.rect.set(target) }
+    private fun moveTo(child: View) {
+        val target = RectF(child.left.toFloat(), child.top.toFloat(), child.right.toFloat(), child.bottom.toFloat())
+        // Arriving from outside (the seek bar, a season tab, controls just shown): appear in place rather than slide in.
+        if (pill.shown == 0) { motion?.cancel(); pill.rect.set(target) }
         animateTo(target, 255)
     }
 
-    private fun animateTo(target: RectF, fill: Int) {
+    private fun animateTo(target: RectF, level: Int) {
         motion?.cancel()
-        val from = RectF(pill.rect); val fromFill = pill.fill
+        val from = RectF(pill.rect); val fromLevel = pill.shown
         motion = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = MOVE_MS; interpolator = DecelerateInterpolator(1.6f)
             addUpdateListener {
                 val t = it.animatedValue as Float
                 pill.rect.set(from.left + (target.left - from.left) * t, from.top + (target.top - from.top) * t,
                     from.right + (target.right - from.right) * t, from.bottom + (target.bottom - from.bottom) * t)
-                pill.fill = (fromFill + (fill - fromFill) * t).toInt()
+                pill.shown = (fromLevel + (level - fromLevel) * t).toInt()
                 pill.invalidateSelf()
             }
             start()
@@ -81,15 +87,17 @@ internal class SlidingFocusPill(private val row: ViewGroup, private val buttons:
         if (button is ImageView) button.imageTintList = tint
     }
 
-    private class PillDrawable : Drawable() {
+    private class PillDrawable(private val fill: Int, private val radius: Float?) : Drawable() {
         val rect = RectF()
-        var fill = 0
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+        /** 0 hidden … 255 fully shown; multiplies the fill colour's own alpha. */
+        var shown = 0
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         override fun draw(canvas: Canvas) {
-            if (fill <= 0 || rect.isEmpty) return
-            paint.alpha = fill
-            val radius = rect.height() / 2
-            canvas.drawRoundRect(rect, radius, radius, paint)
+            if (shown <= 0 || rect.isEmpty) return
+            paint.color = fill
+            paint.alpha = Color.alpha(fill) * shown / 255
+            val r = radius ?: (rect.height() / 2)
+            canvas.drawRoundRect(rect, r, r, paint)
         }
         override fun setAlpha(alpha: Int) {}
         override fun setColorFilter(colorFilter: ColorFilter?) {}
