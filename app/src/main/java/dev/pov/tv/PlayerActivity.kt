@@ -841,7 +841,7 @@ class PlayerActivity : Activity() {
     companion object {
         private const val SEEKR_LOOKUP_MS = 3_000L
         /** How long the seek preview stays after the key or finger is released, before the video jumps there. */
-        private const val SEEK_LINGER_MS = 500L
+        private const val SEEK_LINGER_MS = 1_000L
         /** A seek may land up to this far from its target to reach a keyframe. */
         const val SEEK_SNAP_MS = 2_000L
         const val QUIET_SEEK_MS = 4_000L
