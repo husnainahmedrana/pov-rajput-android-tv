@@ -826,11 +826,15 @@ class PlayerActivity : Activity() {
             if (target != null) {
                 timeline.setPosition(target)
                 val from = exo.currentPosition
-                // Video decodes forward from a keyframe, so an exact spot inside the buffer can take the onn a second
-                // to reach. Landing on a nearby keyframe in the direction of the seek makes it near-instant.
-                val tolerance = SEEK_SNAP_MS * 1000
-                exo.setSeekParameters(if (target >= from) androidx.media3.exoplayer.SeekParameters(0, tolerance)
-                    else androidx.media3.exoplayer.SeekParameters(tolerance, 0))
+                // Video starts from a keyframe; landing off one makes the TV decode forward to the spot, which is slow even
+                // when that video is loaded. So the seek lands on the keyframe closest to the target inside a window that
+                // always moves the way the viewer pressed: never back past where they were, at most 3 s beyond the target
+                // and 5 s short of it. A short tap into loaded video then plays at once.
+                val distance = kotlin.math.abs(target - from)
+                val short = minOf(SEEK_SHORT_OF_MS, (distance - SEEK_KEEP_MOVING_MS).coerceAtLeast(0)) * 1000
+                val beyond = SEEK_SNAP_MS * 1000
+                exo.setSeekParameters(if (target >= from) androidx.media3.exoplayer.SeekParameters(short, beyond)
+                    else androidx.media3.exoplayer.SeekParameters(beyond, short))
                 if (target >= from - ReadAheadPreferences.BACK_BUFFER_MS && target <= exo.bufferedPosition)
                     quietSeekUntil = android.os.SystemClock.uptimeMillis() + QUIET_SEEK_MS
                 exo.seekTo(target)
@@ -996,8 +1000,11 @@ class PlayerActivity : Activity() {
         private const val SEEK_LINGER_MS = 1_000L
         private const val CARD_FADE_MS = 200L
         private const val STREAMS_SHOWN = 60
-        /** A seek may land up to this far from its target to reach a keyframe. */
-        const val SEEK_SNAP_MS = 2_000L
+        /** A seek may land up to this far past its target, on a keyframe. */
+        const val SEEK_SNAP_MS = 3_000L
+        /** ...or up to this far short of it, but never back past where playback was. */
+        const val SEEK_SHORT_OF_MS = 5_000L
+        const val SEEK_KEEP_MOVING_MS = 500L
         const val QUIET_SEEK_MS = 4_000L
         val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
         val TRACK_TYPES = listOf(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_TEXT)
