@@ -1878,17 +1878,19 @@ class MainActivity : Activity() {
             selector.contentDescription = selector.text; selector.tag = "anime-group:$key"
             host.removeAllViews()
             host.addView(text("${result.anime.title} · ${group.title}", 17, ink, true), margin(-1, -2, top = 15, bottom = 9))
-            group.episodes.forEach { choice ->
+            // Flix: the same sideways row of wide episode cards as shows, with the header following the focused episode.
+            if (flix) host.addView(episodeStrip(result.media, group.episodes.map { choice ->
+                Triple(choice.identity, EpisodeData(choice.identity.season, choice.identity.episode, choice.title, choice.released, choice.thumbnail),
+                    "Episode ${choice.catalogEpisode}")
+            }, null), margin(-1, -2))
+            else group.episodes.forEach { choice ->
                 val identity = choice.identity
                 val extra = buildList {
                     if (choice.catalogEpisode != identity.episode) add("Part episode ${choice.catalogEpisode}")
                     choice.absoluteEpisode?.let { add("Overall episode $it") }
                     if (choice.released.isNotBlank()) add(choice.released.take(10))
                 }.joinToString(" · ")
-                // Flix shows each anime episode with its still, like regular series.
-                if (flix) host.addView(episodeRow(identity, EpisodeData(identity.season, identity.episode, choice.title, choice.released, choice.thumbnail),
-                    result.media, "Episode ${choice.catalogEpisode}", extra), margin(-1, if (DeviceLayout.phone) -2 else 108, bottom = 8))
-                else host.addView(episodeButton(identity, choice.title, choice.released, extra), margin(-1, 62, bottom = 7))
+                host.addView(episodeButton(identity, choice.title, choice.released, extra), margin(-1, 62, bottom = 7))
             }
             focusAfterRender(generation)
         }
@@ -2287,10 +2289,14 @@ class MainActivity : Activity() {
         }
         if (episode != null) { play("▶  Play S${episode.season} E${episode.episode}", 180) { navigate { showSources(episode) } }; streams(episode) }
         else if (flix) playTarget(result)?.let { (target, _) ->
+            // On a show page both follow the episode focused in the row below (see episodeFocused).
+            episodeTarget = target
             play("▶  Play S${target.season} E${target.episode}", 200) {
-                navigate { showSources(target) }
+                navigate { showSources(episodeTarget ?: target) }
             }
-            streams(target)
+            detailsPlayButton = actions.getChildAt(actions.childCount - 1) as? TextView
+            actions.addView(button("☰  Streams") { navigate { showSources(episodeTarget ?: target, manual = true) } }
+                .apply { gravity = Gravity.CENTER; tag = "details-streams" }, margin(140, 44, right = 12))
         }
         // The flix details page already shows the full synopsis.
         if (result.description.isNotBlank() && !flix) actions.addView(button("Synopsis") {
@@ -2330,10 +2336,12 @@ class MainActivity : Activity() {
             host.removeAllViews()
             if (flix) tabs.forEach { (value, tab) -> paintSeasonTab(tab, value == season, tab.hasFocus()) }
             else host.addView(text(label, 18, ink, true), margin(-1, -2, top = 16, bottom = 10))
-            episodes.forEach { episode ->
+            if (flix) host.addView(episodeStrip(result, episodes.map { episode ->
+                Triple(PlaybackIdentity(result.imdbId, "series", result.title, episode.season, episode.episode), episode, "S${episode.season} · E${episode.episode}")
+            }, episodeTarget), margin(-1, -2))
+            else episodes.forEach { episode ->
                 val identity = PlaybackIdentity(result.imdbId, "series", result.title, episode.season, episode.episode)
-                if (flix) host.addView(episodeRow(identity, episode, result), margin(-1, -2, bottom = 8))
-                else host.addView(episodeButton(identity, episode.title, episode.released, episode.released.take(10)), margin(-1, 62, bottom = 7))
+                host.addView(episodeButton(identity, episode.title, episode.released, episode.released.take(10)), margin(-1, 62, bottom = 7))
             }
             // A later season slides in from the right, an earlier one from the left.
             if (flix && previous != null) {
@@ -2351,8 +2359,9 @@ class MainActivity : Activity() {
             }.setNegativeButton("Cancel", null).show()
         }
         if (flix) {
-            // Seasons sit in a row of tabs instead of a pop-up chooser.
+            // The episode row comes first, right under the buttons; the seasons sit in a row of tabs beneath it.
             body.addView(text("Episodes", 20, ink, true), margin(-1, -2, top = 18, bottom = 4))
+            body.addView(host, margin(-1, -2, top = 4))
             val row = horizontalRow()
             seasons.forEach { season ->
                 val tab = text(if (season == 0) "Specials" else "Season $season", 13, ink, true).apply {
@@ -2365,15 +2374,76 @@ class MainActivity : Activity() {
                 tabs += season to tab
                 row.addView(tab, margin(-2, 36, right = 8))
             }
-            body.addView(host, margin(-1, -2, top = 8))
-            tabs.firstOrNull()?.second?.let { first ->
-                first.id = View.generateViewId()
-                (0 until body.childCount).map(body::getChildAt).filterIsInstance<ViewGroup>()
-                    .firstOrNull { row -> (0 until row.childCount).any { (row.getChildAt(it).tag as? String)?.startsWith("primary:") == true } }
-                    ?.let { actions -> (actions.childCount - 1 downTo 0).map(actions::getChildAt).firstOrNull { it.isFocusable }?.nextFocusRightId = first.id }
-            }
         } else { body.addView(selector, margin(370, 44, top = 15)); body.addView(host) }
         render(EpisodePresentation.selectedSeason(result.episodes, selectedSeasons[result.imdbId])!!)
+    }
+
+    /** The episode the show page's Play and Streams buttons act on: the focused one in the episode row. */
+    private var episodeTarget: PlaybackIdentity? = null
+    private var detailsPlayButton: TextView? = null
+
+    /**
+     * A show's episodes as a sideways row of wide cards (still, title, number). Focusing one updates the page header:
+     * its number and title, its synopsis, and the Play / Streams targets. The row opens scrolled to [focusOn].
+     */
+    private fun episodeStrip(show: MediaItemData, items: List<Triple<PlaybackIdentity, EpisodeData, String>>, focusOn: PlaybackIdentity?): View {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; setPadding(dp(4), dp(10), dp(24), dp(12)) }
+        val scroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; isFocusable = false; clipChildren = false; clipToPadding = false; addView(row) }
+        val (width, height) = if (DeviceLayout.phone) 210 to 118 else 250 to 141
+        items.forEach { (identity, episode, label) -> row.addView(episodeCard(identity, episode, show, label), margin(width, height, right = 14)) }
+        focusOn?.let { target ->
+            val index = items.indexOfFirst { it.first.season == target.season && it.first.episode == target.episode }
+            if (index > 0) scroll.post { row.getChildAt(index)?.let { scroll.scrollTo((it.left - dp(4)).coerceAtLeast(0), 0) } }
+            items.getOrNull(index.coerceAtLeast(0))?.let { (identity, episode, _) -> body.post { episodeFocused(identity, episode, show, animate = false) } }
+        }
+        return scroll
+    }
+
+    private fun episodeCard(identity: PlaybackIdentity, episode: EpisodeData, show: MediaItemData, label: String): View {
+        val future = EpisodePresentation.future(episode.released)
+        val frame = FrameLayout(this).apply {
+            isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true; clipChildren = false
+            tag = "episode:${identity.imdbId}:${identity.season}:${identity.episode}"
+            contentDescription = "$label. ${episode.title}" + if (future) ". Not yet released" else ""
+        }
+        val artFrame = FrameLayout(this).apply { background = rounded(panel, 8); clipToOutline = true }
+        val art = FixedSizeImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+        artFrame.addView(art, FrameLayout.LayoutParams(-1, -1))
+        image(art, thumbnail(episode.thumbnail.ifBlank { backdropFor(show) }))
+        artFrame.addView(View(this).apply { background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(Color.TRANSPARENT, Color.TRANSPARENT, 0xD9000000.toInt())) }, FrameLayout.LayoutParams(-1, -1))
+        val copy = column().apply { setPadding(dp(10), 0, dp(10), dp(8)) }
+        copy.addView(text(episode.title.ifBlank { label }, 13, Color.WHITE, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2))
+        copy.addView(text(if (future) "$label · Not yet released" else label, 11, 0xFFD0D0D0.toInt()), margin(-1, -2, top = 2))
+        artFrame.addView(copy, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        frame.addView(artFrame, FrameLayout.LayoutParams(-1, -1))
+        if (future) artFrame.alpha = 0.55f
+        frame.setOnFocusChangeListener { view, focused ->
+            val glide = posterGlide(view, radius = 8, scale = 1.05f)
+            if (glide != null) glide.focusChanged(view, focused)
+            view.animate().scaleX(if (focused) 1.05f else 1f).scaleY(if (focused) 1.05f else 1f).setDuration(130).start()
+            if (focused) episodeFocused(identity, episode, show)
+        }
+        frame.setOnClickListener { if (future) toast("This episode has not been released yet") else navigate { showSources(identity) } }
+        if (!future) frame.setOnLongClickListener { episodeMenu(identity, "S${identity.season} E${identity.episode}"); true }
+        return frame.pressable(8)
+    }
+
+    /** The header follows the focused episode: its number and title, its synopsis, and what Play and Streams open. */
+    private fun episodeFocused(identity: PlaybackIdentity, episode: EpisodeData, show: MediaItemData, animate: Boolean = true) {
+        episodeTarget = identity
+        val copy = body.findViewWithTag<LinearLayout>("feature-copy") ?: return
+        val description = copy.findViewWithTag<TextView>("feature-description")
+        val line = copy.findViewWithTag<TextView>("episode-line") ?: text("", 15, Color.WHITE, true).apply {
+            tag = "episode-line"; maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+            setShadowLayer(dp(4).toFloat(), 0f, 0f, 0xB0000000.toInt())
+        }.also { copy.addView(it, (if (description != null) copy.indexOfChild(description) else copy.childCount), margin(-1, -2, top = 10)) }
+        line.text = "S${identity.season} · E${identity.episode}" + if (episode.title.isNotBlank()) "   ${episode.title}" else ""
+        description?.text = episode.overview.ifBlank { show.description }
+        if (animate) listOfNotNull<View>(line, description).forEach { view ->
+            view.animate().cancel(); view.alpha = 0.35f; view.animate().alpha(1f).setDuration(140).start()
+        }
+        detailsPlayButton?.takeIf { it.isAttachedToWindow }?.text = "▶  Play S${identity.season} E${identity.episode}"
     }
 
     private fun paintSeasonTab(tab: TextView, selected: Boolean, focused: Boolean) {
