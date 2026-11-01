@@ -30,6 +30,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerView
+import dev.pov.tv.data.PlaybackIdentity
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
@@ -83,13 +84,12 @@ class PlayerActivity : Activity() {
     private var quietSeekUntil = 0L
     private val splashHandler = Handler(Looper.getMainLooper())
     private val showSplashLater = Runnable { setSplash(true) }
-    /** With the mini player off there is nowhere to browse to while the video plays, so Browse leaves the row. */
     private val miniPlayer by lazy { MiniPlayerPreferences(this).enabled }
-    private val rowIds by lazy {
-        listOf(androidx.media3.ui.R.id.exo_rew, androidx.media3.ui.R.id.exo_play_pause,
-            androidx.media3.ui.R.id.exo_ffwd, R.id.pov_audio, R.id.pov_speed, R.id.pov_browse, R.id.pov_stop)
-            .filter { miniPlayer || it != R.id.pov_browse }
-    }
+    /** pov_browse is the Streams button: the title's other links, over the playing video. */
+    private val rowIds = listOf(androidx.media3.ui.R.id.exo_rew, androidx.media3.ui.R.id.exo_play_pause,
+        androidx.media3.ui.R.id.exo_ffwd, R.id.pov_audio, R.id.pov_speed, R.id.pov_browse, R.id.pov_stop)
+    private var streamsDialog: Dialog? = null
+    private val streamsChanged: () -> Unit = { if (!stopped && streamsDialog != null && streamsDialog === activeDialog && activeDialog?.isShowing == true) showStreams() }
     private val sessionListener: () -> Unit = {
         if (!stopped) {
             updateControls()
@@ -216,7 +216,7 @@ class PlayerActivity : Activity() {
         view.findViewById<View>(R.id.pov_audio).setOnClickListener { showTracks(C.TRACK_TYPE_AUDIO) }
         speedButton = view.findViewById(R.id.pov_speed)
         speedButton.setOnClickListener { showSpeed() }
-        view.findViewById<View>(R.id.pov_browse).apply { setOnClickListener { finish() }; if (!miniPlayer) visibility = View.GONE }
+        view.findViewById<Button>(R.id.pov_browse).apply { text = "Streams"; setOnClickListener { showStreams() } }
         // Stop ends the session (no mini player) and returns to the page the video was started from.
         view.findViewById<View>(R.id.pov_stop).setOnClickListener { InAppPlaybackSession.stop(); finish() }
         view.findViewById<DefaultTimeBar>(androidx.media3.ui.R.id.exo_progress).apply {
@@ -231,6 +231,7 @@ class PlayerActivity : Activity() {
         super.onStart()
         stopped = false
         InAppPlaybackSession.addListener(sessionListener)
+        StreamChoices.addListener(streamsChanged)
         InAppPlaybackSession.attachPlayerView(view)
         controls.start()
         view.removeCallbacks(endTimeTicker); view.post(endTimeTicker)
@@ -541,6 +542,49 @@ class PlayerActivity : Activity() {
                 PlayerSheetChoice("Browse while playing") { finish() },
                 PlayerSheetChoice("Stop playback") { InAppPlaybackSession.stop(); finish() }
             ))
+    }
+
+    /**
+     * The title's other links over the video. Picking one closes the player for a moment (the video carries on in the
+     * mini player) while the link is prepared, then it continues from the same spot.
+     */
+    private fun showStreams() {
+        val media = InAppPlaybackSession.playbackIdentity
+        if (media == null || !media.imdbId.startsWith("tt")) {
+            showSheet("Streams", "Other links are available for titles from POV's catalogs.", listOf(PlayerSheetChoice("Close") { activeDialog?.dismiss() }))
+            streamsDialog = activeDialog; return
+        }
+        if (!StreamChoices.has(media)) StreamChoices.searcher?.invoke(media)
+        val ours = StreamChoices.key == StreamChoices.keyOf(media)
+        val links = if (ours) StreamChoices.items else null
+        val playing = InAppPlaybackSession.mediaName
+        when {
+            links == null && ours && StreamChoices.failed ->
+                showSheet("Streams", "The link search failed. Check your connection and try again.", listOf(PlayerSheetChoice("Try again") { StreamChoices.searcher?.invoke(media); showStreams() }))
+            links == null -> showSheet("Streams", "Searching for links… they appear here in a moment.", listOf(PlayerSheetChoice("Searching…", selectable = false) {}))
+            links.isEmpty() -> showSheet("Streams", "No other links were found for this title.", listOf(PlayerSheetChoice("Close") { activeDialog?.dismiss() }))
+            else -> {
+                val choices = links.take(STREAMS_SHOWN).map { source ->
+                    val status = when {
+                        source.directUrl.isNotEmpty() -> "Direct"
+                        source.cachedServices.isNotEmpty() -> "Cached · " + source.cachedServices.joinToString(" + ") { dev.pov.tv.data.DebridServices.name(it) }
+                        else -> "Not cached"
+                    }
+                    val name = source.title.lineSequence().firstOrNull().orEmpty()
+                    val current = playing.isNotBlank() && name.isNotBlank() && playing.contains(name.take(40))
+                    PlayerSheetChoice("${source.title}\n${source.detail}  ·  $status  ·  ${source.provider}", checked = current) { pickStream(media, source) }
+                }
+                showSheet("Streams", "${links.size} links · pick one to continue from the same spot.", choices)
+            }
+        }
+        streamsDialog = activeDialog
+    }
+
+    private fun pickStream(media: PlaybackIdentity, source: dev.pov.tv.data.SourceItem) {
+        val exo = player ?: return
+        StreamChoices.pendingSwitch = Triple(media, source, exo.currentPosition)
+        activeDialog?.dismiss()
+        finish()
     }
 
     private fun showSheet(title: String, detail: String, choices: List<PlayerSheetChoice>) =
@@ -899,6 +943,7 @@ class PlayerActivity : Activity() {
         controls.stop()
         activeDialog?.dismiss(); activeDialog = null
         InAppPlaybackSession.removeListener(sessionListener)
+        StreamChoices.removeListener(streamsChanged)
         InAppPlaybackSession.detachPlayerView(view)
         super.onStop()
     }
@@ -918,6 +963,7 @@ class PlayerActivity : Activity() {
         /** How long the seek preview stays after the key or finger is released, before the video jumps there. */
         private const val SEEK_LINGER_MS = 1_000L
         private const val CARD_FADE_MS = 200L
+        private const val STREAMS_SHOWN = 60
         /** A seek may land up to this far from its target to reach a keyframe. */
         const val SEEK_SNAP_MS = 2_000L
         const val QUIET_SEEK_MS = 4_000L

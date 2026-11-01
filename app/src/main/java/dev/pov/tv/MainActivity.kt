@@ -160,6 +160,7 @@ class MainActivity : Activity() {
         weTrakrOutbox = PlaybackStore(this, Trackers.outboxKey(Trackers.WETRAKR)); simklOutbox = PlaybackStore(this, Trackers.outboxKey(Trackers.SIMKL))
         simklChosen = Trackers.selected(store) == Trackers.SIMKL
         resolver = SourceResolver(store, torbox); history = PlaybackStore(this)
+        StreamChoices.searcher = { identity -> searchStreamsInBackground(identity, delayMs = 0) }
         themePreferences = ThemePreferences(this); theme = themePreferences.selected()
         // Retire the old tracker locally; never replay its queued updates after this upgrade.
         if (store.get("tracking.wetrakr_only") != "true") {
@@ -198,6 +199,7 @@ class MainActivity : Activity() {
         currentPlaybackOptionsDialog?.dismiss(); currentPlaybackOptionsDialog = null
         searchDialog?.dismiss(); authorization?.dismiss(); apiKeyDialog?.dismiss(); miniPlayer?.let(InAppPlaybackSession::detachPlayerView)
         InAppPlaybackSession.removeListener(playbackChanged)
+        StreamChoices.searcher = null
         rotationHandler.removeCallbacksAndMessages(null); featureHandler.removeCallbacksAndMessages(null)
         worker.shutdownNow(); metadataWorker.shutdownNow(); images.shutdownNow(); featureImages.shutdownNow(); authWorker.shutdownNow(); bitmapCache.evictAll()
         super.onDestroy()
@@ -2135,6 +2137,12 @@ class MainActivity : Activity() {
             if (!publicPreview) window.decorView.postDelayed({ if (!isDestroyed) refreshWatched() }, 8_000)
             val identity = cachedPlayback ?: runCatching { data?.getStringExtra("cached_identity")?.let { PlaybackIdentity.fromJson(org.json.JSONObject(it)) } }.getOrNull()
             cachedPlayback = null; launchingPlayer = false
+            StreamChoices.pendingSwitch?.let { (switchIdentity, source, at) ->
+                StreamChoices.pendingSwitch = null
+                toast("Switching to ${source.title.lineSequence().first().take(60)}…")
+                switchStream(switchIdentity, source, at)
+                return
+            }
             if (resultCode == RESULT_FIRST_USER && identity != null) {
                 LastPlayedLinks(store).remove(identity); toast("Last stream unavailable. Finding fresh sources…"); navigate { showSources(identity) }
             }
@@ -2469,6 +2477,8 @@ class MainActivity : Activity() {
         fun tooTall(source: SourceItem) = (source.qualityHeight ?: 0) > limit
         val languages = sorting.languages
         val ordered = playable.distinctBy(TvChoiceKeys::source).let { unique -> languages?.sorted(unique, sorting.order) ?: sorting.order.sorted(unique) }.let { all -> all.filterNot(::tooTall) + all.filter(::tooTall) }
+        // The player's Streams panel offers the same links in the same order.
+        StreamChoices.publish(identity, ordered)
         ordered.forEach { source ->
             val cachedOn = source.cachedServices.map(DebridServices::name)
             val status = when {
@@ -2500,6 +2510,43 @@ class MainActivity : Activity() {
             if (first != null) { toast("Playing the top result · ${first.title.take(60)}"); resolve(first, identity) }
             else if (checkOnPlay.isNotEmpty()) resolveFirstCached(ordered.filterNot { tooTall(it) || tooBig(it) }, identity, null)
         }
+    }
+
+    /** The links of [sources] as the source list shows them: playable ones, in the viewer's order, too-tall last. */
+    private fun orderForStreams(sources: List<SourceItem>): List<SourceItem> {
+        val playable = if (DebridServices.connected(store).isEmpty()) sources.filter { it.directUrl.isNotEmpty() } else sources
+        val sorting = SourceSortPreferences(this)
+        val limit = DecoderLimits.maxHeight()
+        fun tooTall(source: SourceItem) = (source.qualityHeight ?: 0) > limit
+        return playable.distinctBy(TvChoiceKeys::source).let { unique -> sorting.languages?.sorted(unique, sorting.order) ?: sorting.order.sorted(unique) }
+            .let { all -> all.filterNot(::tooTall) + all.filter(::tooTall) }
+    }
+
+    /**
+     * Searches the playing title's links quietly for the player's Streams panel (playback from Continue Watching has
+     * only its saved link). It waits a few seconds so it never competes with the video starting.
+     */
+    private fun searchStreamsInBackground(identity: PlaybackIdentity, delayMs: Long = 6_000) {
+        if (publicPreview || StreamChoices.has(identity)) return
+        StreamChoices.begin(identity)
+        window.decorView.postDelayed({
+            worker.execute {
+                runCatching { resolver.search(identity).items }
+                    .onSuccess { found -> runOnUiThread { if (!isDestroyed) StreamChoices.publish(identity, orderForStreams(found)) } }
+                    .onFailure { StreamChoices.fail(identity) }
+            }
+        }, delayMs)
+    }
+
+    /** A link picked in the player's Streams panel: prepared like a tap in the source list, continuing at [atMs]. */
+    private fun switchStream(identity: PlaybackIdentity, source: SourceItem, atMs: Long) {
+        switchResumeMs = atMs
+        val checkOnPlay = DebridServices.connected(store).filter { it in LinkDebrids.CHECK_ON_PLAY }
+        if (!source.cached && source.directUrl.isEmpty()) {
+            val ordered = StreamChoices.items.orEmpty()
+            if (checkOnPlay.isNotEmpty()) resolveFirstCached(ordered.dropWhile { it != source }.ifEmpty { listOf(source) }, identity, source)
+            else offerTransfer(source, identity)
+        } else resolve(source, identity)
     }
 
     /** Offcloud and TorBox can download a link that isn't cached; the other services cannot. */
@@ -2924,6 +2971,9 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Set while a link picked in the player's Streams panel is being prepared: the new link continues from here. */
+    private var switchResumeMs: Long? = null
+
     private fun play(url: String, title: String, identity: PlaybackIdentity?, key: String, debridService: String? = null, resumeImmediately: Boolean = false,
                      headers: Map<String, String> = emptyMap()) {
         if (launchingPlayer) return
@@ -2932,14 +2982,15 @@ class MainActivity : Activity() {
         val remotePercent = identity?.let { remoteProgress[identityKey(it)] } ?: 0.0
         val start = {
             val intent = Intent(this, PlayerActivity::class.java).putExtra("url", url).putExtra("title", title)
-                .putExtra("identity", identity?.toJson()?.toString()).putExtra("key", key).putExtra("resume", history.resume(key)).putExtra("resume_percent", remotePercent)
+                .putExtra("identity", identity?.toJson()?.toString()).putExtra("key", key).putExtra("resume", switchResumeMs ?: history.resume(key)).putExtra("resume_percent", remotePercent)
                 .putExtra("debrid_service", PlaybackDebrid.normalize(debridService)).putExtra("cached_playback", resumeImmediately)
                 .putExtra("playback_account", LastPlayedLinks(store).scope(PlaybackDebrid.normalize(debridService)))
                 .putExtra("media_name", playingMedia?.first.orEmpty()).putExtra("media_size", playingMedia?.second ?: 0L)
                 .putExtra("headers", org.json.JSONObject(headers).toString())
-            playingMedia = null; playingSourceText = ""
+            playingMedia = null; playingSourceText = ""; switchResumeMs = null
             @Suppress("DEPRECATION")
             startActivityForResult(intent, PLAYBACK_REQUEST)
+            identity?.let { searchStreamsInBackground(it) }
             @Suppress("DEPRECATION")
             overridePendingTransition(0, 0)
         }
