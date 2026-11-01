@@ -83,8 +83,13 @@ class PlayerActivity : Activity() {
     private var quietSeekUntil = 0L
     private val splashHandler = Handler(Looper.getMainLooper())
     private val showSplashLater = Runnable { setSplash(true) }
-    private val rowIds = listOf(androidx.media3.ui.R.id.exo_rew, androidx.media3.ui.R.id.exo_play_pause,
-        androidx.media3.ui.R.id.exo_ffwd, R.id.pov_audio, R.id.pov_speed, R.id.pov_browse, R.id.pov_stop)
+    /** With the mini player off there is nowhere to browse to while the video plays, so Browse leaves the row. */
+    private val miniPlayer by lazy { MiniPlayerPreferences(this).enabled }
+    private val rowIds by lazy {
+        listOf(androidx.media3.ui.R.id.exo_rew, androidx.media3.ui.R.id.exo_play_pause,
+            androidx.media3.ui.R.id.exo_ffwd, R.id.pov_audio, R.id.pov_speed, R.id.pov_browse, R.id.pov_stop)
+            .filter { miniPlayer || it != R.id.pov_browse }
+    }
     private val sessionListener: () -> Unit = {
         if (!stopped) {
             updateControls()
@@ -211,7 +216,7 @@ class PlayerActivity : Activity() {
         view.findViewById<View>(R.id.pov_audio).setOnClickListener { showTracks(C.TRACK_TYPE_AUDIO) }
         speedButton = view.findViewById(R.id.pov_speed)
         speedButton.setOnClickListener { showSpeed() }
-        view.findViewById<View>(R.id.pov_browse).setOnClickListener { finish() }
+        view.findViewById<View>(R.id.pov_browse).apply { setOnClickListener { finish() }; if (!miniPlayer) visibility = View.GONE }
         // Stop ends the session (no mini player) and returns to the page the video was started from.
         view.findViewById<View>(R.id.pov_stop).setOnClickListener { InAppPlaybackSession.stop(); finish() }
         view.findViewById<DefaultTimeBar>(androidx.media3.ui.R.id.exo_progress).apply {
@@ -836,9 +841,10 @@ class PlayerActivity : Activity() {
     override fun onBackPressed() {
         when {
             seekPreview.active -> finishSeek(cancelled = true)
-            // Back first tucks the controls away; a second Back leaves for the mini player.
+            // Back first tucks the controls away; a second Back leaves for the mini player, or stops the video (saving
+            // its progress, like Stop) when the mini player is off.
             view.isControllerFullyVisible -> controls.dismiss()
-            else -> finish()
+            else -> { if (!miniPlayer) InAppPlaybackSession.stop(); finish() }
         }
     }
 

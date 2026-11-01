@@ -3165,6 +3165,8 @@ class MainActivity : Activity() {
                 }.setNegativeButton("Cancel", null).show()
         }
 
+        settingsToggle(playback, "Mini player", "Leaving the player keeps the video going in a small window while you browse. Turn it off to stop the video instead when you leave (your progress is saved).",
+            MiniPlayerPreferences(this).enabled) { on -> MiniPlayerPreferences(this).enabled = on }
         settingsToggle(playback, "Seek previews (Seekr)", "Shows a thumbnail of the scene above the seek bar while you seek. Previews come from Seekr, which has them ready for many movies and shows. Needs your Seekr API key below.",
             SeekrPreferences(this).enabled) { on -> SeekrPreferences(this).enabled = on }
         seekrInfo(playback)
