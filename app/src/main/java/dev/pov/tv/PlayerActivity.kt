@@ -35,7 +35,7 @@ import androidx.media3.ui.PlayerView
 class PlayerActivity : Activity() {
     private lateinit var view: PlayerView
     private lateinit var controls: PlayerControlVisibility.Binding
-    private lateinit var boostButton: Button
+    private lateinit var speedButton: Button
     private var activeDialog: Dialog? = null
     private var activeTrackType: Int? = null
     private var activeTrackChoices: List<PlayerTrackChoice> = emptyList()
@@ -67,7 +67,7 @@ class PlayerActivity : Activity() {
     private val splashHandler = Handler(Looper.getMainLooper())
     private val showSplashLater = Runnable { setSplash(true) }
     private val rowIds = listOf(androidx.media3.ui.R.id.exo_rew, androidx.media3.ui.R.id.exo_play_pause,
-        androidx.media3.ui.R.id.exo_ffwd, R.id.pov_audio, R.id.pov_subtitles, R.id.pov_boost, R.id.pov_browse, R.id.pov_stop)
+        androidx.media3.ui.R.id.exo_ffwd, R.id.pov_audio, R.id.pov_speed, R.id.pov_browse, R.id.pov_stop)
     private val sessionListener: () -> Unit = {
         if (!stopped) {
             updateControls()
@@ -75,7 +75,7 @@ class PlayerActivity : Activity() {
                 player?.let { current ->
                     val loading = current.playbackState == Player.STATE_IDLE || current.playbackState == Player.STATE_BUFFERING
                     if (activeDialog?.isShowing == true && (loading != activeTracksLoading ||
-                        PlayerTrackOptions.choices(current.currentTracks, current.trackSelectionParameters, type) != activeTrackChoices)) {
+                        trackChoices(current) != activeTrackChoices)) {
                         showTracks(type)
                     }
                 }
@@ -153,10 +153,9 @@ class PlayerActivity : Activity() {
             style(false)
             button.setOnFocusChangeListener { _, focused -> style(focused) }
         }
-        boostButton = view.findViewById(R.id.pov_boost)
         view.findViewById<View>(R.id.pov_audio).setOnClickListener { showTracks(C.TRACK_TYPE_AUDIO) }
-        view.findViewById<View>(R.id.pov_subtitles).setOnClickListener { showTracks(C.TRACK_TYPE_TEXT) }
-        boostButton.setOnClickListener { showBoost() }
+        speedButton = view.findViewById(R.id.pov_speed)
+        speedButton.setOnClickListener { showSpeed() }
         view.findViewById<View>(R.id.pov_browse).setOnClickListener { finish() }
         // Stop ends the session (no mini player) and returns to the page the video was started from.
         view.findViewById<View>(R.id.pov_stop).setOnClickListener { InAppPlaybackSession.stop(); finish() }
@@ -321,11 +320,7 @@ class PlayerActivity : Activity() {
         PlaybackDebrid.bind(view, InAppPlaybackSession.debridService)
         view.findViewById<PlayerBadgeRow>(R.id.pov_media_badges)?.show(PlayerMediaBadges.from(PlayerMediaFacts.from(
             InAppPlaybackSession.mediaName, InAppPlaybackSession.mediaSize, player?.videoFormat, player?.audioFormat)))
-        boostButton.text = when {
-            boost.gainDb == 0 -> "Boost · Off"
-            boost.state == VolumeBoostState.UNAVAILABLE -> "Boost · Unavailable"
-            else -> "Boost · +${boost.gainDb} dB"
-        }
+        speedButton.text = "Speed · ${speedLabel(player?.playbackParameters?.speed ?: 1f)}"
         controls.refreshPlaybackState()
     }
 
@@ -348,27 +343,33 @@ class PlayerActivity : Activity() {
             ))
     }
 
+    private fun trackChoices(exo: Player) = TRACK_TYPES.flatMap { PlayerTrackOptions.choices(exo.currentTracks, exo.trackSelectionParameters, it) }
+
+    /** One sheet for both: Audio and Subtitles side by side, opened with [type]'s column focused. */
     private fun showTracks(type: Int) {
         val exo = player ?: return
-        val title = if (type == C.TRACK_TYPE_AUDIO) "Audio" else "Subtitles"
-        val choices = PlayerTrackOptions.choices(exo.currentTracks, exo.trackSelectionParameters, type)
+        val title = "Audio & Subtitles"
         val loading = exo.playbackState == Player.STATE_IDLE || exo.playbackState == Player.STATE_BUFFERING
-        val detail = PlayerTrackOptions.description(choices, type, loading)
-        val rows = choices.map { choice -> PlayerSheetChoice(choice.label, choice.checked, selectable = choice.selectable) {
-            if (player === exo && !stopped) {
-                val stillAvailable = choice.kind != TrackChoiceKind.TRACK || exo.currentTracks.groups.any {
-                    it.mediaTrackGroup == choice.group && choice.index in 0 until it.length && it.isTrackSupported(choice.index)
+        val columns = TRACK_TYPES.map { trackType ->
+            val choices = PlayerTrackOptions.choices(exo.currentTracks, exo.trackSelectionParameters, trackType)
+            val rows = choices.map { choice -> PlayerSheetChoice(choice.label, choice.checked, selectable = choice.selectable) {
+                if (player === exo && !stopped) {
+                    val stillAvailable = choice.kind != TrackChoiceKind.TRACK || exo.currentTracks.groups.any {
+                        it.mediaTrackGroup == choice.group && choice.index in 0 until it.length && it.isTrackSupported(choice.index)
+                    }
+                    if (stillAvailable) exo.trackSelectionParameters = PlayerTrackOptions.apply(exo.trackSelectionParameters, choice)
+                    else showSheet(title, "Tracks changed. Open this menu again to choose a current track.",
+                        listOf(PlayerSheetChoice("Close") {}))
                 }
-                if (stillAvailable) exo.trackSelectionParameters = PlayerTrackOptions.apply(exo.trackSelectionParameters, choice)
-                else showSheet(title, "Tracks changed. Open this menu again to choose a current track.",
-                    listOf(PlayerSheetChoice("Close") {}))
-            }
-        } }
-        val menuRows = if (type == C.TRACK_TYPE_TEXT) rows + PlayerSheetChoice("Subtitle sync · ${SubtitleSync.label()}") { showSubtitleSync() } +
-            PlayerSheetChoice("Subtitle style") { showSubtitleStyle() } else rows
-        showSheet(title, detail, menuRows)
+            } }
+            val menuRows = if (trackType == C.TRACK_TYPE_TEXT) rows + PlayerSheetChoice("Subtitle sync · ${SubtitleSync.label()}") { showSubtitleSync() } +
+                PlayerSheetChoice("Subtitle style") { showSubtitleStyle() } else rows + PlayerSheetChoice("Volume boost · ${boostLabel()}") { showBoost() }
+            PlayerSheetColumn(if (trackType == C.TRACK_TYPE_AUDIO) "Audio" else "Subtitles",
+                PlayerTrackOptions.description(choices, trackType, loading), menuRows)
+        }
+        showSheet(title, "", columns, TRACK_TYPES.indexOf(type).coerceAtLeast(0))
         activeTrackType = type
-        activeTrackChoices = choices
+        activeTrackChoices = trackChoices(exo)
         activeTracksLoading = loading
     }
 
@@ -420,6 +421,12 @@ class PlayerActivity : Activity() {
         })
     }
 
+    private fun boostLabel() = when {
+        boost.gainDb == 0 -> "Off"
+        boost.state == VolumeBoostState.UNAVAILABLE -> "Unavailable"
+        else -> "+${boost.gainDb} dB"
+    }
+
     private fun showBoost() {
         showSheet("Volume boost",
             "Boost decoded PCM audio in software for this playback session. Encoded passthrough bypasses it. Off restores normal audio.",
@@ -440,19 +447,45 @@ class PlayerActivity : Activity() {
             } })
     }
 
+    /** Kodi-style tempo: audio is time-stretched with its pitch kept, for this playback only. */
+    private fun showSpeed() {
+        val current = player?.playbackParameters?.speed ?: 1f
+        showSheet("Playback speed",
+            "Voices keep their normal pitch. Applies to this video only. Dolby or DTS sent to a receiver is decoded by the app while sped up.",
+            SPEEDS.map { speed -> PlayerSheetChoice(if (speed == 1f) "Normal · 1×" else speedLabel(speed), current == speed) {
+                val exo = player ?: return@PlayerSheetChoice
+                if (stopped) return@PlayerSheetChoice
+                InAppPlaybackSession.setPlaybackSpeed(speed)
+                updateControls()
+                // Passthrough is switched to in-app decoding first; if the audio clock still keeps 1x, say so.
+                view.postDelayed({
+                    if (player === exo && !stopped && speed != 1f && exo.playbackParameters.speed != speed) {
+                        updateControls()
+                        Toast.makeText(this, "This audio can't be played at a different speed", Toast.LENGTH_LONG).show()
+                    }
+                }, 2_000)
+            } })
+    }
+
+    private fun speedLabel(speed: Float) =
+        (if (speed == speed.toInt().toFloat()) speed.toInt().toString() else speed.toString().trimEnd('0')) + "×"
+
     private fun showOptionsMenu() {
         showSheet("Playback options", "Choose an action. Playback continues while you browse.",
             listOf(
-                PlayerSheetChoice("Audio") { showTracks(C.TRACK_TYPE_AUDIO) },
-                PlayerSheetChoice("Subtitles") { showTracks(C.TRACK_TYPE_TEXT) },
+                PlayerSheetChoice("Audio & Subtitles") { showTracks(C.TRACK_TYPE_AUDIO) },
                 PlayerSheetChoice("Subtitle style") { showSubtitleStyle() },
                 PlayerSheetChoice("Volume boost") { showBoost() },
+                PlayerSheetChoice("Playback speed") { showSpeed() },
                 PlayerSheetChoice("Browse while playing") { finish() },
                 PlayerSheetChoice("Stop playback") { InAppPlaybackSession.stop(); finish() }
             ))
     }
 
-    private fun showSheet(title: String, detail: String, choices: List<PlayerSheetChoice>) {
+    private fun showSheet(title: String, detail: String, choices: List<PlayerSheetChoice>) =
+        showSheet(title, detail, listOf(PlayerSheetColumn("", "", choices)), 0)
+
+    private fun showSheet(title: String, detail: String, columns: List<PlayerSheetColumn>, focusColumn: Int) {
         finishSeek(cancelled = true)
         activeDialog?.dismiss()
         activeTrackType = null
@@ -460,7 +493,7 @@ class PlayerActivity : Activity() {
         activeTracksLoading = false
         if (isFinishing || isDestroyed) return
         controls.show()
-        val dialog = PlayerOptionSheet.create(this, title, detail, choices, accent)
+        val dialog = PlayerOptionSheet.create(this, title, detail, columns, accent, focusColumn)
         activeDialog = dialog
         dialog.setOnDismissListener {
             if (activeDialog === dialog) {
@@ -656,6 +689,8 @@ class PlayerActivity : Activity() {
         /** A seek may land up to this far from its target to reach a keyframe. */
         const val SEEK_SNAP_MS = 2_000L
         const val QUIET_SEEK_MS = 4_000L
+        val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
+        val TRACK_TYPES = listOf(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_TEXT)
         fun openCurrent(context: Context): Boolean {
             val intent = InAppPlaybackSession.currentIntent(context) ?: return false
             if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

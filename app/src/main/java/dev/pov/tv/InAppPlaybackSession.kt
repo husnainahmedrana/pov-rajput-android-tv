@@ -194,6 +194,7 @@ object InAppPlaybackSession {
         val parameters = try { saved?.getBundle("tracks")?.let(TrackSelectionParameters::fromBundle) } catch (_: RuntimeException) { null }
         releasing = false
         error = null
+        decodeForSpeed = false; encodedOutput = false; passthroughParked = false
         lastSyncAction = ""
         lastSyncAt = 0L
         val gainProcessor = volumeBoost.createAudioProcessor()
@@ -230,10 +231,17 @@ object InAppPlaybackSession {
                     .build()
                 return object : ForwardingAudioSink(sink) {
                     private var encodedRoute = false
+                    // While a speed other than 1x is chosen, refuse passthrough so the renderer decodes to PCM.
+                    override fun supportsFormat(format: Format) =
+                        (!decodeForSpeed || format.sampleMimeType == MimeTypes.AUDIO_RAW) && super.supportsFormat(format)
+                    override fun getFormatSupport(format: Format) =
+                        if (decodeForSpeed && format.sampleMimeType != MimeTypes.AUDIO_RAW) AudioSink.SINK_FORMAT_UNSUPPORTED
+                        else super.getFormatSupport(format)
                     override fun configure(audioSinkConfig: AudioSink.AudioSinkConfig) {
                         super.configure(audioSinkConfig)
                         // Keep device-supported encoded passthrough playable; it bypasses PCM DSP.
                         encodedRoute = audioSinkConfig.format.sampleMimeType != MimeTypes.AUDIO_RAW
+                        encodedOutput = encodedRoute
                         if (encodedRoute) gainProcessor.onEncodedPassthrough()
                     }
                     override fun handleBuffer(buffer: ByteBuffer, presentationTimeUs: Long, encodedAccessUnitCount: Int): Boolean {
@@ -443,6 +451,33 @@ object InAppPlaybackSession {
         val result = volumeBoost.setGain(db)
         notifyChanged()
         return result
+    }
+
+    /** Read on the playback thread by the audio sink: while true, encoded passthrough is refused so audio decodes to PCM. */
+    @Volatile private var decodeForSpeed = false
+    /** Written by the audio sink: the current audio goes out encoded (passthrough), not as PCM. */
+    @Volatile private var encodedOutput = false
+    /** Passthrough was given up for a speed change and comes back at 1x. */
+    private var passthroughParked = false
+
+    /**
+     * Encoded passthrough (Dolby/DTS to the TV's decoder or a receiver) cannot be time-stretched, so any speed
+     * but 1x decodes the audio in the app instead; 1x hands it back to passthrough. Briefly disabling the audio
+     * renderer makes it pick its route again.
+     */
+    internal fun setPlaybackSpeed(speed: Float) {
+        val exo = player ?: return
+        val decode = speed != 1f
+        decodeForSpeed = decode
+        val reroute = if (decode) encodedOutput.also { if (it) passthroughParked = true }
+            else passthroughParked.also { passthroughParked = false }
+        if (reroute) {
+            val parameters = exo.trackSelectionParameters
+            exo.trackSelectionParameters = parameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true).build()
+            handler.post { if (isCurrent(exo)) exo.trackSelectionParameters = parameters }
+        }
+        exo.setPlaybackSpeed(speed)
+        notifyChanged()
     }
 
     private fun isCurrent(exo: ExoPlayer) = !releasing && player === exo

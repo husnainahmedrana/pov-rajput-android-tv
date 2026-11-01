@@ -291,24 +291,16 @@ class PlaybackAuditInstrumentation : Instrumentation() {
         capturePublicScreenshot("pov-public-player-audio.png")
         traverseAudioSheet(fullscreen!!.currentOptionSheet!!)
         closeSheet(fullscreen!!.currentOptionSheet!!)
-        stage = "subtitle_picker_remote_navigation"
+        stage = "speed_picker_remote_navigation"
         onMain { playerView.findViewById<View>(R.id.pov_audio).requestFocus() }
         press(fullscreen!!, KeyEvent.KEYCODE_DPAD_RIGHT)
-        checkAudit(onMain { fullscreen!!.currentFocus?.id == R.id.pov_subtitles })
+        checkAudit(onMain { fullscreen!!.currentFocus?.id == R.id.pov_speed })
         press(fullscreen!!, KeyEvent.KEYCODE_DPAD_CENTER)
-        await("subtitle_bottom_sheet_visible", 3_000) { fullscreen!!.currentOptionSheet?.isShowing == true }
+        await("speed_bottom_sheet_visible", 3_000) { fullscreen!!.currentOptionSheet?.isShowing == true }
         closeSheet(fullscreen!!.currentOptionSheet!!)
-        report.putBoolean("subtitle_picker_reachable_by_dpad", true)
-        stage = "boost_picker_remote_navigation"
-        onMain { playerView.findViewById<View>(R.id.pov_subtitles).requestFocus() }
-        press(fullscreen!!, KeyEvent.KEYCODE_DPAD_RIGHT)
-        checkAudit(onMain { fullscreen!!.currentFocus?.id == R.id.pov_boost })
-        press(fullscreen!!, KeyEvent.KEYCODE_DPAD_CENTER)
-        await("boost_bottom_sheet_visible", 3_000) { fullscreen!!.currentOptionSheet?.isShowing == true }
-        closeSheet(fullscreen!!.currentOptionSheet!!)
-        report.putBoolean("boost_picker_reachable_by_dpad", true)
+        report.putBoolean("speed_picker_reachable_by_dpad", true)
         revealControls(fullscreen!!)
-        onMain { playerView.findViewById<View>(R.id.pov_boost).requestFocus() }
+        onMain { playerView.findViewById<View>(R.id.pov_speed).requestFocus() }
         SystemClock.sleep(300)
         capturePublicScreenshot("pov-public-player-controls.png")
         report.putBoolean("public_controls_screenshot_saved", true)
@@ -611,8 +603,9 @@ class PlaybackAuditInstrumentation : Instrumentation() {
     private fun traverseAudioSheet(dialog: Dialog) {
         val rows = onMain {
             descendants(dialog.window!!.decorView).filter { view ->
-                (view.tag as? String)?.startsWith("pov_sheet_choice_") == true
-            }.sortedBy { (it.tag as String).removePrefix("pov_sheet_choice_").toInt() }
+                // The Audio column of the Audio & Subtitles sheet.
+                (view.tag as? String)?.startsWith("pov_sheet_choice_0_") == true
+            }.sortedBy { (it.tag as String).removePrefix("pov_sheet_choice_0_").toInt() }
         }
         checkAudit(rows.size >= 3)
         val initiallyOffscreen = onMain { !fullyRendered(rows.last()) }
@@ -634,8 +627,8 @@ class PlaybackAuditInstrumentation : Instrumentation() {
     }
 
     private val chromeIds = listOf(androidx.media3.ui.R.id.exo_progress, androidx.media3.ui.R.id.exo_play_pause,
-        androidx.media3.ui.R.id.exo_rew, androidx.media3.ui.R.id.exo_ffwd, R.id.pov_audio, R.id.pov_subtitles,
-        R.id.pov_boost, R.id.pov_browse)
+        androidx.media3.ui.R.id.exo_rew, androidx.media3.ui.R.id.exo_ffwd, R.id.pov_audio,
+        R.id.pov_speed, R.id.pov_browse)
 
     private fun validControllerGeometry(playerView: PlayerView): Boolean {
         val bottom = playerView.findViewById<View>(R.id.pov_bottom_scrim)
@@ -669,8 +662,7 @@ class PlaybackAuditInstrumentation : Instrumentation() {
             "rewind" to playerView.findViewById<View>(androidx.media3.ui.R.id.exo_rew),
             "forward" to playerView.findViewById<View>(androidx.media3.ui.R.id.exo_ffwd),
             "audio" to playerView.findViewById<View>(R.id.pov_audio),
-            "subtitles" to playerView.findViewById<View>(R.id.pov_subtitles),
-            "boost" to playerView.findViewById<View>(R.id.pov_boost),
+            "speed" to playerView.findViewById<View>(R.id.pov_speed),
             "browse" to playerView.findViewById<View>(R.id.pov_browse)
         )
         namedViews.forEach { (name, view) ->

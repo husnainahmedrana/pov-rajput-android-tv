@@ -56,12 +56,10 @@
                 android:nextFocusUp="@id/exo_progress" />
             <dev.pov.tv.PlayerBadgeRow android:id="@+id/pov_media_badges" android:layout_width="0dp"
                 android:layout_height="30dp" android:layout_weight="1" android:layout_marginEnd="8dp" />
-            <Button android:id="@+id/pov_audio" style="@style/POVPlayerAction" android:text="Audio"
-                android:drawableStart="@drawable/pov_ic_audio" android:nextFocusUp="@id/exo_progress" />
-            <Button android:id="@+id/pov_subtitles" style="@style/POVPlayerAction" android:text="Subtitles"
+            <Button android:id="@+id/pov_audio" style="@style/POVPlayerAction" android:text="Audio &amp; Subtitles"
                 android:drawableStart="@drawable/pov_ic_subtitles" android:nextFocusUp="@id/exo_progress" />
-            <Button android:id="@+id/pov_boost" style="@style/POVPlayerAction" android:text="Boost · Off"
-                android:drawableStart="@drawable/pov_ic_boost" android:nextFocusUp="@id/exo_progress" />
+            <Button android:id="@+id/pov_speed" style="@style/POVPlayerAction" android:text="Speed · 1×"
+                android:drawableStart="@drawable/pov_ic_speed" android:nextFocusUp="@id/exo_progress" />
             <Button android:id="@+id/pov_browse" style="@style/POVPlayerAction" android:text="Browse"
                 android:drawableStart="@drawable/pov_ic_browse" android:nextFocusUp="@id/exo_progress" />
             <Button android:id="@+id/pov_stop" style="@style/POVPlayerAction" android:text="Stop"

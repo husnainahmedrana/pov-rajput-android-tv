@@ -32,6 +32,16 @@ class CatalogApi internal constructor(private val publicJson: (String) -> JSONOb
         return catalog("$BASE/catalog/$type/top/skip=$skip.json", type)
     }
 
+    /** Discover: Cinemeta's popular ("top") or featured ("imdbRating") catalog, optionally narrowed to one genre. */
+    fun discover(type: String, genre: String, sort: String, skip: Int = 0): List<MediaItemData> {
+        requireType(type)
+        require(skip >= 0) { "The catalog offset cannot be negative." }
+        require(genre.isEmpty() || genre in discoverGenres(type)) { "Unknown genre." }
+        val extras = listOfNotNull(genre.takeIf { it.isNotEmpty() }?.let { "genre=$it" }, "skip=$skip".takeIf { skip > 0 })
+        val catalog = if (sort == SORT_FEATURED) "imdbRating" else "top"
+        return catalog("$BASE/catalog/$type/$catalog${extras.joinToString("&").let { if (it.isEmpty()) "" else "/$it" }}.json", type)
+    }
+
     data class HomeShelf(val title: String, val type: String, val items: List<MediaItemData>, val unavailable: Boolean = false)
     fun newReleases(type: String, year: Int = java.time.Year.now(java.time.ZoneOffset.UTC).value): List<MediaItemData> {
         requireType(type); require(year in 1900..2100)
@@ -85,8 +95,11 @@ class CatalogApi internal constructor(private val publicJson: (String) -> JSONOb
         )
     }
 
-    private fun catalog(url: String, type: String): List<MediaItemData> {
-        val metas = publicJson(url).optJSONArray("metas")
+    private fun catalog(url: String, type: String): List<MediaItemData> = parseCatalog(publicJson(url), type)
+
+    /** A Stremio catalog answer ({"metas": [...]}) from Cinemeta or another public catalog add-on. */
+    internal fun parseCatalog(answer: JSONObject, type: String): List<MediaItemData> {
+        val metas = answer.optJSONArray("metas")
             ?: throw IllegalStateException("The catalog is temporarily unavailable.")
         return (0 until metas.length()).mapNotNull { index ->
             metas.optJSONObject(index)?.let { parseMeta(it, type) }
@@ -141,8 +154,14 @@ class CatalogApi internal constructor(private val publicJson: (String) -> JSONOb
         if (uri.scheme.equals("https", true) && !uri.host.isNullOrBlank() && uri.userInfo == null) value else ""
     } catch (_: Exception) { "" }
 
-    private companion object {
-        const val BASE = "https://v3-cinemeta.strem.io"
-        val IMDB_ID = Regex("tt[0-9]{5,12}")
+    companion object {
+        private const val BASE = "https://v3-cinemeta.strem.io"
+        private val IMDB_ID = Regex("tt[0-9]{5,12}")
+        const val SORT_POPULAR = "popular"
+        const val SORT_FEATURED = "featured"
+        private val GENRES = listOf("Action", "Adventure", "Animation", "Biography", "Comedy", "Crime", "Documentary", "Drama",
+            "Family", "Fantasy", "History", "Horror", "Mystery", "Romance", "Sci-Fi", "Sport", "Thriller", "War", "Western")
+        /** The genres Cinemeta's manifest offers; shows add three TV formats. */
+        fun discoverGenres(type: String) = if (type == "series") GENRES + listOf("Reality-TV", "Talk-Show", "Game-Show") else GENRES
     }
 }

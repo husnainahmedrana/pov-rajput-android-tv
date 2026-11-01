@@ -19,9 +19,9 @@ This is **Rajput's Android TV edition**, forked from [MM-482/pov-android-tv](htt
 
 - **Flix interface** — a living backdrop that follows whatever you focus, title logos, a feature that rotates through the Top 10 every five seconds, numbered Top 10 shelves and a menu that stays hidden until you need it.
 - **Smooth on modest TV hardware** — shelves draw only what is on screen, artwork is sized to its card and decoded off the UI thread, and the backdrop is a single pre-shaded image. Measured on an onn 4K box, janky frames fell from 55% to under 10%.
-- **TMDB or Cinemeta catalogs** — add your own free TMDB key for Trending, Popular and *Now Playing in Cinemas* (in your chosen country) movies, plus Trending and Popular shows. Without a key, Home uses Cinemeta.
+- **TMDB, Queued Up or Cinemeta catalogs** — Top 10 shelves follow a daily trending chart (TMDB Trending Today with your own free TMDB key, Queued Up's global trending without one), with Latest Releases from Queued Up, *Now Playing in Cinemas* (in your chosen country) and Popular rows. Movies and Shows double as **Discover**: sort by Popular, Top rated or Newest and filter by genre.
 - **Play that just works** — Play searches every enabled source provider, checks your debrid caches in parallel and starts the best playable link, resuming where you left off. Continue Watching resumes instantly from the last link (kept 24 hours).
-- **A player built for the remote** — one-second precision seeking that accelerates the longer you hold, an *Ends at* clock, a Stremio-style loading splash, Stop and Browse, audio and subtitle menus and volume boost.
+- **A player built for the remote** — one-second precision seeking that accelerates the longer you hold, an *Ends at* clock, a Stremio-style loading splash, Stop and Browse, one Audio & Subtitles menu with volume boost, playback speed (0.5×–2×, pitch kept) and FFmpeg software decoding for Dolby and DTS audio.
 - **Sensible defaults** — bold subtitles on a transparent background, 3% above the bottom, English subtitles and audio.
 - **Your library as posters** — Offcloud and TorBox downloads appear as artwork cards matched from their filenames.
 - **Voice search** — speak a title; the words appear as you talk and results open when you stop.
@@ -134,6 +134,8 @@ Pushes to `main`, pull requests and manual runs build APKs after unit tests and 
 - **kodifitzwell** — original POV Kodi add-on and POV visual identity. [Original project](https://github.com/kodifitzwell/repo).
 - **[WeTrakr](https://wetrakr.com/) and [alberdev](https://www.reddit.com/user/alberdev/), its developer** — tracking service, API, official logo and developer access that made this integration possible.
 - **[TMDB](https://www.themoviedb.org/)** — this product uses the TMDB API but is not endorsed or certified by TMDB.
+- **[Queued Up](https://queued-up.app/)** — the free community Stremio catalog add-on behind the Latest Releases rows, and the Top 10 and Newest lists without a TMDB key.
+- **[FFmpeg](https://ffmpeg.org/)** and **[Jellyfin](https://github.com/jellyfin/jellyfin-androidx-media)** — software audio decoding through Jellyfin's prebuilt Media3 FFmpeg decoder.
 - **Cinemeta**, **Kitsu**, **Android Open Source Project / AndroidX Media3** and **JetBrains / Kotlin**.
 
 This project is not endorsed by Offcloud, TorBox, WeTrakr, Simkl, TMDB, Trakt, Kodi or the upstream authors. Product names and artwork remain with their respective owners. See the in-app open-source notices and the [original project documentation](docs/UPSTREAM_README.md).

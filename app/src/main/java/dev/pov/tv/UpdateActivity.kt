@@ -39,6 +39,7 @@ class UpdateActivity : Activity() {
     private var ready = false
     private var busy = false
 
+    private val phone = DeviceLayout.phone
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     private fun rounded(color: Int, radius: Int) = GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
 
@@ -63,14 +64,22 @@ class UpdateActivity : Activity() {
         updates = GitHubUpdates(this)
         window.decorView.setBackgroundColor(BACKGROUND)
         val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(dp(64), dp(44), dp(64), dp(36)); setBackgroundColor(BACKGROUND)
+            orientation = LinearLayout.VERTICAL; setBackgroundColor(BACKGROUND)
+            if (phone) {
+                // Android 15 draws edge to edge: keep the title below the status bar and the buttons above the gesture bar.
+                setPadding(dp(20), dp(20), dp(20), dp(16))
+                setOnApplyWindowInsetsListener { view, insets ->
+                    @Suppress("DEPRECATION") view.setPadding(dp(20), dp(20) + insets.systemWindowInsetTop, dp(20), dp(16) + insets.systemWindowInsetBottom)
+                    insets
+                }
+            } else setPadding(dp(64), dp(44), dp(64), dp(36))
         }
         fun label(value: String, size: Float, color: Int = Color.WHITE, bold: Boolean = false) = TextView(this).apply {
             text = value; textSize = size; setTextColor(color); if (bold) typeface = Typeface.DEFAULT_BOLD
         }
         content.addView(label("APP UPDATES", 13f, MUTED, true).apply { letterSpacing = 0.12f })
-        content.addView(label("POV Rajput", 34f, bold = true), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-        status = label("Checking for updates…", 18f, Color.WHITE)
+        content.addView(label("POV Rajput", if (phone) 28f else 34f, bold = true), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+        status = label("Checking for updates…", if (phone) 16f else 18f, Color.WHITE)
         content.addView(status, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100; isIndeterminate = true
@@ -79,19 +88,27 @@ class UpdateActivity : Activity() {
                 .apply { setId(0, android.R.id.background); setId(1, android.R.id.progress) }
             indeterminateTintList = android.content.res.ColorStateList.valueOf(ACCENT)
         }
-        content.addView(progress, LinearLayout.LayoutParams(dp(520), dp(4)).apply { topMargin = dp(16) })
+        content.addView(progress, LinearLayout.LayoutParams(if (phone) -1 else dp(520), dp(4)).apply { topMargin = dp(16) })
         val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; background = rounded(PANEL, 8); setPadding(dp(28), dp(22), dp(28), dp(22))
+            orientation = LinearLayout.VERTICAL; background = rounded(PANEL, 8)
+            if (phone) setPadding(dp(18), dp(16), dp(18), dp(16)) else setPadding(dp(28), dp(22), dp(28), dp(22))
         }
-        notes = label("", 16f, TEXT).apply { setLineSpacing(dp(4).toFloat(), 1f) }
+        notes = label("", if (phone) 15f else 16f, TEXT).apply { setLineSpacing(dp(4).toFloat(), 1f) }
         card.addView(notes, LinearLayout.LayoutParams(-1, -2))
         val scroll = ScrollView(this).apply { isFocusable = false; isVerticalScrollBarEnabled = false; addView(card, ViewGroup.LayoutParams(-1, -2)) }
-        content.addView(scroll, LinearLayout.LayoutParams(dp(820), 0, 1f).apply { topMargin = dp(24) })
+        content.addView(scroll, LinearLayout.LayoutParams(if (phone) -1 else dp(820), 0, 1f).apply { topMargin = dp(if (phone) 18 else 24) })
         val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
         action = button("Check again", true) { when { ready -> install(); release != null -> download(); else -> checkUpdates() } }.apply { isEnabled = false }
-        buttons.addView(action, LinearLayout.LayoutParams(-2, dp(48)).apply { rightMargin = dp(16) })
-        buttons.addView(button("Back", false) { finish() }, LinearLayout.LayoutParams(-2, dp(48)))
-        content.addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(24) })
+        if (phone) {
+            // Full-width buttons stacked under the notes, main action first, within thumb reach.
+            buttons.orientation = LinearLayout.VERTICAL
+            buttons.addView(action, LinearLayout.LayoutParams(-1, dp(50)))
+            buttons.addView(button("Back", false) { finish() }, LinearLayout.LayoutParams(-1, dp(50)).apply { topMargin = dp(10) })
+        } else {
+            buttons.addView(action, LinearLayout.LayoutParams(-2, dp(48)).apply { rightMargin = dp(16) })
+            buttons.addView(button("Back", false) { finish() }, LinearLayout.LayoutParams(-2, dp(48)))
+        }
+        content.addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(if (phone) 16 else 24) })
         setContentView(content)
         checkUpdates()
     }
@@ -143,7 +160,9 @@ class UpdateActivity : Activity() {
                 notes.text = "Installed: ${installedVersion()}\nUpdates come from ${GitHubUpdates.REPOSITORY}."
                 action.text = "Check again"
             } else {
-                status.text = "Version ${latest.version.removeSuffix("-rajput")} is available  ·  you have ${installedVersion().removeSuffix("-rajput")}"
+                val installed = installedVersion().removeSuffix("-rajput")
+                status.text = "Version ${latest.version.removeSuffix("-rajput")} is available" +
+                    if (phone) "\nYou have $installed" else "  ·  you have $installed"
                 notes.text = latest.candidate.notes.ifBlank { "A new version of POV Rajput is available." }.let(::formatNotes)
                 action.text = "Download and install"
             }

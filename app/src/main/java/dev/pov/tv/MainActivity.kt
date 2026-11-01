@@ -642,8 +642,9 @@ class MainActivity : Activity() {
         // Something in progress: the feature trims so the first screen ends on a complete row.
         val compact = flix && if (remoteHome) !cachedContinueWatching().isNullOrEmpty() else recent.isNotEmpty()
         fun render(shelves: List<CatalogApi.HomeShelf>) {
-            val movies = shelves.first { it.title == "Popular Movies" }.items
-            val series = shelves.first { it.title == "Popular Shows" }.items
+            // Shelves saved before the Top 10 lineup still name their charts "Popular …".
+            val movies = (shelves.firstOrNull { it.title == TOP10_MOVIES } ?: shelves.firstOrNull { it.title == "Popular Movies" })?.items.orEmpty()
+            val series = (shelves.firstOrNull { it.title == TOP10_SHOWS } ?: shelves.firstOrNull { it.title == "Popular Shows" })?.items.orEmpty()
             val rotation = if (flix) (0 until 10).flatMap { listOfNotNull(movies.getOrNull(it), series.getOrNull(it)) } else emptyList()
             (movies.firstOrNull() ?: shelves.firstOrNull { it.items.isNotEmpty() }?.items?.firstOrNull())?.let { if (flix) streamingHero(it, true, rotation, compact) else hero(it) }
             if (remoteHome) homeContinueWatching(id) else if (recent.isNotEmpty()) resumeRow(recent)
@@ -652,7 +653,7 @@ class MainActivity : Activity() {
                 rankedRow("Top 10 Shows", series)
             }
             var topTenPending = flix && compact
-            shelves.forEach { shelf ->
+            shelves.filter { it.title != TOP10_MOVIES && it.title != TOP10_SHOWS }.forEach { shelf ->
                 if (shelf.items.isNotEmpty()) {
                     mediaRow(shelf.title, shelf.items)
                     // With Continue Watching on the first screen, the tall Top 10 shelves follow the first regular row.
@@ -709,15 +710,53 @@ class MainActivity : Activity() {
         }
     } catch (_: Exception) { null }
 
-    /** TMDB shelves when the viewer has added a key; Cinemeta otherwise, or if TMDB cannot be reached. */
+    /**
+     * Home's lineup. Top 10 is a daily chart: TMDB Trending Today with a key, Queued Up's global trending without one
+     * (Cinemeta's new releases if Queued Up is down). Latest Releases come from Queued Up (falling back to TMDB's or
+     * Cinemeta's newest), and no list used for Top 10 is shown again as a row.
+     */
     private fun homeShelves(): List<CatalogApi.HomeShelf> {
         val key = if (publicPreview) "" else store.get(TMDB_KEY)
-        if (key.isNotBlank()) {
-            val shelves = TmdbCatalog(this, key, tmdbRegion()).homeShelves()
-            if (shelves.any { !it.unavailable && it.items.isNotEmpty() }) return shelves
-            runOnUiThread { toast("TMDB is unavailable. Showing Cinemeta catalogs instead.") }
+        val queued = QueuedUpCatalog(this)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
+        try {
+            fun ask(list: () -> List<MediaItemData>?) = pool.submit(java.util.concurrent.Callable { runCatching(list).getOrNull() })
+            val trending = listOf("movie", "series").associateWith { type -> ask { queued.trending(type) } }
+            val latest = listOf("movie", "series").associateWith { type -> ask { queued.latest(type) } }
+            // A slow Queued Up must not hold Home back; past this wait its rows use the fallbacks.
+            fun answer(task: java.util.concurrent.Future<List<MediaItemData>?>?) =
+                try { task?.get(6, java.util.concurrent.TimeUnit.SECONDS) } catch (_: Exception) { null }?.takeIf { it.isNotEmpty() }
+            fun row(title: String, type: String, items: List<MediaItemData>) = CatalogApi.HomeShelf(title, type, items)
+            if (key.isNotBlank()) {
+                val tmdb = TmdbCatalog(this, key, tmdbRegion())
+                val shelves = tmdb.homeShelves()
+                if (shelves.any { !it.unavailable && it.items.isNotEmpty() }) {
+                    fun shelf(title: String) = shelves.firstOrNull { it.title == title }
+                    fun newest(type: String) = answer(latest[type]) ?: runCatching { tmdb.discover(type, "", TmdbCatalog.SORT_NEWEST, 1) }.getOrDefault(emptyList())
+                    return homeLineup(shelf("Trending Movies Today")?.items.orEmpty(), shelf("Trending Shows Today")?.items.orEmpty(), listOf(
+                        row(LATEST_MOVIES, "movie", newest("movie")), shelf("Now Playing in Cinemas"),
+                        row(LATEST_SHOWS, "series", newest("series")), shelf("Popular Movies"), shelf("Popular Shows")))
+                }
+                runOnUiThread { toast("TMDB is unavailable. Showing Cinemeta catalogs instead.") }
+            }
+            val shelves = catalog.homeShelves()
+            fun shelf(title: String) = shelves.firstOrNull { it.title == title }
+            val newMovies = shelf("New Movies")?.items.orEmpty()
+            val newShows = shelf("New Shows")?.items.orEmpty()
+            return homeLineup(answer(trending["movie"]) ?: newMovies, answer(trending["series"]) ?: newShows, listOf(
+                row(LATEST_MOVIES, "movie", answer(latest["movie"]) ?: newMovies), row(LATEST_SHOWS, "series", answer(latest["series"]) ?: newShows),
+                shelf("Featured Movies"), shelf("Featured Shows"), shelf("Popular Movies"), shelf("Popular Shows")))
+        } finally { pool.shutdownNow() }
+    }
+
+    /** Top 10 shelves first; titles already in a Top 10 leave the other rows, and a row emptied that way is dropped. */
+    private fun homeLineup(movies: List<MediaItemData>, shows: List<MediaItemData>, rows: List<CatalogApi.HomeShelf?>): List<CatalogApi.HomeShelf> {
+        val ranked = mapOf("movie" to movies.take(10).map { it.imdbId }.toSet(), "series" to shows.take(10).map { it.imdbId }.toSet())
+        val others = rows.filterNotNull().mapNotNull { row ->
+            if (row.unavailable) return@mapNotNull row
+            row.copy(items = row.items.filter { it.imdbId !in ranked[row.type].orEmpty() }).takeIf { it.items.isNotEmpty() }
         }
-        return catalog.homeShelves()
+        return listOf(CatalogApi.HomeShelf(TOP10_MOVIES, "movie", movies), CatalogApi.HomeShelf(TOP10_SHOWS, "series", shows)) + others
     }
     private fun tmdbRegion() = store.get(TMDB_REGION).ifBlank { java.util.Locale.getDefault().country.ifBlank { "US" } }
     private fun countryName(code: String) = java.util.Locale("", code).getDisplayCountry(java.util.Locale.ENGLISH).ifBlank { code }
@@ -806,7 +845,10 @@ class MainActivity : Activity() {
             lists.forEach { (listId, title) ->
                 val slot = column().apply { tag = "wetrakr-liked:$listId" }
                 body.addView(slot, ++index, margin(-1, -2))
-                read(id, { wetrakr.likedListPreview(listId) }) { items ->
+                // A liked list its owner made private or deleted answers 401/403 while the account is fine:
+                // drop that shelf instead of a page-wide "authorization expired" error.
+                read(id, { try { wetrakr.likedListPreview(listId) } catch (_: Exception) { null } }) { items ->
+                    if (items == null) { body.removeView(slot); return@read }
                     mediaRow(title, items, slot) {
                         navigate { val pageId = page(title, "Liked list · WeTrakr"); read(pageId, { wetrakr.likedListItems(listId) }) { mediaGrid(it) } }
                     }
@@ -1369,7 +1411,7 @@ class MainActivity : Activity() {
             val latest = try { GitHubUpdates(this).latest() } catch (_: Exception) { null }
             if (latest != null) runOnUiThread {
                 if (resumed && !isDestroyed && !isFinishing && !InAppPlaybackSession.hasActive()) {
-                    AlertDialog.Builder(this).setTitle("Update available · ${latest.version}")
+                    AlertDialog.Builder(this).setTitle("Update available · ${latest.version.removeSuffix("-rajput")}")
                         .setMessage("A new published release of POV Rajput is available.")
                         .setPositiveButton("View update") { _, _ -> startActivity(Intent(this, UpdateActivity::class.java)) }
                         .setNegativeButton("Later", null).show()
@@ -1695,17 +1737,63 @@ class MainActivity : Activity() {
             }.setNegativeButton("Cancel", null).show().submitOnEnter(input)
     }
 
-    private fun catalogPage(type: String, query: String = "", skip: Int = 0) {
-        current = { catalogPage(type, query, skip) }
+    /**
+     * Movies and Shows double as Discover: a sort and a genre narrow the grid. With a TMDB key the lists come from
+     * TMDB's discover (paged by 20, [skip] counts pages); without one from Cinemeta's genre catalogs ([skip] counts titles).
+     */
+    private fun catalogPage(type: String, query: String = "", skip: Int = 0, genre: String = "", sort: String = "") {
+        current = { catalogPage(type, query, skip, genre, sort) }
         destination = type; refreshNavigation()
-        if (skip == 0 && query.isBlank()) catalogOffsets[type]?.clear()
+        val tmdbKey = if (publicPreview) "" else store.get(TMDB_KEY)
+        val tmdb = tmdbKey.isNotBlank()
+        // Newest leads and opens by default; without a TMDB key it comes from Queued Up's latest-release lists.
+        val sorts = if (tmdb) listOf(TmdbCatalog.SORT_NEWEST to "Newest", TmdbCatalog.SORT_POPULAR to "Popular", TmdbCatalog.SORT_TOP_RATED to "Top rated")
+            else listOf(SORT_NEWEST to "Newest", CatalogApi.SORT_POPULAR to "Popular", CatalogApi.SORT_FEATURED to "Featured")
+        val order = sort.takeIf { wanted -> sorts.any { it.first == wanted } } ?: sorts.first().first
+        val genres = when {
+            tmdb -> TmdbCatalog.discoverGenres(type).keys.toList()
+            order == SORT_NEWEST -> QueuedUpCatalog.GENRES.keys.toList()
+            else -> CatalogApi.discoverGenres(type)
+        }
+        val chosen = genre.takeIf { it in genres }.orEmpty()
+        val offsets = "$type|$chosen|$order"
+        if (skip == 0 && query.isBlank()) catalogOffsets[offsets]?.clear()
         val id = page(if (query.isBlank()) if (type == "movie") "Movies" else "TV shows" else "Results for “$query”", "Find something worth your evening.")
-        val actions = horizontalRow()
-        actions.addView(button("Search movies & TV") { search() }, margin(190, 38, right = 8))
-        if (skip > 0) actions.addView(button("Previous page") { catalogPage(type, query, catalogOffsets[type]?.removeLastOrNull() ?: 0) }, margin(140, 38))
-        read(id, { if (query.isBlank()) catalog.popular(type, skip) else catalog.search(query, type) }) { items ->
+        fun open(nextGenre: String = chosen, nextSort: String = order) = catalogPage(type, genre = nextGenre, sort = nextSort)
+        fun chip(label: String, selected: Boolean, action: () -> Unit) = button(if (selected) "●  $label" else label, action)
+        if (query.isBlank()) {
+            if (DeviceLayout.phone) {
+                body.addView(button("⌕   Search movies & TV") { search() }, margin(-1, 42, bottom = 10))
+                phoneTabs(sorts.map { (key, label) -> (if (key == order) "●  $label" else label) to { open(nextSort = key) } })
+            } else {
+                val actions = horizontalRow()
+                actions.addView(button("Search movies & TV") { search() }, margin(190, 38, right = 16))
+                sorts.forEach { (key, label) -> actions.addView(chip(label, key == order) { open(nextSort = key) }, margin(-2, 38, right = 8)) }
+            }
+            val genreRow = horizontalRow()
+            genreRow.addView(chip("All genres", chosen.isEmpty()) { open(nextGenre = "") }.apply { tag = "genre:" }, margin(-2, 36, right = 8))
+            genres.forEach { name -> genreRow.addView(chip(name, name == chosen) { open(nextGenre = name) }.apply { tag = "genre:$name" }, margin(-2, 36, right = 8)) }
+            if (skip > 0) body.addView(button("Previous page") {
+                catalogPage(type, skip = catalogOffsets[offsets]?.removeLastOrNull() ?: 0, genre = chosen, sort = order)
+            }, margin(140, 38, top = 6))
+        } else horizontalRow().addView(button("Search movies & TV") { search() }, margin(190, 38, right = 8))
+        read(id, {
+            when {
+                query.isNotBlank() -> catalog.search(query, type)
+                tmdb -> TmdbCatalog(this, tmdbKey, tmdbRegion()).discover(type, chosen, order, skip + 1)
+                // Queued Up down: this year's Cinemeta releases, narrowed to the genre by each title's own genres.
+                order == SORT_NEWEST -> QueuedUpCatalog(this).newest(type, chosen, skip) ?: if (skip > 0) emptyList() else
+                    catalog.newReleases(type).filter { chosen.isEmpty() || it.genres.any { genre -> genre.equals(chosen, true) } }
+                chosen.isEmpty() && order == CatalogApi.SORT_POPULAR -> catalog.popular(type, skip)
+                else -> catalog.discover(type, chosen, order, skip)
+            }
+        }) { items ->
+            if (items.isEmpty()) body.addView(text("Nothing here yet. Try another genre or sort.", 14, muted), margin(-1, -2, top = 20))
             mediaGrid(items)
-            if (query.isBlank() && items.isNotEmpty()) body.addView(button("More titles  ›") { catalogOffsets.getOrPut(type) { ArrayDeque() }.addLast(skip); catalogPage(type, skip = skip + items.size) }, margin(180, 42, top = 20))
+            if (query.isBlank() && items.isNotEmpty()) body.addView(button("More titles  ›") {
+                catalogOffsets.getOrPut(offsets) { ArrayDeque() }.addLast(skip)
+                catalogPage(type, skip = if (tmdb) skip + 1 else skip + items.size, genre = chosen, sort = order)
+            }, margin(180, 42, top = 20))
         }
     }
 
@@ -1887,7 +1975,11 @@ class MainActivity : Activity() {
         val EASE_OUT = android.view.animation.DecelerateInterpolator(1.6f)
         const val DETAILS_KEEP_MS = 10 * 60_000L
         /** Bump when the set of Home rows changes, so rows saved under the old set are not shown. */
-        const val SHELF_SET_VERSION = "2"
+        // 3: Top 10 charts and Latest Releases (saved shelves from before are not reused).
+        const val SHELF_SET_VERSION = "3"
+        const val TOP10_MOVIES = "Top 10 Movies"; const val TOP10_SHOWS = "Top 10 Shows"
+        const val SORT_NEWEST = "newest"
+        const val LATEST_MOVIES = "Latest Releases · Movies"; const val LATEST_SHOWS = "Latest Releases · Shows"
         const val RESUME_CARD_WIDTH = 300; const val RESUME_CARDS = "home.resume_cards"
         const val SYNOPSIS_MORE_CHARS = 220; const val CONTINUE_LIMIT = 30
         const val PHONE_INLINE_VALUE = 18; const val BOTTOM_BAR_HEIGHT = 56; const val PHONE_BAR_COLOR = 0xFF0B0B0B.toInt()
@@ -2982,7 +3074,7 @@ class MainActivity : Activity() {
             store.get("updates.startup") != "false", contentLabel = "Check for updates on startup") { on -> store.put("updates.startup", on.toString()) }
 
         val about = settingsGroup("About", null)
-        about.addView(text("POV Rajput fork by Rajput · Android TV port by Mark Mateo · based on the POV Kodi add-on by kodifitzwell (github.com/kodifitzwell/repo). Licensed under GNU GPL v3. WeTrakr tracking and API by alberdev (wetrakr.com). Catalogs: TMDB, Cinemeta and Kitsu. This product uses the TMDB API but is not endorsed or certified by TMDB. Playback: AndroidX Media3.", 12, muted).apply {
+        about.addView(text("POV Rajput fork by Rajput · Android TV port by Mark Mateo · based on the POV Kodi add-on by kodifitzwell (github.com/kodifitzwell/repo). Licensed under GNU GPL v3. WeTrakr tracking and API by alberdev (wetrakr.com). Catalogs: TMDB, Queued Up (queued-up.app), Cinemeta and Kitsu. This product uses the TMDB API but is not endorsed or certified by TMDB. Playback: AndroidX Media3, with FFmpeg audio decoding via Jellyfin's Media3 FFmpeg decoder.", 12, muted).apply {
             setLineSpacing(dp(2).toFloat(), 1f); setPadding(dp(14), dp(12), dp(14), dp(12))
         }, margin(-1, -2))
         settingsRow(about, "Open-source notices") {

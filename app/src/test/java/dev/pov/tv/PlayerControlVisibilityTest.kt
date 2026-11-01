@@ -25,7 +25,7 @@ import java.time.Duration
 class PlayerControlVisibilityTest {
     private val chromeIds = listOf(androidx.media3.ui.R.id.exo_progress, androidx.media3.ui.R.id.exo_play_pause,
         androidx.media3.ui.R.id.exo_rew, androidx.media3.ui.R.id.exo_ffwd, R.id.pov_audio,
-        R.id.pov_subtitles, R.id.pov_boost, R.id.pov_browse, R.id.pov_stop)
+        R.id.pov_speed, R.id.pov_browse, R.id.pov_stop)
 
     @Test fun `focused audio action does not pin timeline loading indicator or other controls after timeout`() {
         val owner = Robolectric.buildActivity(Activity::class.java).setup().visible()

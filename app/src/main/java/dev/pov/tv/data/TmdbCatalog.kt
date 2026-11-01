@@ -53,6 +53,29 @@ class TmdbCatalog internal constructor(
         } finally { pool.shutdownNow() }
     }
 
+    /** Discover: one page (20 titles) of TMDB's discover list, optionally one genre; titles without an IMDb id drop out. */
+    fun discover(type: String, genre: String, sort: String, page: Int): List<MediaItemData> {
+        val movie = type == "movie"
+        val genreId = if (genre.isEmpty()) null else requireNotNull(discoverGenres(type)[genre]) { "Unknown genre." }
+        val date = if (movie) "primary_release_date" else "first_air_date"
+        val order = when (sort) {
+            SORT_TOP_RATED -> "sort_by=vote_average.desc&vote_count.gte=${if (movie) 1000 else 300}"
+            // Only released titles, with a few votes so placeholder entries stay out.
+            SORT_NEWEST -> "sort_by=$date.desc&$date.lte=${java.time.LocalDate.now(java.time.ZoneOffset.UTC)}&vote_count.gte=${if (movie) 25 else 10}"
+            else -> "sort_by=popularity.desc"
+        }
+        val path = "/discover/${if (movie) "movie" else "tv"}?include_adult=false&page=${page.coerceIn(1, 500)}&$order" +
+            (genreId?.let { "&with_genres=$it" } ?: "")
+        val entries = results(Shelf("", type, path))
+        val pool = Executors.newFixedThreadPool(6)
+        try {
+            val missing = entries.map { it.first }.distinct().filter { ids.get(it) == null }
+            ids.put(missing.map { ref -> pool.submit(Callable { ref to runCatching { imdbId(ref) }.getOrNull() }) }
+                .mapNotNull { task -> task.get().let { (ref, imdb) -> imdb?.let { ref to it } } }.toMap())
+        } finally { pool.shutdownNow() }
+        return entries.mapNotNull { (ref, item) -> ids.get(ref)?.takeIf { it.startsWith("tt") }?.let { item.copy(imdbId = it) } }
+    }
+
     /** Checks the key with the smallest authenticated request. */
     fun validate() { json("/configuration") }
 
@@ -101,6 +124,19 @@ class TmdbCatalog internal constructor(
 
     companion object {
         private const val BASE = "https://api.themoviedb.org/3"
+        const val SORT_POPULAR = "popular"
+        const val SORT_TOP_RATED = "top_rated"
+        const val SORT_NEWEST = "newest"
+        /** Discover's genre chips: TMDB keeps separate genre ids for films and TV. */
+        fun discoverGenres(type: String): Map<String, Int> = if (type == "movie") linkedMapOf(
+            "Action" to 28, "Adventure" to 12, "Animation" to 16, "Comedy" to 35, "Crime" to 80, "Documentary" to 99,
+            "Drama" to 18, "Family" to 10751, "Fantasy" to 14, "History" to 36, "Horror" to 27, "Music" to 10402,
+            "Mystery" to 9648, "Romance" to 10749, "Sci-Fi" to 878, "Thriller" to 53, "War" to 10752, "Western" to 37,
+        ) else linkedMapOf(
+            "Action & Adventure" to 10759, "Animation" to 16, "Comedy" to 35, "Crime" to 80, "Documentary" to 99,
+            "Drama" to 18, "Family" to 10751, "Kids" to 10762, "Mystery" to 9648, "Reality" to 10764,
+            "Sci-Fi & Fantasy" to 10765, "Soap" to 10766, "Talk" to 10767, "War & Politics" to 10768, "Western" to 37,
+        )
         // TMDB's fixed genre ids for movies and TV.
         private val GENRES = mapOf(
             28 to "Action", 12 to "Adventure", 16 to "Animation", 35 to "Comedy", 80 to "Crime", 99 to "Documentary",
