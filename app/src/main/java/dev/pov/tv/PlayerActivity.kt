@@ -378,14 +378,15 @@ class PlayerActivity : Activity() {
         }
         if (error is VideoCompatibilityException) {
             showSheet("Choose a compatible video", error.issue.message,
-                listOf(PlayerSheetChoice("Choose another source") { InAppPlaybackSession.stop(); finish() }))
+                listOf(PlayerSheetChoice("Choose another source") { showStreams() }))
             return
         }
         showSheet("Playback stopped",
             "The link may have expired, the connection may be unavailable, or this TV may not support the format. Code: ${error.errorCodeName}",
             listOf(
                 PlayerSheetChoice("Retry") { if (!stopped) { observedError = null; InAppPlaybackSession.retry() } },
-                PlayerSheetChoice("Browse sources") { finish() }
+                // The title's other links open right here in the Streams panel; picking one continues from the same spot.
+                PlayerSheetChoice("Browse sources") { showStreams() }
             ))
     }
 
@@ -574,9 +575,9 @@ class PlayerActivity : Activity() {
 
     /** Prepares the picked link here in the player and switches to it at the same spot; the player never closes. */
     private fun pickStream(media: PlaybackIdentity, source: dev.pov.tv.data.SourceItem) {
-        val exo = player ?: return
         if (switching) { Toast.makeText(this, "Preparing the link you picked…", Toast.LENGTH_SHORT).show(); return }
-        val at = exo.currentPosition
+        // After a failure the player may already be gone; the saved position still lets the new link continue.
+        val at = player?.currentPosition ?: 0L
         val ordered = StreamChoices.items.orEmpty()
         activeDialog?.dismiss()
         runSwitch(media, source, at, "Preparing ${source.title.lineSequence().firstOrNull().orEmpty().take(60)}…") { switcher.prepare(source, media, ordered) }
@@ -828,7 +829,7 @@ class PlayerActivity : Activity() {
                 val from = exo.currentPosition
                 // Video starts from a keyframe; landing off one makes the TV decode forward to the spot, which is slow even
                 // when that video is loaded. So the seek lands on the keyframe closest to the target inside a window that
-                // always moves the way the viewer pressed: never back past where they were, at most 3 s beyond the target
+                // always moves the way the viewer pressed: never back past where they were, at most 6 s beyond the target (4K releases often have keyframes 4-5 s apart)
                 // and 5 s short of it. A short tap into loaded video then plays at once.
                 val distance = kotlin.math.abs(target - from)
                 val short = minOf(SEEK_SHORT_OF_MS, (distance - SEEK_KEEP_MOVING_MS).coerceAtLeast(0)) * 1000
@@ -1001,7 +1002,7 @@ class PlayerActivity : Activity() {
         private const val CARD_FADE_MS = 200L
         private const val STREAMS_SHOWN = 60
         /** A seek may land up to this far past its target, on a keyframe. */
-        const val SEEK_SNAP_MS = 3_000L
+        const val SEEK_SNAP_MS = 6_000L
         /** ...or up to this far short of it, but never back past where playback was. */
         const val SEEK_SHORT_OF_MS = 5_000L
         const val SEEK_KEEP_MOVING_MS = 500L
