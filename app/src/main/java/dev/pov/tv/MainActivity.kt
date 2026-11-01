@@ -2140,7 +2140,8 @@ class MainActivity : Activity() {
             }
         }
     }
-    private companion object { const val VOICE_REQUEST = 701; const val PLAYBACK_REQUEST = 702; const val MIC_REQUEST = 703; const val FLIX_ROW_LINE = 236; const val FEATURE_INTERVAL_MS = 5_000L; const val AUTOPLAY_FIRST = "sources.autoplay_first"; const val AUTOPLAY_MAX_GB = "sources.autoplay_max_gb"; const val AUTOPLAY_MAX_GB_EPISODE = "sources.autoplay_max_gb_episode"; const val AUTOPLAY_MAX_MBPS = "sources.autoplay_max_mbps"; const val AUTOPLAY_LIMIT_ON = "sources.autoplay_limit_on"; const val BACKDROP_WIDTH = 1280; const val CONTINUE_CACHE = "wetrakr.continue_cache"
+    private companion object {
+        private const val QR_DP = 110; const val VOICE_REQUEST = 701; const val PLAYBACK_REQUEST = 702; const val MIC_REQUEST = 703; const val FLIX_ROW_LINE = 236; const val FEATURE_INTERVAL_MS = 5_000L; const val AUTOPLAY_FIRST = "sources.autoplay_first"; const val AUTOPLAY_MAX_GB = "sources.autoplay_max_gb"; const val AUTOPLAY_MAX_GB_EPISODE = "sources.autoplay_max_gb_episode"; const val AUTOPLAY_MAX_MBPS = "sources.autoplay_max_mbps"; const val AUTOPLAY_LIMIT_ON = "sources.autoplay_limit_on"; const val BACKDROP_WIDTH = 1280; const val CONTINUE_CACHE = "wetrakr.continue_cache"
         const val TMDB_KEY = "tmdb.key"; const val TMDB_REGION = "tmdb.region"
         const val HOME_KEEP_MS = 15 * 60_000L
         const val HOME_BACKDROP_SCALE = 0.72f
@@ -3123,13 +3124,19 @@ class MainActivity : Activity() {
         val playback = settingsGroup("Playback", "nowplaying")
         settingsToggle(playback, "Seek previews (Seekr)", "Shows a thumbnail of the scene above the seek bar while you seek. Previews come from Seekr, which has them ready for many movies and shows. Needs your Seekr API key below.",
             SeekrPreferences(this).enabled) { on -> SeekrPreferences(this).enabled = on }
+        seekrInfo(playback)
         val seekr = store.get(SeekrPreferences.KEY)
         val seekrBuilt = BuildConfig.SEEKR_KEY.isNotBlank()
         settingsRow(playback, "Seekr API key", if (seekr.isNotBlank()) "Connected" else if (seekrBuilt) "Built in" else "Not set",
             "Put your API key from seekr.tv here to get thumbnail previews while seeking. Sign up at seekr.tv, copy your key (it starts with sk_live_) and paste it here. Titles Seekr doesn't have simply show no preview.",
             status = seekr.isNotBlank() || seekrBuilt) {
             inputSetting("Seekr API key", "Paste your key from seekr.tv (sk_live_...)", "", secret = true) { key ->
-                store.put(SeekrPreferences.KEY, key.trim()); toast("Seekr key saved"); refreshSettings()
+                store.put(SeekrPreferences.KEY, key.trim()); refreshSettings()
+                // Ask Seekr whether it accepts the key, so a typo is caught here rather than as missing previews later.
+                Thread {
+                    val ok = runCatching { kotlinx.coroutines.runBlocking { tv.seekr.previews.android.Seekr.create(key.trim()).validateKey() } }.getOrNull()
+                    runOnUiThread { toast(when (ok) { true -> "Seekr key saved · ✓ Seekr accepts the key"; false -> "Seekr key saved, but Seekr doesn't accept it. Check the key."; null -> "Seekr key saved (couldn't reach Seekr to check it)" }) }
+                }.start()
             }
         }
         if (seekr.isNotBlank()) settingsRow(playback, "Remove Seekr key", danger = true) {
@@ -3278,7 +3285,7 @@ class MainActivity : Activity() {
             store.get("updates.startup") != "false", contentLabel = "Check for updates on startup") { on -> store.put("updates.startup", on.toString()) }
 
         val about = settingsGroup("About", null)
-        about.addView(text("POV Rajput fork by Rajput · Android TV port by Mark Mateo · based on the POV Kodi add-on by kodifitzwell (github.com/kodifitzwell/repo). Licensed under GNU GPL v3. WeTrakr tracking and API by alberdev (wetrakr.com). Catalogs: TMDB, Queued Up (queued-up.app), Cinemeta, Kitsu and your own catalog add-ons. Subtitles found online: OpenSubtitles, and Wyzie Subs with your key. This product uses the TMDB API but is not endorsed or certified by TMDB. Playback: AndroidX Media3, with FFmpeg audio decoding via Jellyfin's Media3 FFmpeg decoder.", 12, muted).apply {
+        about.addView(text("POV Rajput fork by Rajput · Android TV port by Mark Mateo · based on the POV Kodi add-on by kodifitzwell (github.com/kodifitzwell/repo). Licensed under GNU GPL v3. WeTrakr tracking and API by alberdev (wetrakr.com). Catalogs: TMDB, Queued Up (queued-up.app), Cinemeta, Kitsu and your own catalog add-ons. Subtitles found online: OpenSubtitles, and Wyzie Subs with your key. Seek previews: Seekr (seekr.tv) with your key; support it at buymeacoffee.com/seekrtvdev. This product uses the TMDB API but is not endorsed or certified by TMDB. Playback: AndroidX Media3, with FFmpeg audio decoding via Jellyfin's Media3 FFmpeg decoder.", 12, muted).apply {
             setLineSpacing(dp(2).toFloat(), 1f); setPadding(dp(14), dp(12), dp(14), dp(12))
         }, margin(-1, -2))
         settingsRow(about, "Open-source notices") {
@@ -3335,6 +3342,47 @@ class MainActivity : Activity() {
                                contentLabel: String = label, changed: (Boolean) -> Unit) {
         settingsDivider(card)
         card.addView(toggleRow(label, description, initial, contentLabel, changed), margin(-1, -2))
+    }
+
+    /**
+     * About Seekr, with QR codes to get a key and to support the developer who runs it. On a phone the codes also open
+     * the links when tapped.
+     */
+    private fun seekrInfo(card: LinearLayout) {
+        settingsDivider(card)
+        val box = column().apply { setPadding(dp(14), dp(11), dp(12), dp(11)) }
+        box.addView(text("Seekr (seekr.tv) serves ready-made seek-preview thumbnails for movies and shows, so the player downloads nothing extra for them. " +
+            "Get your own free key at seekr.tv/join and paste it below. Seekr is run by an independent developer: if it works well for you, " +
+            "consider supporting its running costs at buymeacoffee.com/seekrtvdev.", 11, muted).apply { setLineSpacing(dp(1).toFloat(), 1f) })
+        val codes = LinearLayout(this).apply { gravity = Gravity.START }
+        listOf(Triple("Get a key", "seekr.tv/join", "https://seekr.tv/join"),
+            Triple("Support Seekr", "buymeacoffee.com/seekrtvdev", "https://buymeacoffee.com/seekrtvdev")).forEach { (title, shown, link) ->
+            val tile = column().apply {
+                gravity = Gravity.CENTER_HORIZONTAL; setPadding(dp(10), dp(10), dp(10), dp(8))
+                background = rounded(withAlpha(Color.WHITE, 14), 12)
+                val qr = ImageView(this@MainActivity).apply {
+                    setImageBitmap(qrBitmap(link, dp(QR_DP))); background = rounded(Color.WHITE, 8); setPadding(dp(6), dp(6), dp(6), dp(6))
+                }
+                addView(qr, LinearLayout.LayoutParams(dp(QR_DP), dp(QR_DP)))
+                addView(text(title, 13, ink, true).apply { gravity = Gravity.CENTER }, margin(-2, -2, top = 8))
+                addView(text(shown, 10, muted).apply { gravity = Gravity.CENTER }, margin(-2, -2, top = 3))
+                if (DeviceLayout.phone) {
+                    isClickable = true
+                    setOnClickListener { runCatching { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(link))) }.onFailure { toast(shown) } }
+                }
+            }
+            codes.addView(tile, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(14) })
+        }
+        box.addView(codes, margin(-1, -2, top = 12))
+        card.addView(box, margin(-1, -2))
+    }
+
+    private fun qrBitmap(text: String, size: Int): android.graphics.Bitmap {
+        val matrix = com.google.zxing.qrcode.QRCodeWriter().encode(text, com.google.zxing.BarcodeFormat.QR_CODE, size, size,
+            mapOf(com.google.zxing.EncodeHintType.MARGIN to 1))
+        val width = matrix.width; val height = matrix.height
+        val pixels = IntArray(width * height) { index -> if (matrix[index % width, index / width]) Color.BLACK else Color.WHITE }
+        return android.graphics.Bitmap.createBitmap(pixels, width, height, android.graphics.Bitmap.Config.ARGB_8888)
     }
 
     /** Rebuilds Settings after a change, returning focus and scroll to the row the viewer was on. */

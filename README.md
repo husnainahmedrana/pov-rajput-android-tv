@@ -136,6 +136,7 @@ Pushes to `main`, pull requests and manual runs build APKs after unit tests and 
 - **[WeTrakr](https://wetrakr.com/) and [alberdev](https://www.reddit.com/user/alberdev/), its developer** — tracking service, API, official logo and developer access that made this integration possible.
 - **[TMDB](https://www.themoviedb.org/)** — this product uses the TMDB API but is not endorsed or certified by TMDB.
 - **[Queued Up](https://queued-up.app/)** — the free community Stremio catalog add-on behind the Latest Releases rows, and the Top 10 and Newest lists without a TMDB key.
+- **[Seekr](https://seekr.tv)** — ready-made seek preview thumbnails, with your own free key from [seekr.tv/join](https://seekr.tv/join). If it works well for you, consider [supporting Seekr](https://buymeacoffee.com/seekrtvdev).
 - **[OpenSubtitles](https://www.opensubtitles.org/)** — subtitles found online when a video has none in your language (via its free Stremio add-on), plus **[Wyzie Subs](https://sub.wyzie.io/)** with your own key.
 - **[FFmpeg](https://ffmpeg.org/)** and **[Jellyfin](https://github.com/jellyfin/jellyfin-androidx-media)** — software audio decoding through Jellyfin's prebuilt Media3 FFmpeg decoder.
 - **Cinemeta**, **Kitsu**, **Android Open Source Project / AndroidX Media3** and **JetBrains / Kotlin**.
