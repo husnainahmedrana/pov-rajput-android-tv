@@ -1,0 +1,7 @@
+# Pre-compile the app's own code and the player UI/animation paths it uses on every screen.
+HSPLdev/pov/tv/**->**(**)**
+Ldev/pov/tv/**;
+HSPLandroidx/media3/ui/**->**(**)**
+Landroidx/media3/ui/**;
+HSPLandroidx/media3/exoplayer/**->**(**)**
+Landroidx/media3/exoplayer/**;

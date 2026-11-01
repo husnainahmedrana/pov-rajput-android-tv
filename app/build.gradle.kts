@@ -88,6 +88,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // QR code for device sign-in (encoder only).
     implementation("com.google.zxing:core:3.5.3")
+    // Installs the baseline profile (src/main/baseline-prof.txt) so sideloaded installs run pre-compiled code early.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     // Seekr (seekr.tv) ready-made seek preview thumbnails, with the viewer's own API key.
     implementation("tv.seekr:seekr-android:0.2.0")
     testImplementation("junit:junit:4.13.2")

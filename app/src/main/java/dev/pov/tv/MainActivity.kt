@@ -678,6 +678,8 @@ class MainActivity : Activity() {
             // Credits live in Settings → About; Home ends at its last shelf. The feature's Play starts focused.
             if (!flix) homeCredit()
             body.post { dismissSplash() }
+            if (flix) warmUpHome((movies.take(3) + series.take(3) + shelves.filter { it.title != TOP10_MOVIES && it.title != TOP10_SHOWS }
+                .take(2).flatMap { it.items.take(2) }).distinct())
             if (flix) {
                 if (homeMenuFocus) { homeMenuFocus = false; wantsContentFocus = false; if (navigationViews.values.none { it.hasFocus() }) openMenu() } else focusAfterRender(id)
             }
@@ -1383,6 +1385,34 @@ class MainActivity : Activity() {
         frame.findViewWithTag<TextView>("feature-description").apply { text = item.description; visibility = if (item.description.isBlank()) View.GONE else View.VISIBLE }
         // A longer description may now reach the shelf above the focused one.
         if (isHome && flixScrollTarget > 0) frame.post { if (isHome && flixScrollTarget > 0) fadeShelvesAbove(flixScrollTarget + featureCopyBottom()) }
+    }
+
+    private var warmedUp = false
+    /**
+     * After Home appears, while the viewer looks: prepare the hero backdrops of the first posters (download and shade),
+     * and run the focus animation code once off-screen, so the first move isn't the one that pays for all of it.
+     */
+    private fun warmUpHome(items: List<MediaItemData>) {
+        window.decorView.postDelayed({
+            if (isDestroyed || !isHome) return@postDelayed
+            if (!warmedUp) {
+                warmedUp = true
+                runCatching {
+                    val probe = FrameLayout(this)
+                    FadeDrawable.foreground(probe, FocusRingDrawable(Color.WHITE, dp(4).toFloat(), true, dp(1).toFloat()))
+                    SlidingFocusPill(LinearLayout(this), fadeText = false, ring = 2f).focusChanged(probe, false)
+                    android.graphics.drawable.TransitionDrawable(arrayOf(android.graphics.drawable.ColorDrawable(0), android.graphics.drawable.ColorDrawable(0))).startTransition(1)
+                    android.animation.ValueAnimator.ofFloat(0f, 1f).setDuration(16).start()
+                }
+            }
+            items.take(WARM_BACKDROPS).forEach { item ->
+                val address = backdropFor(item)
+                val key = "backdrop-corner:$address"
+                if (address.startsWith("https://") && bitmapCache.get(key) == null) featureImages.execute {
+                    runCatching { fetchBitmap(address, BACKDROP_WIDTH)?.let { shadedBackdrop(it, true) }?.let { bitmapCache.put(key, it) } }
+                }
+            }
+        }, 1_500)
     }
 
     private fun scheduleFeature(item: MediaItemData) {
@@ -2163,7 +2193,7 @@ class MainActivity : Activity() {
         }
     }
     private companion object {
-        private const val QR_DP = 110; const val BACKDROP_FADE_MS = 220; const val VOICE_REQUEST = 701; const val PLAYBACK_REQUEST = 702; const val MIC_REQUEST = 703; const val FLIX_ROW_LINE = 236; const val FEATURE_INTERVAL_MS = 5_000L; const val AUTOPLAY_FIRST = "sources.autoplay_first"; const val AUTOPLAY_MAX_GB = "sources.autoplay_max_gb"; const val AUTOPLAY_MAX_GB_EPISODE = "sources.autoplay_max_gb_episode"; const val AUTOPLAY_MAX_MBPS = "sources.autoplay_max_mbps"; const val AUTOPLAY_LIMIT_ON = "sources.autoplay_limit_on"; const val BACKDROP_WIDTH = 1280; const val CONTINUE_CACHE = "wetrakr.continue_cache"
+        private const val QR_DP = 110; const val WARM_BACKDROPS = 6; const val HIDE_UNCACHED = "sources.hide_uncached"; const val BACKDROP_FADE_MS = 220; const val VOICE_REQUEST = 701; const val PLAYBACK_REQUEST = 702; const val MIC_REQUEST = 703; const val FLIX_ROW_LINE = 236; const val FEATURE_INTERVAL_MS = 5_000L; const val AUTOPLAY_FIRST = "sources.autoplay_first"; const val AUTOPLAY_MAX_GB = "sources.autoplay_max_gb"; const val AUTOPLAY_MAX_GB_EPISODE = "sources.autoplay_max_gb_episode"; const val AUTOPLAY_MAX_MBPS = "sources.autoplay_max_mbps"; const val AUTOPLAY_LIMIT_ON = "sources.autoplay_limit_on"; const val BACKDROP_WIDTH = 1280; const val CONTINUE_CACHE = "wetrakr.continue_cache"
         const val TMDB_KEY = "tmdb.key"; const val TMDB_REGION = "tmdb.region"
         const val HOME_KEEP_MS = 15 * 60_000L
         const val HOME_BACKDROP_SCALE = 0.72f
@@ -2576,8 +2606,11 @@ class MainActivity : Activity() {
         }
         val connected = DebridServices.connected(store)
         val directOnly = connected.isEmpty()
-        val playable = if (directOnly) sources.filter { it.directUrl.isNotEmpty() } else sources
         val checkOnPlay = connected.filter { it in LinkDebrids.CHECK_ON_PLAY }
+        // Hide uncached links: only links known not to be cached go; Real-Debrid-style services can't tell, so theirs stay.
+        val hideUncached = store.get(HIDE_UNCACHED) == "true" && checkOnPlay.isEmpty()
+        val playable = (if (directOnly) sources.filter { it.directUrl.isNotEmpty() } else sources)
+            .let { all -> if (hideUncached) all.filter(::playsAtOnce) else all }
         val suffix = if (identity.type == "series") "  ·  S${identity.season} E${identity.episode}" else ""
         val id = page(identity.title + suffix, if (directOnly) "Direct links only. Torrent sources need a debrid service."
             else "Cached source priority: ${connected.joinToString(" → ") { DebridServices.name(it) }}.")
@@ -2587,7 +2620,9 @@ class MainActivity : Activity() {
         }, margin(-1, 42, bottom = 8))
         if (unavailable.isNotEmpty()) body.addView(text("Unavailable providers: ${unavailable.joinToString(", ")}. Other providers were searched.", 14, muted), margin(-1, -2, bottom = 8))
         if (sources.isEmpty()) body.addView(text("No sources were returned. Try again later or check the source provider in Settings.", 15, muted))
-        else if (playable.isEmpty()) {
+        else if (playable.isEmpty() && hideUncached) {
+            body.addView(text("Only uncached links were found. Turn off Hide uncached links in Settings → Playback to see them.", 15, muted))
+        } else if (playable.isEmpty()) {
             body.addView(text("Only torrent sources were found. Connect a debrid service to play them.", 15, muted))
             body.addView(button("Connect a debrid service in Settings") { navigate { settings() } }, margin(-1, 44, top = 8))
         }
@@ -2635,9 +2670,15 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Cached somewhere, or a direct link: plays at once. */
+    private fun playsAtOnce(source: SourceItem) = source.cached || source.cachedServices.isNotEmpty() || source.directUrl.isNotEmpty()
+
     /** The links of [sources] as the source list shows them: playable ones, in the viewer's order, too-tall last. */
     private fun orderForStreams(sources: List<SourceItem>): List<SourceItem> {
-        val playable = if (DebridServices.connected(store).isEmpty()) sources.filter { it.directUrl.isNotEmpty() } else sources
+        val connected = DebridServices.connected(store)
+        val hideUncached = store.get(HIDE_UNCACHED) == "true" && connected.none { it in LinkDebrids.CHECK_ON_PLAY }
+        val playable = (if (connected.isEmpty()) sources.filter { it.directUrl.isNotEmpty() } else sources)
+            .let { all -> if (hideUncached) all.filter(::playsAtOnce) else all }
         val sorting = SourceSortPreferences(this)
         val limit = DecoderLimits.maxHeight()
         fun tooTall(source: SourceItem) = (source.qualityHeight ?: 0) > limit
@@ -3302,6 +3343,8 @@ class MainActivity : Activity() {
         }
         settingsToggle(playback, "Auto-play first result", "Play starts the first cached or direct link in your sort order. The full list stays open behind it, so you can pick another link if it fails.",
             store.get(AUTOPLAY_FIRST) == "true") { on -> store.put(AUTOPLAY_FIRST, on.toString()) }
+        settingsToggle(playback, "Hide uncached links", "Show only links that play at once (cached or direct) in the link list and the player's Streams. Real-Debrid, AllDebrid and Debrid-Link can't tell in advance, so their links stay.",
+            store.get(HIDE_UNCACHED) == "true") { on -> store.put(HIDE_UNCACHED, on.toString()) }
         settingsToggle(playback, "Auto-play limit", "Auto-play skips links above your bitrate limit (file size over the title's runtime). When the runtime is unknown, the movie or episode size limit applies. Links of unknown size can still play, and you can still choose any link yourself.",
             store.get(AUTOPLAY_LIMIT_ON) == "true") { on -> store.put(AUTOPLAY_LIMIT_ON, on.toString()); refreshSettings() }
         if (store.get(AUTOPLAY_LIMIT_ON) == "true") {
