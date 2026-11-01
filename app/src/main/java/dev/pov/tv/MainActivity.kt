@@ -592,7 +592,7 @@ class MainActivity : Activity() {
 
     private fun Int?.orZero() = this ?: 0
     private fun pageRevision() = java.security.MessageDigest.getInstance("SHA-256").digest(
-        listOf(theme.id, wetrakr.accountRevision(), store.get("offcloud.key"), store.get("torbox.token"), store.get("wetrakr.home_liked_opt_in"), store.get("sources.endpoint"), store.get(SourceProviders.KEY), store.get(TMDB_KEY), store.get(TMDB_REGION), store.get(RESUME_CARDS)).joinToString("\u0000").toByteArray()
+        listOf(theme.id, wetrakr.accountRevision(), store.get("offcloud.key"), store.get("torbox.token"), store.get("wetrakr.home_liked_opt_in"), store.get("sources.endpoint"), store.get(SourceProviders.KEY), store.get(TMDB_KEY), store.get(TMDB_REGION), store.get(RESUME_CARDS), store.get(CatalogAddons.KEY), homeRows.revision).joinToString("\u0000").toByteArray()
     ).joinToString("") { "%02x".format(it.toInt() and 255) }
     private fun focusAfterRender(id: Int) {
         body.post {
@@ -655,7 +655,7 @@ class MainActivity : Activity() {
             var topTenPending = flix && compact
             shelves.filter { it.title != TOP10_MOVIES && it.title != TOP10_SHOWS }.forEach { shelf ->
                 if (shelf.items.isNotEmpty()) {
-                    mediaRow(shelf.title, shelf.items)
+                    mediaRow(shelf.title, shelf.items, seeAll = if (rowPageable(shelf.id)) ({ navigate { rowGrid(shelf) } }) else null)
                     // With Continue Watching on the first screen, the tall Top 10 shelves follow the first regular row.
                     if (topTenPending) { topTenPending = false; rankedRow("Top 10 Movies", movies); rankedRow("Top 10 Shows", series) }
                 } else {
@@ -701,7 +701,7 @@ class MainActivity : Activity() {
     private var pendingShelves: List<CatalogApi.HomeShelf>? = null
     /** Saved rows belong to one catalog setup: changing the TMDB key, country or theme starts fresh. */
     private fun shelfRevision() = java.security.MessageDigest.getInstance("SHA-256")
-        .digest(listOf(SHELF_SET_VERSION, theme.id, store.get(TMDB_KEY), tmdbRegion()).joinToString("\u0000").toByteArray())
+        .digest(listOf(SHELF_SET_VERSION, theme.id, store.get(TMDB_KEY), tmdbRegion(), store.get(CatalogAddons.KEY), homeRows.revision).joinToString("\u0000").toByteArray())
         .joinToString("") { "%02x".format(it.toInt() and 255) }
 
     private fun cachedContinueWatching(): List<Pair<PlaybackIdentity, Double>>? = try {
@@ -718,15 +718,23 @@ class MainActivity : Activity() {
     private fun homeShelves(): List<CatalogApi.HomeShelf> {
         val key = if (publicPreview) "" else store.get(TMDB_KEY)
         val queued = QueuedUpCatalog(this)
-        val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(6)
         try {
             fun ask(list: () -> List<MediaItemData>?) = pool.submit(java.util.concurrent.Callable { runCatching(list).getOrNull() })
             val trending = listOf("movie", "series").associateWith { type -> ask { queued.trending(type) } }
             val latest = listOf("movie", "series").associateWith { type -> ask { queued.latest(type) } }
+            // The viewer's catalog add-ons load alongside; each is someone else's service, so a failure only marks its row.
+            val addonTasks = if (publicPreview) emptyList() else catalogAddons.load().flatMap { addon -> addon.catalogs.map { catalog ->
+                Triple(addon, catalog, pool.submit(java.util.concurrent.Callable { runCatching { catalogAddons.items(addon, catalog) } })) } }
             // A slow Queued Up must not hold Home back; past this wait its rows use the fallbacks.
             fun answer(task: java.util.concurrent.Future<List<MediaItemData>?>?) =
                 try { task?.get(6, java.util.concurrent.TimeUnit.SECONDS) } catch (_: Exception) { null }?.takeIf { it.isNotEmpty() }
-            fun row(title: String, type: String, items: List<MediaItemData>) = CatalogApi.HomeShelf(title, type, items)
+            fun addonRows() = addonTasks.map { (addon, catalog, task) ->
+                val result = try { task.get(8, java.util.concurrent.TimeUnit.SECONDS) } catch (failure: Exception) { Result.failure(failure) }
+                CatalogApi.HomeShelf(catalog.name, catalog.type, result.getOrDefault(emptyList()), result.isFailure, CatalogAddons.rowId(addon, catalog))
+            }
+            fun row(id: String, title: String, type: String, items: List<MediaItemData>) = CatalogApi.HomeShelf(title, type, items, id = id)
+            fun CatalogApi.HomeShelf?.named(id: String) = this?.copy(id = id)
             if (key.isNotBlank()) {
                 val tmdb = TmdbCatalog(this, key, tmdbRegion())
                 val shelves = tmdb.homeShelves()
@@ -734,8 +742,9 @@ class MainActivity : Activity() {
                     fun shelf(title: String) = shelves.firstOrNull { it.title == title }
                     fun newest(type: String) = answer(latest[type]) ?: runCatching { tmdb.discover(type, "", TmdbCatalog.SORT_NEWEST, 1) }.getOrDefault(emptyList())
                     return homeLineup(shelf("Trending Movies Today")?.items.orEmpty(), shelf("Trending Shows Today")?.items.orEmpty(), listOf(
-                        row(LATEST_MOVIES, "movie", newest("movie")), shelf("Now Playing in Cinemas"),
-                        row(LATEST_SHOWS, "series", newest("series")), shelf("Popular Movies"), shelf("Popular Shows")))
+                        row(ROW_LATEST_MOVIES, LATEST_MOVIES, "movie", newest("movie")), shelf("Now Playing in Cinemas").named(ROW_CINEMAS),
+                        row(ROW_LATEST_SHOWS, LATEST_SHOWS, "series", newest("series")), shelf("Popular Movies").named(ROW_POPULAR_MOVIES),
+                        shelf("Popular Shows").named(ROW_POPULAR_SHOWS)) + addonRows())
                 }
                 runOnUiThread { toast("TMDB is unavailable. Showing Cinemeta catalogs instead.") }
             }
@@ -744,15 +753,179 @@ class MainActivity : Activity() {
             val newMovies = shelf("New Movies")?.items.orEmpty()
             val newShows = shelf("New Shows")?.items.orEmpty()
             return homeLineup(answer(trending["movie"]) ?: newMovies, answer(trending["series"]) ?: newShows, listOf(
-                row(LATEST_MOVIES, "movie", answer(latest["movie"]) ?: newMovies), row(LATEST_SHOWS, "series", answer(latest["series"]) ?: newShows),
-                shelf("Featured Movies"), shelf("Featured Shows"), shelf("Popular Movies"), shelf("Popular Shows")))
+                row(ROW_LATEST_MOVIES, LATEST_MOVIES, "movie", answer(latest["movie"]) ?: newMovies),
+                row(ROW_LATEST_SHOWS, LATEST_SHOWS, "series", answer(latest["series"]) ?: newShows),
+                shelf("Featured Movies").named(ROW_FEATURED_MOVIES), shelf("Featured Shows").named(ROW_FEATURED_SHOWS),
+                shelf("Popular Movies").named(ROW_POPULAR_MOVIES), shelf("Popular Shows").named(ROW_POPULAR_SHOWS)) + addonRows())
         } finally { pool.shutdownNow() }
+    }
+
+    private val homeRows by lazy {
+        val preferences = getSharedPreferences("pov_home_rows", MODE_PRIVATE)
+        HomeRows({ preferences.getString(it, null) }, { key, value -> preferences.edit().apply { if (value == null) remove(key) else putString(key, value) }.apply() })
+    }
+    private val catalogAddons get() = CatalogAddons(store)
+
+    /** Every row the viewer can place on Home right now, in default order: built-in rows for this setup, then add-on rows. */
+    private fun editableHomeRows(): List<HomeRow> {
+        val builtIn = if (store.get(TMDB_KEY).isNotBlank()) listOf(
+            HomeRow(ROW_LATEST_MOVIES, LATEST_MOVIES), HomeRow(ROW_CINEMAS, "Now Playing in Cinemas"), HomeRow(ROW_LATEST_SHOWS, LATEST_SHOWS),
+            HomeRow(ROW_POPULAR_MOVIES, "Popular Movies"), HomeRow(ROW_POPULAR_SHOWS, "Popular Shows"))
+        else listOf(HomeRow(ROW_LATEST_MOVIES, LATEST_MOVIES), HomeRow(ROW_LATEST_SHOWS, LATEST_SHOWS),
+            HomeRow(ROW_FEATURED_MOVIES, "Featured Movies"), HomeRow(ROW_FEATURED_SHOWS, "Featured Shows"),
+            HomeRow(ROW_POPULAR_MOVIES, "Popular Movies"), HomeRow(ROW_POPULAR_SHOWS, "Popular Shows"))
+        val addons = catalogAddons.load().flatMap { addon -> addon.catalogs.map { HomeRow(CatalogAddons.rowId(addon, it), "${it.name} (${addon.name})") } }
+        return builtIn + addons
+    }
+
+    private fun rowPageable(id: String) = id.isNotBlank() && id != ROW_CINEMAS
+
+    /**
+     * One page of a Home row's catalog for "See all": [page] counts pages from 1 (TMDB), [skip] counts titles
+     * (Stremio catalogs). Call on a worker.
+     */
+    private fun rowPage(id: String, page: Int, skip: Int): List<MediaItemData> {
+        val key = if (publicPreview) "" else store.get(TMDB_KEY)
+        val tmdb = if (key.isNotBlank()) TmdbCatalog(this, key, tmdbRegion()) else null
+        val type = id.substringAfter(':').substringBefore(':')
+        return when {
+            id.startsWith("latest:") -> QueuedUpCatalog(this).newest(type, "", skip)
+                ?: tmdb?.discover(type, "", TmdbCatalog.SORT_NEWEST, page)
+                ?: if (skip == 0) catalog.newReleases(type) else emptyList()
+            id.startsWith("popular:") -> tmdb?.discover(type, "", TmdbCatalog.SORT_POPULAR, page) ?: catalog.popular(type, skip)
+            id.startsWith("featured:") -> catalog.discover(type, "", CatalogApi.SORT_FEATURED, skip)
+            id.startsWith("addon:") -> {
+                val parts = id.split(":", limit = 4)
+                val addon = catalogAddons.load().firstOrNull { it.id == parts.getOrNull(1) } ?: throw IllegalStateException("This catalog add-on was removed.")
+                val chosen = addon.catalogs.firstOrNull { it.type == parts.getOrNull(2) && it.id == parts.getOrNull(3) } ?: throw IllegalStateException("This catalog was removed.")
+                catalogAddons.items(addon, chosen, skip)
+            }
+            else -> emptyList()
+        }
+    }
+
+    /** "See all" for a Home row: its whole catalog, a page at a time; "More titles" adds the next page below. */
+    private fun rowGrid(shelf: CatalogApi.HomeShelf) {
+        current = { rowGrid(shelf) }; val id = page(shelf.title)
+        val host = column(); body.addView(host)
+        val seen = mutableSetOf<String>()
+        fun more(page: Int, skip: Int) {
+            read(id, { rowPage(shelf.id, page, skip) }) { items ->
+                val fresh = items.filter { seen.add(it.type + it.imdbId) }
+                if (page == 1 && fresh.isEmpty()) { mediaGrid(shelf.items, host = host); focusAfterRender(id); return@read }
+                val before = host.childCount
+                if (fresh.isNotEmpty()) mediaGrid(fresh, host = host)
+                if (page == 1) focusAfterRender(id)
+                else (host.getChildAt(before) as? ViewGroup)?.getChildAt(0)?.takeIf { DeviceLayout.tv }?.requestFocus()
+                if (fresh.isNotEmpty()) host.addView(button("More titles  ›") {}.apply {
+                    tag = "row-more"
+                    setOnClickListener { host.removeView(this); more(page + 1, skip + items.size) }
+                }, margin(180, 42, top = 20))
+            }
+        }
+        more(1, 0)
+    }
+
+    /** Settings → Home rows: order and switch off the rows after Top 10, and manage catalog add-ons. */
+    private fun homeRowsPage(focusTag: String? = null) {
+        current = { homeRowsPage() }
+        destination = "settings"; refreshNavigation()
+        page("Home rows", "Continue Watching and Top 10 stay at the top. Arrange the rows that follow them.")
+        val rows = homeRows.arrange(editableHomeRows()) { it.id }
+        val ids = rows.map { it.id }
+        val hidden = homeRows.hidden
+        val list = settingsGroup("Rows after Top 10", "home")
+        rows.forEachIndexed { index, row ->
+            settingsDivider(list)
+            val on = row.id !in hidden
+            val line = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(8), dp(8)) }
+            line.addView(text(row.title, 14, if (on) ink else muted, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END },
+                LinearLayout.LayoutParams(0, -2, 1f))
+            fun control(label: String, tagName: String, description: String, enabled: Boolean, action: () -> Unit) {
+                line.addView(button(label) { if (enabled) action() }.apply {
+                    gravity = Gravity.CENTER; tag = "$tagName:${row.id}"; contentDescription = description
+                    alpha = if (enabled) 1f else 0.3f; isFocusable = enabled
+                }, margin(if (label.length > 2) 64 else 46, 38).apply { leftMargin = dp(6) })
+            }
+            control("▲", "row-up", "Move ${row.title} up", index > 0) { homeRows.move(ids, row.id, true); homeRowsPage("row-up:${row.id}") }
+            control("▼", "row-down", "Move ${row.title} down", index < rows.lastIndex) { homeRows.move(ids, row.id, false); homeRowsPage("row-down:${row.id}") }
+            control(if (on) "On" else "Off", "row-on", "${row.title} · ${if (on) "On" else "Off"}", true) { homeRows.setVisible(row.id, !on); homeRowsPage("row-on:${row.id}") }
+            list.addView(line, margin(-1, -2))
+        }
+        settingsRow(list, "Reset to default order", "", "Default order, every row on.") {
+            confirm("Reset Home rows to the default order, with every row on?") { homeRows.reset(); homeRowsPage() }
+        }
+
+        val addons = settingsGroup("Catalog add-ons", "library")
+        catalogAddons.load().forEach { addon ->
+            settingsRow(addons, addon.name, "${addon.catalogs.size} ${if (addon.catalogs.size == 1) "row" else "rows"}", "Select to choose its rows or remove it.") { catalogAddonActions(addon) }
+        }
+        settingsRow(addons, "Add catalog add-on", "", "Paste a Stremio catalog add-on URL, such as your AIOMetadata manifest, then pick the catalogs to show on Home.") { addCatalogAddon() }
+        body.addView(View(this), margin(-1, 24))
+        val wanted = focusTag
+        body.post {
+            if (isDestroyed || destination != "settings") return@post
+            if (wanted != null) body.findViewWithTag<View>(wanted)?.takeIf { it.isFocusable }?.let { target ->
+                target.requestFocus(); val rect = android.graphics.Rect(); target.getDrawingRect(rect); body.offsetDescendantRectToMyCoords(target, rect)
+                scroller.scrollTo(0, (rect.centerY() - scroller.height / 2).coerceAtLeast(0))
+            } else focusAfterRender(generation)
+        }
+    }
+
+    private fun addCatalogAddon() {
+        inputSetting("Add catalog add-on", "HTTPS add-on or manifest.json URL", "") { address ->
+            load(generation, { address to catalogAddons.inspect(address) }) { (url, found) ->
+                val (name, catalogs) = found
+                if (catalogs.isEmpty()) toast("$name has no movie or TV catalogs that can be Home rows.")
+                else pickAddonCatalogs(null, url, name, catalogs)
+            }
+        }
+    }
+
+    private fun pickAddonCatalogs(existing: CatalogAddon?, address: String, name: String, catalogs: List<AddonCatalog>) {
+        val picked = BooleanArray(catalogs.size) { index ->
+            existing?.catalogs?.any { it.type == catalogs[index].type && it.id == catalogs[index].id } ?: (index < 4)
+        }
+        AlertDialog.Builder(this).setTitle("$name · rows for Home")
+            .setMultiChoiceItems(catalogs.map { it.name }.toTypedArray(), picked) { _, index, checked -> picked[index] = checked }
+            .setPositiveButton("Save") { _, _ ->
+                val chosen = catalogs.filterIndexed { index, _ -> picked[index] }
+                if (chosen.isEmpty()) { toast("Pick at least one catalog"); return@setPositiveButton }
+                try {
+                    val all = catalogAddons.load()
+                    if (existing == null) {
+                        require(all.none { it.address == SourceProviders.endpoint(address) }) { "This add-on is already added." }
+                        catalogAddons.save(all + catalogAddons.create(address, name, chosen))
+                    } else {
+                        catalogAddons.save(all.map { if (it.id == existing.id) it.copy(catalogs = chosen) else it })
+                        existing.catalogs.filterNot { old -> chosen.any { it.type == old.type && it.id == old.id } }
+                            .forEach { homeRows.forget(CatalogAddons.rowId(existing, it)) }
+                    }
+                    toast("${chosen.size} ${if (chosen.size == 1) "row" else "rows"} from $name added to Home")
+                    homeRowsPage()
+                } catch (error: Exception) { toast(uiErrorMessage(error)) }
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun catalogAddonActions(addon: CatalogAddon) {
+        AlertDialog.Builder(this).setTitle(addon.name)
+            .setItems(arrayOf("Choose rows", "Remove")) { _, index ->
+                if (index == 0) load(generation, { catalogAddons.inspect(addon.address) }) { (_, catalogs) ->
+                    if (catalogs.isEmpty()) toast("${addon.name} has no movie or TV catalogs right now.")
+                    else pickAddonCatalogs(addon, addon.address, addon.name, catalogs)
+                }
+                else confirm("Remove ${addon.name} and its rows from Home?") {
+                    catalogAddons.save(catalogAddons.load().filterNot { it.id == addon.id })
+                    homeRows.forget("addon:${addon.id}:"); homeRowsPage()
+                }
+            }.setNegativeButton("Back", null).show()
     }
 
     /** Top 10 shelves first; titles already in a Top 10 leave the other rows, and a row emptied that way is dropped. */
     private fun homeLineup(movies: List<MediaItemData>, shows: List<MediaItemData>, rows: List<CatalogApi.HomeShelf?>): List<CatalogApi.HomeShelf> {
         val ranked = mapOf("movie" to movies.take(10).map { it.imdbId }.toSet(), "series" to shows.take(10).map { it.imdbId }.toSet())
-        val others = rows.filterNotNull().mapNotNull { row ->
+        // Rows after Top 10 follow the viewer's order from Settings → Home rows, without the ones they switched off.
+        val others = homeRows.visible(rows.filterNotNull()) { it.id }.mapNotNull { row ->
             if (row.unavailable) return@mapNotNull row
             row.copy(items = row.items.filter { it.imdbId !in ranked[row.type].orEmpty() }).takeIf { it.items.isNotEmpty() }
         }
@@ -1326,7 +1499,7 @@ class MainActivity : Activity() {
         val poster = FrameLayout(this).apply { background = rounded(panel, 4); clipToOutline = true }
         val art = FixedSizeImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
         poster.addView(art, FrameLayout.LayoutParams(-1, -1))
-        image(art, thumbnail(item.poster.ifBlank { if (item.imdbId.matches(Regex("tt\\d+"))) "https://images.metahub.space/poster/medium/${item.imdbId}/img" else "" }))
+        image(art, thumbnail(item.poster.ifBlank { if (item.imdbId.matches(Regex("tt\\d+"))) "https://images.metahub.space/poster/medium/${item.imdbId}/img" else "" }, wide = false))
         frame.addView(poster, FrameLayout.LayoutParams(posterWidth, -1, Gravity.END))
         watchedBadge(if (item.type == "movie") "movie" else "series", item.imdbId)?.let {
             poster.addView(it, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.TOP or Gravity.END).apply { topMargin = dp(5); rightMargin = dp(5) })
@@ -1980,6 +2153,10 @@ class MainActivity : Activity() {
         const val TOP10_MOVIES = "Top 10 Movies"; const val TOP10_SHOWS = "Top 10 Shows"
         const val SORT_NEWEST = "newest"
         const val LATEST_MOVIES = "Latest Releases · Movies"; const val LATEST_SHOWS = "Latest Releases · Shows"
+        /** Home row ids (Settings → Home rows order and "See all" paging); never rename, saved orders refer to them. */
+        const val ROW_LATEST_MOVIES = "latest:movie"; const val ROW_LATEST_SHOWS = "latest:series"; const val ROW_CINEMAS = "tmdb:now_playing"
+        const val ROW_POPULAR_MOVIES = "popular:movie"; const val ROW_POPULAR_SHOWS = "popular:series"
+        const val ROW_FEATURED_MOVIES = "featured:movie"; const val ROW_FEATURED_SHOWS = "featured:series"
         const val RESUME_CARD_WIDTH = 300; const val RESUME_CARDS = "home.resume_cards"
         const val SYNOPSIS_MORE_CHARS = 220; const val CONTINUE_LIMIT = 30
         const val PHONE_INLINE_VALUE = 18; const val BOTTOM_BAR_HEIGHT = 56; const val PHONE_BAR_COLOR = 0xFF0B0B0B.toInt()
@@ -2936,6 +3113,7 @@ class MainActivity : Activity() {
                     store.put(TMDB_REGION, countries[index].first); dialog.dismiss(); refreshSettings()
                 }.setNegativeButton("Cancel", null).show()
         }
+        settingsRow(home, "Home rows", "", "Reorder or hide the rows after Top 10, and add catalog add-ons such as AIOMetadata.") { navigate { homeRowsPage() } }
         settingsToggle(home, "Resume cards", "Continue Watching as wide cards with the episode, time left and progress beside the artwork.",
             store.get(RESUME_CARDS) != "false") { on -> store.put(RESUME_CARDS, on.toString()) }
         if (tmdbKey.isNotBlank()) settingsRow(home, "Remove TMDB key", danger = true) {
@@ -3008,6 +3186,18 @@ class MainActivity : Activity() {
                 changed = { InAppPlaybackSession.refreshSubtitleStyle() }, dismissed = { refreshSettings() })
         }
         settingsRow(captions, "Subtitle language", subtitlePreferences.languageLabel, "Chosen automatically when available. You can pick another track in the player.") { subtitleLanguage() }
+        settingsToggle(captions, "Find missing subtitles", "When a video has no subtitles in your language, the best matches from OpenSubtitles are added and the first one is turned on. Others are in the player's Subtitles list.",
+            subtitlePreferences.autoFetch) { on -> SubtitlePreferences(this).autoFetch = on }
+        val wyzie = store.get(InAppPlaybackSession.WYZIE_KEY)
+        settingsRow(captions, "Wyzie Subs", if (wyzie.isBlank()) "Not set" else "Connected",
+            "Optional: your own free Wyzie key (store.wyzie.io) adds more subtitle sources to Find missing subtitles.", status = wyzie.isNotBlank()) {
+            inputSetting("Wyzie Subs API key", "Paste your free Wyzie key", "", secret = true) { key ->
+                store.put(InAppPlaybackSession.WYZIE_KEY, key.trim()); toast("Wyzie Subs added"); refreshSettings()
+            }
+        }
+        if (wyzie.isNotBlank()) settingsRow(captions, "Remove Wyzie key", danger = true) {
+            confirm("Remove your Wyzie Subs key?") { store.remove(InAppPlaybackSession.WYZIE_KEY); refreshSettings() }
+        }
         settingsToggle(captions, "English fallback", "If a video has no audio or subtitles in your language, English is chosen instead. English links are also listed before other languages.",
             AudioPreferences(this).englishFallback) { on ->
             AudioPreferences(this).englishFallback = on
@@ -3074,7 +3264,7 @@ class MainActivity : Activity() {
             store.get("updates.startup") != "false", contentLabel = "Check for updates on startup") { on -> store.put("updates.startup", on.toString()) }
 
         val about = settingsGroup("About", null)
-        about.addView(text("POV Rajput fork by Rajput · Android TV port by Mark Mateo · based on the POV Kodi add-on by kodifitzwell (github.com/kodifitzwell/repo). Licensed under GNU GPL v3. WeTrakr tracking and API by alberdev (wetrakr.com). Catalogs: TMDB, Queued Up (queued-up.app), Cinemeta and Kitsu. This product uses the TMDB API but is not endorsed or certified by TMDB. Playback: AndroidX Media3, with FFmpeg audio decoding via Jellyfin's Media3 FFmpeg decoder.", 12, muted).apply {
+        about.addView(text("POV Rajput fork by Rajput · Android TV port by Mark Mateo · based on the POV Kodi add-on by kodifitzwell (github.com/kodifitzwell/repo). Licensed under GNU GPL v3. WeTrakr tracking and API by alberdev (wetrakr.com). Catalogs: TMDB, Queued Up (queued-up.app), Cinemeta, Kitsu and your own catalog add-ons. Subtitles found online: OpenSubtitles, and Wyzie Subs with your key. This product uses the TMDB API but is not endorsed or certified by TMDB. Playback: AndroidX Media3, with FFmpeg audio decoding via Jellyfin's Media3 FFmpeg decoder.", 12, muted).apply {
             setLineSpacing(dp(2).toFloat(), 1f); setPadding(dp(14), dp(12), dp(14), dp(12))
         }, margin(-1, -2))
         settingsRow(about, "Open-source notices") {
@@ -3566,7 +3756,8 @@ class MainActivity : Activity() {
         val art = FixedSizeImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
         artFrame.addView(art, FrameLayout.LayoutParams(-1, -1))
         val fallback = if (item.imdbId.matches(Regex("tt\\d+"))) "https://images.metahub.space/${if (shape == CardFormat.POSTER) "poster" else "background"}/medium/${item.imdbId}/img" else ""
-        image(art, thumbnail((if (shape == CardFormat.POSTER) item.poster else item.background).ifBlank { fallback.ifBlank { item.poster } }))
+        val wideArt = shape != CardFormat.POSTER && item.background.isNotBlank()
+        image(art, thumbnail((if (shape == CardFormat.POSTER) item.poster else item.background).ifBlank { fallback.ifBlank { item.poster } }, wide = wideArt || (shape != CardFormat.POSTER && fallback.isNotBlank())))
         artFrame.addView(View(this).apply { background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
             intArrayOf(0xE8000000.toInt(), 0x08000000, Color.TRANSPARENT)) }, FrameLayout.LayoutParams(-1, -1))
         val labels = column().apply { setPadding(dp(10), dp(5), dp(9), dp(if (progress != null) 17 else 9)) }
@@ -3688,10 +3879,19 @@ class MainActivity : Activity() {
     }
 
     /** Thumbnails come from the image service's small renditions (480 px) instead of 1920 px originals. */
-    private fun thumbnail(address: String) = when {
-        address.startsWith("https://images.metahub.space/") -> address.replace("/background/medium/", "/background/small/").replace("/poster/medium/", "/poster/small/")
-        // Cards are ~380 px wide on screen, so TMDB's 780 px backdrop keeps them sharp.
-        address.startsWith("https://image.tmdb.org/t/p/w1280/") -> address.replace("/t/p/w1280/", "/t/p/w780/")
+    /**
+     * Card artwork at the size a card needs. Catalog add-ons (AIOMetadata and others) often link full-size images, so
+     * hosts with smaller versions are asked for those: TMDB (780 px wide cards, 500 px posters; never upsized),
+     * Metahub's small size. Images from other hosts, e.g. rating posters, stay as they are.
+     */
+    private fun thumbnail(address: String, wide: Boolean = true): String = when {
+        address.startsWith("https://images.metahub.space/") -> address.replace(Regex("/(background|poster|logo)/(medium|large)/"), "/$1/small/")
+        address.startsWith("https://image.tmdb.org/t/p/") -> {
+            val size = address.removePrefix("https://image.tmdb.org/t/p/").substringBefore('/')
+            val width = if (size == "original") Int.MAX_VALUE else size.removePrefix("w").toIntOrNull()
+            val target = if (wide) 780 else 500
+            if (width != null && width > target) address.replaceFirst("/t/p/$size/", "/t/p/w$target/") else address
+        }
         else -> address
     }
 

@@ -20,17 +20,21 @@ internal class HomeShelfCache(private val file: File, private val now: () -> Lon
                 val shelf = shelves.getJSONObject(index)
                 val items = shelf.getJSONArray("items")
                 CatalogApi.HomeShelf(shelf.getString("title"), shelf.getString("type"),
-                    (0 until items.length()).map { item(items.getJSONObject(it)) })
+                    (0 until items.length()).map { item(items.getJSONObject(it)) }, id = shelf.optString("id"))
             }
         }.takeIf { shelves -> shelves.any { it.items.isNotEmpty() } }
     } catch (_: Exception) { null }
 
-    /** Unavailable catalogs are never saved: a row that failed once should be retried, not remembered empty. */
-    fun save(revision: String, shelves: List<CatalogApi.HomeShelf>) {
+    /**
+     * Unavailable catalogs are never saved: a row that failed once should be retried, not remembered empty. A failing
+     * add-on row (someone else's service) is left out of the saved copy rather than blocking it.
+     */
+    fun save(revision: String, all: List<CatalogApi.HomeShelf>) {
+        val shelves = all.filterNot { it.unavailable && it.id.startsWith("addon:") }
         if (shelves.any { it.unavailable } || shelves.none { it.items.isNotEmpty() }) return
         val array = JSONArray()
         shelves.forEach { shelf ->
-            array.put(JSONObject().put("title", shelf.title).put("type", shelf.type)
+            array.put(JSONObject().put("title", shelf.title).put("type", shelf.type).put("id", shelf.id)
                 .put("items", JSONArray().apply { shelf.items.forEach { put(json(it)) } }))
         }
         runCatching {

@@ -18,6 +18,10 @@ internal class SubtitlePreferences(private val context: Context) {
     var transparentBackground: Boolean
         get() = preferences.getBoolean("transparent_background", true)
         set(value) { preferences.edit().putBoolean("transparent_background", value).apply() }
+    /** Find subtitles online when a video has none in the chosen language. */
+    var autoFetch: Boolean
+        get() = preferences.getBoolean("auto_fetch", true)
+        set(value) { preferences.edit().putBoolean("auto_fetch", value).apply() }
     var boldText: Boolean
         get() = preferences.getBoolean("bold_text", true)
         set(value) { preferences.edit().putBoolean("bold_text", value).apply() }

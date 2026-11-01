@@ -42,7 +42,8 @@ class CatalogApi internal constructor(private val publicJson: (String) -> JSONOb
         return catalog("$BASE/catalog/$type/$catalog${extras.joinToString("&").let { if (it.isEmpty()) "" else "/$it" }}.json", type)
     }
 
-    data class HomeShelf(val title: String, val type: String, val items: List<MediaItemData>, val unavailable: Boolean = false)
+    /** [id] names the row for the viewer's Home order and for "See all" paging (blank for fixed rows). */
+    data class HomeShelf(val title: String, val type: String, val items: List<MediaItemData>, val unavailable: Boolean = false, val id: String = "")
     fun newReleases(type: String, year: Int = java.time.Year.now(java.time.ZoneOffset.UTC).value): List<MediaItemData> {
         requireType(type); require(year in 1900..2100)
         return catalog("$BASE/catalog/$type/year/genre=$year.json", type).filter { it.year.take(4) == year.toString() }

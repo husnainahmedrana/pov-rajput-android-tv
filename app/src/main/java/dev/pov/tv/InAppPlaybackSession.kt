@@ -70,6 +70,8 @@ object InAppPlaybackSession {
     private var lastLinkSaved = false
     /** The automatic forced-subtitle check runs once per video. */
     private var subtitlesChecked = false
+    private var externalSubtitlesChecked = false
+    const val WYZIE_KEY = "subtitles.wyzie_key"
     var debridService: String? = null
         private set
     private var identity: PlaybackIdentity? = null
@@ -94,6 +96,9 @@ object InAppPlaybackSession {
     private val listeners = linkedSetOf<() -> Unit>()
     private val handler = Handler(Looper.getMainLooper())
     private const val MIN_SERVER_SIZE = 50L * 1024 * 1024
+    private const val QUIET_RETRY_WINDOW_MS = 15_000L
+    private const val QUIET_RETRY_DELAY_MS = 1_500L
+    private const val MAX_QUIET_RETRIES = 3
     private val surfaceAttachment = SurfaceReadyAttachment<ExoPlayer, PlayerView>(
         currentSession = { player?.takeUnless { releasing } },
         isReady = { view ->
@@ -133,14 +138,31 @@ object InAppPlaybackSession {
             backgroundPause = true
             current?.pause()
             backgroundPause = false
+            inBackground = true
             handler.removeCallbacks(checkpoint)
         },
         onForeground = {
+            inBackground = false
+            foregroundAt = android.os.SystemClock.elapsedRealtime()
+            val exo = player
+            if (exo != null && networkRetryPending) {
+                // Some phones (e.g. Transsion) freeze background apps and cut their network, so a buffer load
+                // fails while away. Back in front, the same link continues from where it stopped.
+                networkRetryPending = false
+                exo.prepare()
+            }
             if (resumeAfterBackground && error == null && player?.playerError == null && player?.playbackState != Player.STATE_ENDED) player?.play()
             resumeAfterBackground = false
             restartCheckpoint()
         }
     )
+    private var inBackground = false
+    private var foregroundAt = 0L
+    private var networkRetryPending = false
+    private var quietRetries = 0
+    private fun isNetworkFailure(failure: PlaybackException) =
+        failure.errorCode in PlaybackException.ERROR_CODE_IO_UNSPECIFIED..PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
+            failure.errorCode == PlaybackException.ERROR_CODE_TIMEOUT
 
     fun initialize(context: Context) {
         if (application != null) return
@@ -183,6 +205,7 @@ object InAppPlaybackSession {
         title = intent.getStringExtra("title").orEmpty()
         if (saved == null) SubtitleSync.reset()
         subtitlesChecked = saved != null
+        externalSubtitlesChecked = false
         mediaName = intent.getStringExtra("media_name").orEmpty().take(4000)
         mediaSize = intent.getLongExtra("media_size", 0L).takeIf { it > 0 }
         identity = try { intent.getStringExtra("identity")?.let { PlaybackIdentity.fromJson(JSONObject(it)) } } catch (_: Exception) { null }
@@ -285,6 +308,7 @@ object InAppPlaybackSession {
             override fun onTracksChanged(tracks: Tracks) {
                 if (!isCurrent(exo) || enforceVideoCompatibility(exo, tracks)) return
                 preferFullSubtitles(exo, tracks)
+                findMissingSubtitles(exo, tracks)
                 notifyChanged()
             }
             override fun onTrackSelectionParametersChanged(parameters: TrackSelectionParameters) {
@@ -301,7 +325,8 @@ object InAppPlaybackSession {
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                 if (!isCurrent(exo)) return
                 if (playWhenReady && enforceVideoCompatibility(exo)) return
-                if (!backgroundPause && !playWhenReady) resumeAfterBackground = false
+                // Another app taking audio focus while POV is away is not a user pause: coming back still resumes.
+                if (!backgroundPause && !playWhenReady && reason != Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS) resumeAfterBackground = false
                 if (!playWhenReady && exo.playbackState != Player.STATE_ENDED && exo.duration > 0) {
                     saveLocal(); sync("pause")
                 }
@@ -315,6 +340,7 @@ object InAppPlaybackSession {
             override fun onPlaybackStateChanged(state: Int) {
                 if (!isCurrent(exo)) return
                 if (state != Player.STATE_ENDED && enforceVideoCompatibility(exo)) return
+                if (state == Player.STATE_READY) quietRetries = 0
                 if (state == Player.STATE_READY && !lastLinkSaved) {
                     lastLinkSaved = true
                     val media = identity; val account = playbackAccount
@@ -338,6 +364,18 @@ object InAppPlaybackSession {
             }
             override fun onPlayerError(failure: PlaybackException) {
                 if (!isCurrent(exo)) return
+                val justBack = android.os.SystemClock.elapsedRealtime() - foregroundAt < QUIET_RETRY_WINDOW_MS
+                if (isNetworkFailure(failure) && error == null && quietRetries < MAX_QUIET_RETRIES && (inBackground || justBack)) {
+                    // The network was cut while the app was away (or is still coming back): retry the same link quietly.
+                    quietRetries++
+                    saveLocal()
+                    if (inBackground) networkRetryPending = true
+                    else handler.postDelayed({
+                        if (isCurrent(exo) && exo.playerError != null && error == null) { exo.prepare(); exo.play() }
+                    }, QUIET_RETRY_DELAY_MS)
+                    notifyChanged()
+                    return
+                }
                 if (error !is VideoCompatibilityException) error = failure
                 saveLocal(); sync("pause")
                 exo.pause()
@@ -415,6 +453,7 @@ object InAppPlaybackSession {
         surfaceAttachment.cancelAll()
         handler.removeCallbacks(checkpoint)
         resumeAfterBackground = false
+        networkRetryPending = false; quietRetries = 0
         volumeBoost.close()
         targetView?.get()?.let { it.player = null; it.keepScreenOn = false }
         targetView = null
@@ -508,6 +547,46 @@ object InAppPlaybackSession {
      * When the automatic choice is forced and a full track in that language exists, the full track is used.
      * A subtitle the viewer picked is never changed.
      */
+    /**
+     * A video without subtitles in the viewer's language (or English, with English fallback on) gets the best matches
+     * from OpenSubtitles, and Wyzie with the viewer's key, added as extra subtitle tracks. The first one is chosen.
+     */
+    private fun findMissingSubtitles(exo: ExoPlayer, tracks: Tracks) {
+        if (externalSubtitlesChecked || tracks.groups.none { it.type == C.TRACK_TYPE_VIDEO || it.type == C.TRACK_TYPE_AUDIO }) return
+        externalSubtitlesChecked = true
+        val app = application ?: return
+        val preferences = SubtitlePreferences(app)
+        val wanted = preferences.language
+        val media = identity ?: return
+        // Header-bound links send their headers with every request, so no other host is asked for files.
+        if (!preferences.autoFetch || wanted.isEmpty() || wanted == "off" || sourceHeaders.isNotEmpty()) return
+        val embedded = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }.flatMap { group ->
+            (0 until group.length).filter(group::isTrackSupported).map { group.getTrackFormat(it) }
+        }.filter { it.selectionFlags and C.SELECTION_FLAG_FORCED == 0 && it.label?.contains("forced", true) != true }
+            .map { dev.pov.tv.data.ExternalSubtitles.iso3(it.language.orEmpty()) }.toSet()
+        val candidates = AudioPreferences(app).withFallback(wanted).toList()
+        if (candidates.any { dev.pov.tv.data.ExternalSubtitles.iso3(it) in embedded }) return
+        val playing = sourceUrl; val fileName = mediaName; val key = secureStore.get(WYZIE_KEY)
+        Thread {
+            val finder = dev.pov.tv.data.ExternalSubtitles()
+            val found = candidates.firstNotNullOfOrNull { language ->
+                runCatching { finder.find(media, language, fileName, key) }.getOrNull()?.takeIf { it.isNotEmpty() }
+            }.orEmpty()
+            handler.post {
+                if (found.isEmpty() || !isCurrent(exo) || sourceUrl != playing) return@post
+                val item = exo.currentMediaItem ?: return@post
+                android.util.Log.i("PovSubtitles", "added ${found.size} online subtitles (${found.first().label})")
+                val configs = found.mapIndexed { index, subtitle ->
+                    MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url)).setMimeType(subtitle.mime)
+                        .setLanguage(subtitle.language).setLabel(if (found.size > 1) "${subtitle.label} ${index + 1}" else subtitle.label)
+                        .setSelectionFlags(if (index == 0) C.SELECTION_FLAG_DEFAULT else 0).build()
+                }
+                exo.setMediaItem(item.buildUpon().setSubtitleConfigurations(configs).build(), false)
+                exo.prepare()
+            }
+        }.apply { isDaemon = true; name = "pov-subtitles" }.start()
+    }
+
     private fun preferFullSubtitles(exo: ExoPlayer, tracks: Tracks) {
         if (subtitlesChecked) return
         val text = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
