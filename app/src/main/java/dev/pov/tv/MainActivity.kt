@@ -317,6 +317,13 @@ class MainActivity : Activity() {
     }
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (backHold.intercept(event)) return true
+        // Show page: one Down from the buttons goes to the next episode's card (and brings the season tabs into view).
+        if (flix && event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+            val target = episodeDownTarget; val actions = episodeActions
+            if (target != null && actions != null && target.isAttachedToWindow && actions.isAttachedToWindow && actions.findFocus() != null) {
+                target.requestFocus(); return true
+            }
+        }
         // Holding the D-pad on Home moves at a readable pace instead of racing ahead of the scroll.
         if (flix && isHome && event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0 && ::body.isInitialized && body.hasFocus() && event.keyCode in setOf(
                 KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT)) {
@@ -1201,7 +1208,8 @@ class MainActivity : Activity() {
         }, margin(-1, -2, top = 8))
         // A shortened synopsis keeps the rest one press away.
         if (!showAction && synopsisLines > 0 && item.description.length > SYNOPSIS_MORE_CHARS) copy.addView(button("More") {
-            synopsisDialog(item.title, item.description)
+            // Whatever the header shows now: the show's synopsis, or the focused episode's.
+            synopsisDialog(item.title, copy.findViewWithTag<TextView>("feature-description")?.text?.toString()?.ifBlank { null } ?: item.description)
         }.apply { gravity = Gravity.CENTER }, margin(90, 34, top = 10))
         if (DeviceLayout.phone) frame.addView(copy, FrameLayout.LayoutParams(-1, -2).apply { topMargin = dp(PHONE_COPY_TOP) })
         else frame.addView(copy, FrameLayout.LayoutParams(dp(if (showAction) 420 else 560), -2).apply { topMargin = dp(if (!showAction) 12 else if (compact) 24 else 30) })
@@ -2207,7 +2215,7 @@ class MainActivity : Activity() {
     private fun detailsFor(item: MediaItemData, episode: PlaybackIdentity?) {
         current = { detailsFor(item, episode) }
         fun render(id: Int, result: MediaItemData) {
-            body.removeAllViews(); hero(result, false); mediaActions(result, episode)
+            body.removeAllViews(); hero(result, false, if (flix && result.type == "series") 3 else 0); mediaActions(result, episode)
             if (result.type == "series") { seasonPicker(result); if (flix) body.post { if (id == generation) riseIn() } }
             else if (flix && DeviceLayout.tv) alignToBottom(id, reveal = ::riseIn)
             else if (flix) body.post { if (id == generation) riseIn() }
@@ -2290,7 +2298,7 @@ class MainActivity : Activity() {
         if (episode != null) { play("▶  Play S${episode.season} E${episode.episode}", 180) { navigate { showSources(episode) } }; streams(episode) }
         else if (flix) playTarget(result)?.let { (target, _) ->
             // On a show page both follow the episode focused in the row below (see episodeFocused).
-            episodeTarget = target
+            episodeTarget = target; episodeActions = actions
             play("▶  Play S${target.season} E${target.episode}", 200) {
                 navigate { showSources(episodeTarget ?: target) }
             }
@@ -2363,6 +2371,7 @@ class MainActivity : Activity() {
             body.addView(text("Episodes", 20, ink, true), margin(-1, -2, top = 18, bottom = 4))
             body.addView(host, margin(-1, -2, top = 4))
             val row = horizontalRow()
+            episodeTabs = row.parent as? View ?: row
             seasons.forEach { season ->
                 val tab = text(if (season == 0) "Specials" else "Season $season", 13, ink, true).apply {
                     gravity = Gravity.CENTER; setPadding(dp(18), 0, dp(18), 0); isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true
@@ -2380,6 +2389,21 @@ class MainActivity : Activity() {
 
     /** The episode the show page's Play and Streams buttons act on: the focused one in the episode row. */
     private var episodeTarget: PlaybackIdentity? = null
+    /** Down from the show page's buttons lands on [episodeDownTarget] (the next episode), not the nearest card. */
+    private var episodeActions: ViewGroup? = null
+    private var episodeDownTarget: View? = null
+    private var episodeTabs: View? = null
+
+    /** With an episode focused, the season tabs beneath the row are scrolled into view too. */
+    private fun revealEpisodeTabs() {
+        val tabs = episodeTabs?.takeIf { it.isAttachedToWindow } ?: return
+        body.post {
+            if (!tabs.isAttachedToWindow) return@post
+            val rect = android.graphics.Rect(); tabs.getDrawingRect(rect); body.offsetDescendantRectToMyCoords(tabs, rect)
+            val needed = body.top + rect.bottom + dp(18) - scroller.height
+            if (needed > scroller.scrollY) scroller.smoothScrollTo(0, needed)
+        }
+    }
     private var detailsPlayButton: TextView? = null
 
     /**
@@ -2387,15 +2411,15 @@ class MainActivity : Activity() {
      * its number and title, its synopsis, and the Play / Streams targets. The row opens scrolled to [focusOn].
      */
     private fun episodeStrip(show: MediaItemData, items: List<Triple<PlaybackIdentity, EpisodeData, String>>, focusOn: PlaybackIdentity?): View {
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; setPadding(dp(4), dp(10), dp(24), dp(12)) }
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; setPadding(dp(12), dp(10), dp(24), dp(12)) }
         val scroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; isFocusable = false; clipChildren = false; clipToPadding = false; addView(row) }
         val (width, height) = if (DeviceLayout.phone) 210 to 118 else 250 to 141
         items.forEach { (identity, episode, label) -> row.addView(episodeCard(identity, episode, show, label), margin(width, height, right = 14)) }
-        focusOn?.let { target ->
-            val index = items.indexOfFirst { it.first.season == target.season && it.first.episode == target.episode }
-            if (index > 0) scroll.post { row.getChildAt(index)?.let { scroll.scrollTo((it.left - dp(4)).coerceAtLeast(0), 0) } }
-            items.getOrNull(index.coerceAtLeast(0))?.let { (identity, episode, _) -> body.post { episodeFocused(identity, episode, show, animate = false) } }
-        }
+        // The next episode to watch (or the first): the row opens on it, the header shows it, and Down lands on it.
+        val index = focusOn?.let { target -> items.indexOfFirst { it.first.season == target.season && it.first.episode == target.episode } } ?: -1
+        if (index > 0) scroll.post { row.getChildAt(index)?.let { scroll.scrollTo((it.left - dp(12)).coerceAtLeast(0), 0) } }
+        episodeDownTarget = row.getChildAt(index.coerceAtLeast(0))
+        items.getOrNull(index.coerceAtLeast(0))?.let { (identity, episode, _) -> body.post { episodeFocused(identity, episode, show, animate = false) } }
         return scroll
     }
 
@@ -2422,7 +2446,7 @@ class MainActivity : Activity() {
             val glide = posterGlide(view, radius = 8, scale = 1.05f)
             if (glide != null) glide.focusChanged(view, focused)
             view.animate().scaleX(if (focused) 1.05f else 1f).scaleY(if (focused) 1.05f else 1f).setDuration(130).start()
-            if (focused) episodeFocused(identity, episode, show)
+            if (focused) { episodeFocused(identity, episode, show); revealEpisodeTabs() }
         }
         frame.setOnClickListener { if (future) toast("This episode has not been released yet") else navigate { showSources(identity) } }
         if (!future) frame.setOnLongClickListener { episodeMenu(identity, "S${identity.season} E${identity.episode}"); true }
@@ -2569,8 +2593,9 @@ class MainActivity : Activity() {
                 else -> "TRANSFER MAY BE NEEDED"
             }
             val limitNote = if (tooTall(source)) " · ABOVE THIS TV'S ${DecoderLimits.label(limit)} LIMIT" else ""
-            choices.addChoice(TvChoiceRow(this, TvChoiceKeys.source(source), source.title, source.detail,
-                "$status$limitNote · ${source.provider}", theme.palette, SourceBadges.from(source, languages, minutes)) {
+            // Only the badges, the release name and the source's own name: the scrapers' extra lines are left out.
+            choices.addChoice(TvChoiceRow(this, TvChoiceKeys.source(source), SourceBadges.name(source), source.provider,
+                limitNote.removePrefix(" · "), theme.palette, SourceBadges.forRow(source, languages, minutes, checkOnPlay)) {
                 if (!source.cached && source.directUrl.isEmpty()) {
                     if (checkOnPlay.isNotEmpty()) resolveFirstCached(ordered.dropWhile { it !== source }.filterNot(::tooTall), identity, source)
                     else offerTransfer(source, identity)

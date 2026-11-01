@@ -552,17 +552,13 @@ class PlayerActivity : Activity() {
                 // Quality, size, ≈bitrate (from this video's length), HDR, codec and language badges, as in the source list.
                 val languages = SourceSortPreferences(this).languages
                 val minutes = player?.duration?.takeIf { it > 0 }?.let { (it / 60_000).toInt() }
+                val checkOnPlay = dev.pov.tv.data.DebridServices.connected(dev.pov.tv.data.SecureStore(this)).filter { it in dev.pov.tv.data.LinkDebrids.CHECK_ON_PLAY }
                 val choices = links.take(STREAMS_SHOWN).map { source ->
-                    val status = when {
-                        source.directUrl.isNotEmpty() -> "Direct"
-                        source.cachedServices.isNotEmpty() -> "Cached · " + source.cachedServices.joinToString(" + ") { dev.pov.tv.data.DebridServices.name(it) }
-                        else -> "Not cached"
-                    }
-                    val name = source.title.lineSequence().firstOrNull().orEmpty()
+                    val name = SourceBadges.name(source)
                     val current = playing.isNotBlank() && name.isNotBlank() && playing.contains(name.take(40))
-                    PlayerSheetChoice(name.ifBlank { source.title }, checked = current,
-                        detail = listOf(status, source.provider, source.detail.replace('\n', ' ')).filter(String::isNotBlank).joinToString("  ·  "),
-                        badges = SourceBadges.from(source, languages, minutes)) { pickStream(media, source) }
+                    // Only the badges, the release name and the source's own name, as in the source list.
+                    PlayerSheetChoice(name.ifBlank { source.title }, checked = current, detail = source.provider,
+                        badges = SourceBadges.forRow(source, languages, minutes, checkOnPlay)) { pickStream(media, source) }
                 }
                 showSheet("Streams", "${links.size} links · pick one to continue from the same spot.", choices)
             }

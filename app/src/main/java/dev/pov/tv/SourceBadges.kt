@@ -10,17 +10,37 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import dev.pov.tv.data.DebridServices
 import dev.pov.tv.data.SourceItem
 import dev.pov.tv.data.SourceLanguageOrder
 import dev.pov.tv.data.SourceMetadata
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-internal enum class SourceBadgeTone { UHD, FULL_HD, HD, OTHER, NEUTRAL }
+internal enum class SourceBadgeTone { UHD, FULL_HD, HD, OTHER, NEUTRAL, CACHED, UNCACHED }
 internal data class SourceBadge(val label: String, val tone: SourceBadgeTone = SourceBadgeTone.NEUTRAL, val quality: Boolean = false)
 
 /** Release-name tags are provider claims, not a probe of the selected video's capabilities. */
 internal object SourceBadges {
+    /** The release name of a link: providers often add lines of seeders, sizes and emoji around it; the longest line is the name. */
+    fun name(source: SourceItem): String =
+        source.title.lines().map(String::trim).filter(String::isNotBlank).maxByOrNull { it.length } ?: source.title
+
+    /** Whether a link plays at once: cached (and where), a direct link, checked when played, or not cached. */
+    fun status(source: SourceItem, checkOnPlay: List<String>): SourceBadge {
+        val cachedOn = source.cachedServices.map(DebridServices::name)
+        return when {
+            source.directUrl.isNotEmpty() -> SourceBadge("DIRECT", SourceBadgeTone.CACHED)
+            cachedOn.isNotEmpty() -> SourceBadge("CACHED · ${cachedOn.joinToString(" + ").uppercase()}", SourceBadgeTone.CACHED)
+            checkOnPlay.isNotEmpty() -> SourceBadge("CHECK ON PLAY", SourceBadgeTone.UNCACHED)
+            else -> SourceBadge("NOT CACHED", SourceBadgeTone.UNCACHED)
+        }
+    }
+
+    /** The clean badge set for a link row: quality and size, then whether it plays at once, then the rest. */
+    fun forRow(source: SourceItem, languages: SourceLanguageOrder?, runtimeMinutes: Int?, checkOnPlay: List<String>): List<SourceBadge> =
+        from(source, languages, runtimeMinutes).toMutableList().apply { add(minOf(2, size), status(source, checkOnPlay)) }
+
     /** [runtimeMinutes] (the title's runtime, when known) adds the estimated bitrate beside the size. */
     fun from(source: SourceItem, languages: SourceLanguageOrder? = null, runtimeMinutes: Int? = null): List<SourceBadge> = buildList {
         add(SourceBadge(SourceMetadata.qualityLabel(source.qualityHeight), when (source.qualityHeight) {
@@ -79,6 +99,8 @@ internal class SourceBadgeStrip(context: Context, badges: List<SourceBadge>) : V
                 SourceBadgeTone.HD -> Triple("#D7ACFF", "#2C203A", "#9564C4")
                 SourceBadgeTone.OTHER -> Triple("#BDE6FF", "#183344", "#608CA6")
                 SourceBadgeTone.NEUTRAL -> Triple("#FFFFFF", "#273442", "#66788A")
+                SourceBadgeTone.CACHED -> Triple("#8CF5B0", "#10301C", "#3E9A5E")
+                SourceBadgeTone.UNCACHED -> Triple("#C8C8CC", "#26262A", "#5A5A60")
             }
             addView(TextView(context).apply {
                 text = badge.label
