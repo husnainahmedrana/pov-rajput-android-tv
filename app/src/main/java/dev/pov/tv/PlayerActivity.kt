@@ -124,9 +124,10 @@ class PlayerActivity : Activity() {
         requireNotNull(view.overlayFrameLayout).addView(seekLabel,
             FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         // Seekr's tiles are about 320 px wide: shown near that size they stay sharp (the TV gets 360 px, not a blurry 512).
-        val thumbWidth = if (DeviceLayout.phone) dp(140) else (resources.displayMetrics.widthPixels * 0.1875f).toInt()
+        // About WuPlay's size: 400 px wide on a 1080p TV (Seekr's ~320 px tiles stay crisp); the height follows each picture.
+        val thumbWidth = if (DeviceLayout.phone) dp(150) else (resources.displayMetrics.widthPixels * 0.2083f).toInt()
         seekThumb = ImageView(this).apply {
-            tag = "pov_seek_thumb"; scaleType = ImageView.ScaleType.CENTER_CROP
+            tag = "pov_seek_thumb"; scaleType = ImageView.ScaleType.FIT_XY
             // The picture fills the card edge to edge: rounded corners, a thin bright border and a soft shadow.
             background = GradientDrawable().apply { setColor(Color.BLACK); cornerRadius = dp(8).toFloat() }
             foreground = GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = dp(8).toFloat(); setStroke(maxOf(2, dp(1)), 0xE6FFFFFF.toInt()) }
@@ -615,7 +616,15 @@ class PlayerActivity : Activity() {
     private val hideCard = Runnable { showThumb(null) }
     private fun showThumb(position: Long?, offset: String? = null) {
         view.removeCallbacks(hideCard)
-        if (position == null) { seekrFrame?.cancel(); seekCard.visibility = View.GONE; seekThumb.setImageDrawable(null); return }
+        if (position == null) {
+            seekrFrame?.cancel()
+            // Fades out rather than vanishing.
+            if (seekCard.visibility == View.VISIBLE) seekCard.animate().alpha(0f).setDuration(CARD_FADE_MS).withEndAction {
+                seekCard.visibility = View.GONE; seekCard.alpha = 1f; seekThumb.setImageDrawable(null)
+            }.start()
+            return
+        }
+        seekCard.animate().cancel(); seekCard.alpha = 1f
         val track = activeSeekr
         // The card carries the time, so the big centre label steps aside. Without a Seekr picture the card is just the
         // time pill, in the same place, so seeking looks the same either way.
@@ -628,7 +637,14 @@ class PlayerActivity : Activity() {
         if (track == null) return
         seekrFrame = uiScope.launch {
             val frame = runCatching { nearestSeekrFrame(track, position) }.getOrNull()
-            if (frame != null && seekCard.visibility == View.VISIBLE) seekThumb.setImageBitmap(frame)
+            if (frame != null && seekCard.visibility == View.VISIBLE) {
+                // The card takes the picture's own shape (films are often wider than 16:9), so nothing is cropped.
+                val params = seekThumb.layoutParams
+                val height = (params.width.toLong() * frame.height / frame.width.coerceAtLeast(1)).toInt()
+                if (params.height != height) { params.height = height; seekThumb.layoutParams = params }
+                seekThumb.setImageBitmap(frame)
+                placeSeekCard(position)
+            }
         }
     }
 
@@ -842,6 +858,7 @@ class PlayerActivity : Activity() {
         private const val SEEKR_LOOKUP_MS = 3_000L
         /** How long the seek preview stays after the key or finger is released, before the video jumps there. */
         private const val SEEK_LINGER_MS = 1_000L
+        private const val CARD_FADE_MS = 200L
         /** A seek may land up to this far from its target to reach a keyframe. */
         const val SEEK_SNAP_MS = 2_000L
         const val QUIET_SEEK_MS = 4_000L
