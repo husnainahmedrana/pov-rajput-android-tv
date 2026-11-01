@@ -84,7 +84,7 @@ With **Auto-play first result** on (Settings → Playback), Play starts the best
 
 ### Player
 
-- **Seeking** — tap Left/Right for one second. Hold to keep going: one-second steps for the first minute, then 10 s, 30 s, 1 min and 2 min jumps. The preview shows the target time and offset; the video jumps when you release.
+- **Seeking** — tap Left/Right for one second. Hold to keep going: one-second steps for the first 10 seconds, then 5 s, 10 s, 20 s and at most 30 s steps. The preview shows the target time and offset; the video jumps when you release.
 - **Ends at** — the local finish time sits in the top-right corner with the controls.
 - **Loading and buffering** — the title's logo pulses over its blurred artwork, like Stremio.
 - **Stop** ends playback and returns; **Browse** keeps the video playing in the mini player.

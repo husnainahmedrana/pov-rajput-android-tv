@@ -30,6 +30,8 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 class PlayerActivity : Activity() {
@@ -50,6 +52,15 @@ class PlayerActivity : Activity() {
     private var seekKey = KeyEvent.KEYCODE_UNKNOWN
     private var resumeAfterSeek = false
     private lateinit var seekLabel: TextView
+    private lateinit var seekThumb: ImageView
+    /** Seekr's ready-made previews for this title, when the viewer has a key and Seekr has the title. */
+    private var seekrTrack: tv.seekr.previews.android.SeekrTrack? = null
+    private var seekrLoad: kotlinx.coroutines.Job? = null
+    private var seekrFrame: kotlinx.coroutines.Job? = null
+    private var seekrFor = ""
+    private val seekrPrefs by lazy { SeekrPreferences(this) }
+    private val activeSeekr get() = seekrTrack?.takeIf { seekrPrefs.enabled }
+    private val uiScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main)
     private val timeline get() = view.findViewById<PreviewTimeBar>(androidx.media3.ui.R.id.exo_progress)
     private var revealKey = KeyEvent.KEYCODE_UNKNOWN
     private var cachedLinkAttempt = false
@@ -106,6 +117,19 @@ class PlayerActivity : Activity() {
         }
         requireNotNull(view.overlayFrameLayout).addView(seekLabel,
             FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        seekThumb = ImageView(this).apply {
+            tag = "pov_seek_thumb"; scaleType = ImageView.ScaleType.FIT_CENTER; visibility = View.GONE
+            translationY = -dp(if (DeviceLayout.phone) 120 else 150).toFloat()
+            background = GradientDrawable().apply { setColor(0xE6000000.toInt()); cornerRadius = dp(10).toFloat(); setStroke(dp(2), 0x66FFFFFF) }
+            setPadding(dp(2), dp(2), dp(2), dp(2)); clipToOutline = true
+        }
+        val thumbWidth = dp(if (DeviceLayout.phone) 200 else 256)
+        requireNotNull(view.overlayFrameLayout).addView(seekThumb, FrameLayout.LayoutParams(thumbWidth, thumbWidth * 9 / 16, Gravity.CENTER))
+        timeline.addListener(object : androidx.media3.ui.TimeBar.OnScrubListener {
+            override fun onScrubStart(timeBar: androidx.media3.ui.TimeBar, position: Long) = showThumb(position)
+            override fun onScrubMove(timeBar: androidx.media3.ui.TimeBar, position: Long) = showThumb(position)
+            override fun onScrubStop(timeBar: androidx.media3.ui.TimeBar, position: Long, canceled: Boolean) = showThumb(null)
+        })
         if (DeviceLayout.phone) {
             // A view focusable in touch mode spends a tap on taking focus, so taps never reached the
             // controls toggle; on the phone every tap shows or hides them.
@@ -113,7 +137,8 @@ class PlayerActivity : Activity() {
             PhonePlayerGestures.fullBleed(this)
             // The seek bar and buttons sit in the lower part of the controls; touches there stay theirs.
             gestures = PhonePlayerGestures(this, view, seekLabel, { player },
-                overControls = { y -> view.isControllerFullyVisible && y > view.height * 0.6f }, showControls = { controls.show() })
+                overControls = { y -> view.isControllerFullyVisible && y > view.height * 0.6f }, showControls = { controls.show() },
+                onSeekPreview = { showThumb(it) })
         }
         buildSplash()
         openCurtain()
@@ -174,6 +199,7 @@ class PlayerActivity : Activity() {
         InAppPlaybackSession.attachPlayerView(view)
         controls.start()
         view.removeCallbacks(endTimeTicker); view.post(endTimeTicker)
+        view.removeCallbacks(seekrLookup); view.postDelayed(seekrLookup, 1_000)
         updateControls()
         InAppPlaybackSession.error?.let { if (observedError !== it) showPlaybackFailure(it) }
         controls.show()
@@ -521,7 +547,54 @@ class PlayerActivity : Activity() {
         timeline.previewPosition = seekPreview.position
         seekLabel.text = "${DpadSeekPreview.time(seekPreview.position)}\n${DpadSeekPreview.offset(seekPreview.offsetSeconds * 1000)}  ·  ${DpadSeekPreview.time(exo.duration)}"
         seekLabel.visibility = View.VISIBLE
+        showThumb(seekPreview.position)
         return true
+    }
+
+    /** Looks the playing title up on Seekr once its length is known; retried every few seconds until then. */
+    private val seekrLookup: Runnable = object : Runnable {
+        override fun run() {
+            if (stopped) return
+            player?.takeIf { it.duration > 0 }?.let { loadSeekr(it.duration) }
+            view.postDelayed(this, SEEKR_LOOKUP_MS)
+        }
+    }
+
+    /** Looks the title up on Seekr once and downloads its preview sheets in the background, so scrubbing is instant. */
+    private fun loadSeekr(durationMs: Long) {
+        if (!seekrPrefs.enabled) return
+        val key = InAppPlaybackSession.secureValue(SeekrPreferences.KEY).ifBlank { BuildConfig.SEEKR_KEY }
+        val media = InAppPlaybackSession.playbackIdentity ?: return
+        if (key.isBlank() || !media.imdbId.startsWith("tt")) return
+        val id = "${media.imdbId}:${media.season}:${media.episode}"
+        if (id == seekrFor) return
+        seekrFor = id; seekrTrack = null; seekrLoad?.cancel()
+        val content = if (media.type == "series" && media.season > 0 && media.episode > 0)
+            tv.seekr.previews.core.SeekrContent.Episode(showImdbId = media.imdbId, season = media.season, episode = media.episode)
+        else tv.seekr.previews.core.SeekrContent.Movie(imdbId = media.imdbId)
+        seekrLoad = uiScope.launch {
+            val started = android.os.SystemClock.elapsedRealtime()
+            val track = runCatching { tv.seekr.previews.android.Seekr.create(key).loadTrack(content, durationMs) }
+                .onFailure { android.util.Log.w(SeekrPreferences.TAG, "Seekr lookup failed", it) }.getOrNull()?.takeIf { !it.isEmpty }
+            android.util.Log.i(SeekrPreferences.TAG, "Seekr ${if (track != null) "has" else "has no"} previews for $id (${android.os.SystemClock.elapsedRealtime() - started} ms)")
+            if (track == null) return@launch
+            seekrTrack = track
+            val sheets = android.os.SystemClock.elapsedRealtime()
+            runCatching { track.prefetchSheets() }
+            android.util.Log.i(SeekrPreferences.TAG, "Seekr sprite sheets ready in ${android.os.SystemClock.elapsedRealtime() - sheets} ms")
+        }
+    }
+
+    /** The Seekr thumbnail nearest [position] above the seek label, or hide it when null. */
+    private fun showThumb(position: Long?) {
+        if (position == null) { seekrFrame?.cancel(); seekThumb.visibility = View.GONE; seekThumb.setImageDrawable(null); return }
+        val track = activeSeekr ?: return
+        seekThumb.visibility = View.VISIBLE
+        seekrFrame?.cancel()
+        seekrFrame = uiScope.launch {
+            val frame = runCatching { track.thumbnailAt(position) }.getOrNull()
+            if (frame != null && seekThumb.visibility == View.VISIBLE) seekThumb.setImageBitmap(frame)
+        }
     }
 
     private fun finishSeek(cancelled: Boolean = false, restorePlayback: Boolean = true) {
@@ -529,6 +602,7 @@ class PlayerActivity : Activity() {
         val target = seekPreview.finish(cancelled)
         timeline.previewPosition = null
         seekLabel.visibility = View.GONE
+        showThumb(null)
         seekKey = KeyEvent.KEYCODE_UNKNOWN
         player?.let { exo ->
             if (target != null) {
@@ -667,6 +741,7 @@ class PlayerActivity : Activity() {
     }
 
     override fun onStop() {
+        view.removeCallbacks(seekrLookup)
         finishSeek(cancelled = true, restorePlayback = false)
         stopped = true
         controls.stop()
@@ -680,12 +755,14 @@ class PlayerActivity : Activity() {
         splashHandler.removeCallbacks(showSplashLater); splashPulse?.cancel()
         controls.release()
         InAppPlaybackSession.removeListener(sessionListener)
+        uiScope.cancel()
         super.onDestroy()
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
     companion object {
+        private const val SEEKR_LOOKUP_MS = 3_000L
         /** A seek may land up to this far from its target to reach a keyframe. */
         const val SEEK_SNAP_MS = 2_000L
         const val QUIET_SEEK_MS = 4_000L

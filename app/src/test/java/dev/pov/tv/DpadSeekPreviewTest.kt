@@ -36,21 +36,22 @@ class DpadSeekPreviewTest {
         seek.finish(); seek.begin(Long.MAX_VALUE - 500, Long.MAX_VALUE)
         assertEquals(Long.MAX_VALUE, seek.step(1))
     }
-    @Test fun `continuous seeks accelerate after one five fifteen and thirty minutes and remain bounded`() {
+    @Test fun `continuous seeks climb gently and never pass thirty seconds a step`() {
         val seek = DpadSeekPreview()
         seek.begin(0, 7_200_000)
-        repeat(60) { seek.step(1) }
+        repeat(10) { seek.step(1) }
+        assertEquals(10_000, seek.position)
+        assertEquals(15_000, seek.step(1))
+        repeat(9) { seek.step(1) }
         assertEquals(60_000, seek.position)
         assertEquals(70_000, seek.step(1))
         repeat(23) { seek.step(1) }
         assertEquals(300_000, seek.position)
-        assertEquals(330_000, seek.step(1))
-        repeat(19) { seek.step(1) }
+        assertEquals(320_000, seek.step(1))
+        repeat(29) { seek.step(1) }
         assertEquals(900_000, seek.position)
+        assertEquals(930_000, seek.step(1))
         assertEquals(960_000, seek.step(1))
-        repeat(14) { seek.step(1) }
-        assertEquals(1_800_000, seek.position)
-        assertEquals(1_920_000, seek.step(1))
         repeat(1000) { seek.step(1) }
         assertEquals(7_200_000, seek.position)
         assertEquals(7_200_000L, seek.finish())
@@ -58,12 +59,12 @@ class DpadSeekPreviewTest {
     @Test fun `reversing or starting a new hold restores precise one second steps`() {
         val seek = DpadSeekPreview()
         seek.begin(2_000_000, 7_200_000)
-        repeat(60) { seek.step(-1) }
-        assertEquals(1_930_000, seek.step(-1))
-        assertEquals(1_931_000, seek.step(1))
+        repeat(20) { seek.step(-1) } // 10 x 1 s, then 10 x 5 s
+        assertEquals(1_940_000, seek.position)
+        assertEquals(1_941_000, seek.step(1))
         seek.finish()
-        seek.begin(1_931_000, 7_200_000)
-        assertEquals(1_932_000, seek.step(1))
+        seek.begin(1_941_000, 7_200_000)
+        assertEquals(1_942_000, seek.step(1))
     }
 
     @Test fun `timer always includes seconds and a long movie includes hours`() {

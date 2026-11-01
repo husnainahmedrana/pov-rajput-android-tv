@@ -83,6 +83,8 @@ object InAppPlaybackSession {
     var error: PlaybackException? = null
         private set
     val playerOrNull: ExoPlayer? get() = player
+    internal val playbackIdentity: PlaybackIdentity? get() = identity
+    internal fun secureValue(key: String): String = if (::secureStore.isInitialized) secureStore.get(key) else ""
     internal val volumeBoost = SessionVolumeBoost(
         dispatchToMain = { task -> handler.post { task() } },
         onStateChanged = { notifyChanged() },

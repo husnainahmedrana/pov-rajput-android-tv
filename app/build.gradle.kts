@@ -18,6 +18,8 @@ android {
             .orElse("dev.pov.tv.PlaybackAuditInstrumentation").get()
     }
     buildFeatures { buildConfig = true }
+    // Optional Seekr key for local preview builds only (-PpovSeekrKey=...). Never committed; releases ship without one.
+    defaultConfig.buildConfigField("String", "SEEKR_KEY", "\"${providers.gradleProperty("povSeekrKey").orNull.orEmpty()}\"")
     // One codebase, two APKs: the TV app keeps its package (existing installs update in place),
     // the phone app is a separate install with its own release asset and update manifest.
     flavorDimensions += "device"
@@ -86,6 +88,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // QR code for device sign-in (encoder only).
     implementation("com.google.zxing:core:3.5.3")
+    // Seekr (seekr.tv) ready-made seek preview thumbnails, with the viewer's own API key.
+    implementation("tv.seekr:seekr-android:0.2.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.16")
 }

@@ -24,6 +24,8 @@ internal class PhonePlayerGestures(
     /** True while a touch at this height belongs to the visible controls (seek bar and buttons). */
     private val overControls: (Float) -> Boolean,
     private val showControls: () -> Unit,
+    /** The swipe-seek target for a seek preview thumbnail, or null when the swipe ends. */
+    private val onSeekPreview: (Long?) -> Unit = {},
 ) {
     private enum class Mode { NONE, SEEK, BRIGHTNESS, VOLUME, CONSUMED }
     private var mode = Mode.NONE
@@ -34,7 +36,7 @@ internal class PhonePlayerGestures(
     private var seekTarget = 0L
     private var startLevel = 0f
     private val audio = activity.getSystemService(Activity.AUDIO_SERVICE) as AudioManager
-    private val hideLabel = Runnable { label.visibility = View.GONE }
+    private val hideLabel = Runnable { label.visibility = View.GONE; onSeekPreview(null) }
 
     private val detector = GestureDetector(activity, object : GestureDetector.SimpleOnGestureListener() {
         override fun onDoubleTap(event: MotionEvent): Boolean {
@@ -103,6 +105,7 @@ internal class PhonePlayerGestures(
                 // A full sweep of the screen moves two minutes.
                 val offset = ((event.x - startX) / surface.width * SWEEP_MS).toLong()
                 seekTarget = (seekFrom + offset).coerceIn(0, exo.duration)
+                onSeekPreview(seekTarget)
                 show("${DpadSeekPreview.time(seekTarget)}\n${DpadSeekPreview.offset(seekTarget - seekFrom)}  ·  ${DpadSeekPreview.time(exo.duration)}")
             }
             Mode.BRIGHTNESS -> {
