@@ -3122,26 +3122,6 @@ class MainActivity : Activity() {
         }
 
         val playback = settingsGroup("Playback", "nowplaying")
-        settingsToggle(playback, "Seek previews (Seekr)", "Shows a thumbnail of the scene above the seek bar while you seek. Previews come from Seekr, which has them ready for many movies and shows. Needs your Seekr API key below.",
-            SeekrPreferences(this).enabled) { on -> SeekrPreferences(this).enabled = on }
-        seekrInfo(playback)
-        val seekr = store.get(SeekrPreferences.KEY)
-        val seekrBuilt = BuildConfig.SEEKR_KEY.isNotBlank()
-        settingsRow(playback, "Seekr API key", if (seekr.isNotBlank()) "Connected" else if (seekrBuilt) "Built in" else "Not set",
-            "Put your API key from seekr.tv here to get thumbnail previews while seeking. Sign up at seekr.tv, copy your key (it starts with sk_live_) and paste it here. Titles Seekr doesn't have simply show no preview.",
-            status = seekr.isNotBlank() || seekrBuilt) {
-            inputSetting("Seekr API key", "Paste your key from seekr.tv (sk_live_...)", "", secret = true) { key ->
-                store.put(SeekrPreferences.KEY, key.trim()); refreshSettings()
-                // Ask Seekr whether it accepts the key, so a typo is caught here rather than as missing previews later.
-                Thread {
-                    val ok = runCatching { kotlinx.coroutines.runBlocking { tv.seekr.previews.android.Seekr.create(key.trim()).validateKey() } }.getOrNull()
-                    runOnUiThread { toast(when (ok) { true -> "Seekr key saved · ✓ Seekr accepts the key"; false -> "Seekr key saved, but Seekr doesn't accept it. Check the key."; null -> "Seekr key saved (couldn't reach Seekr to check it)" }) }
-                }.start()
-            }
-        }
-        if (seekr.isNotBlank()) settingsRow(playback, "Remove Seekr key", danger = true) {
-            confirm("Remove your Seekr key?") { store.remove(SeekrPreferences.KEY); refreshSettings() }
-        }
         settingsRow(playback, "Source sorting", SourceSortPreferences(this).label,
             "Links in your audio language first (then multi-audio), then quality, then file size. Auto-play follows this order.") {
             SourceSortPreferences.show(this) { refreshSettings() }
@@ -3185,6 +3165,26 @@ class MainActivity : Activity() {
                 }.setNegativeButton("Cancel", null).show()
         }
 
+        settingsToggle(playback, "Seek previews (Seekr)", "Shows a thumbnail of the scene above the seek bar while you seek. Previews come from Seekr, which has them ready for many movies and shows. Needs your Seekr API key below.",
+            SeekrPreferences(this).enabled) { on -> SeekrPreferences(this).enabled = on }
+        seekrInfo(playback)
+        val seekr = store.get(SeekrPreferences.KEY)
+        val seekrBuilt = BuildConfig.SEEKR_KEY.isNotBlank()
+        settingsRow(playback, "Seekr API key", if (seekr.isNotBlank()) "Connected" else if (seekrBuilt) "Built in" else "Not set",
+            "Put your API key from seekr.tv here to get thumbnail previews while seeking. Sign up at seekr.tv, copy your key (it starts with sk_live_) and paste it here. Titles Seekr doesn't have simply show no preview.",
+            status = seekr.isNotBlank() || seekrBuilt) {
+            inputSetting("Seekr API key", "Paste your key from seekr.tv (sk_live_...)", "", secret = true) { key ->
+                store.put(SeekrPreferences.KEY, key.trim()); refreshSettings()
+                // Ask Seekr whether it accepts the key, so a typo is caught here rather than as missing previews later.
+                Thread {
+                    val ok = runCatching { kotlinx.coroutines.runBlocking { tv.seekr.previews.android.Seekr.create(key.trim()).validateKey() } }.getOrNull()
+                    runOnUiThread { toast(when (ok) { true -> "Seekr key saved · ✓ Seekr accepts the key"; false -> "Seekr key saved, but Seekr doesn't accept it. Check the key."; null -> "Seekr key saved (couldn't reach Seekr to check it)" }) }
+                }.start()
+            }
+        }
+        if (seekr.isNotBlank()) settingsRow(playback, "Remove Seekr key", danger = true) {
+            confirm("Remove your Seekr key?") { store.remove(SeekrPreferences.KEY); refreshSettings() }
+        }
         val captions = settingsGroup("Subtitles & audio", "series")
         val subtitlePreferences = SubtitlePreferences(this)
         settingsRow(captions, "Subtitle style", "${subtitlePreferences.sizeLabel} · text and size") {
