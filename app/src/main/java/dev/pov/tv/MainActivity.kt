@@ -3334,7 +3334,10 @@ class MainActivity : Activity() {
             view.background = if (focused) rounded(withAlpha(Color.WHITE, if (flix) 34 else 24), 9) else null
             view.foreground = if (focused) FocusRingDrawable(if (flix) Color.WHITE else accent, dp(9).toFloat(), true, dp(1).toFloat()) else null
         }
-        row.setOnClickListener { action() }
+        row.setOnClickListener {
+            settingsReturnIndex = focusController.focusedIndex(); settingsReturnScroll = scroller.scrollY
+            action()
+        }
         card.addView(row.pressable(9), margin(-1, -2))
     }
 
@@ -3385,9 +3388,16 @@ class MainActivity : Activity() {
         return android.graphics.Bitmap.createBitmap(pixels, width, height, android.graphics.Bitmap.Config.ARGB_8888)
     }
 
+    /** The Settings row (and scroll) that opened a dialog, so the page comes back there afterwards. */
+    private var settingsReturnIndex = 0
+    private var settingsReturnScroll = 0
+
     /** Rebuilds Settings after a change, returning focus and scroll to the row the viewer was on. */
     private fun refreshSettings() {
-        val index = focusController.focusedIndex(); val scroll = scroller.scrollY
+        // While a dialog is open the page has no focused row, so fall back to the row that opened it.
+        val focused = focusController.focusedIndex()
+        val index = if (focused >= 0) focused else settingsReturnIndex
+        val scroll = if (focused >= 0) scroller.scrollY else settingsReturnScroll
         settings()
         body.post { if (!isDestroyed && destination == "settings") focusController.restoreIndex(index, scroll) }
     }
@@ -3510,7 +3520,7 @@ class MainActivity : Activity() {
                         if (dialog.isShowing && request == generation && !isFinishing && !isDestroyed) {
                             if (store.get("playback.priority").isBlank() && !store.has("torbox.token")) store.put("playback.service", "offcloud")
                             dialog.dismiss()
-                            toast("Offcloud connected"); settings()
+                            toast("Offcloud connected"); refreshSettings()
                         }
                     }
                 } catch (error: Exception) {
@@ -3554,7 +3564,7 @@ class MainActivity : Activity() {
         if (authorization?.isShowing == true) return
         authorization = DeviceAuthorizationDialog(this, name, authWorker, start, poll, onConnected = {
             if (name == wetrakr.name) { wetrakrOutbox.clearPending(); remoteProgress.clear(); refreshWatched(force = true) }
-            toast("$name connected"); current()
+            toast("$name connected"); if (destination == "settings") refreshSettings() else current()
         }, onCancel = cancel, configure = configure).also { it.show() }
     }
 
