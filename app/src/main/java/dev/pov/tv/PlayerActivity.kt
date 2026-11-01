@@ -841,9 +841,12 @@ class PlayerActivity : Activity() {
     override fun onBackPressed() {
         when {
             seekPreview.active -> finishSeek(cancelled = true)
-            // Back first tucks the controls away; a second Back leaves for the mini player, or stops the video (saving
-            // its progress, like Stop) when the mini player is off.
-            view.isControllerFullyVisible -> controls.dismiss()
+            // Back first brings up the controls; a second Back (with them showing) leaves for the mini player, or stops the
+            // video (saving its progress, like Stop) when the mini player is off.
+            !view.isControllerFullyVisible -> {
+                controls.show()
+                view.findViewById<View>(androidx.media3.ui.R.id.exo_play_pause).requestFocus()
+            }
             else -> { if (!miniPlayer) InAppPlaybackSession.stop(); finish() }
         }
     }
