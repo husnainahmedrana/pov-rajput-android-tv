@@ -826,11 +826,15 @@ class PlayerActivity : Activity() {
             if (target != null) {
                 timeline.setPosition(target)
                 val from = exo.currentPosition
-                // Video decodes forward from a keyframe, so an exact spot inside the buffer can take the onn a second
-                // to reach. Landing on a nearby keyframe in the direction of the seek makes it near-instant.
-                val tolerance = SEEK_SNAP_MS * 1000
-                exo.setSeekParameters(if (target >= from) androidx.media3.exoplayer.SeekParameters(0, tolerance)
-                    else androidx.media3.exoplayer.SeekParameters(tolerance, 0))
+                // Video can only start from a keyframe. Landing off one makes the TV decode forward from the keyframe before
+                // it, which takes the TCL a second or two even when that video is already loaded, so seeks always land on
+                // one: the closest for bigger jumps, the next or previous for short taps so they still move that way.
+                val distance = kotlin.math.abs(target - from)
+                exo.setSeekParameters(when {
+                    distance >= SNAP_CLOSEST_FROM_MS -> androidx.media3.exoplayer.SeekParameters.CLOSEST_SYNC
+                    target >= from -> androidx.media3.exoplayer.SeekParameters.NEXT_SYNC
+                    else -> androidx.media3.exoplayer.SeekParameters.PREVIOUS_SYNC
+                })
                 if (target >= from - ReadAheadPreferences.BACK_BUFFER_MS && target <= exo.bufferedPosition)
                     quietSeekUntil = android.os.SystemClock.uptimeMillis() + QUIET_SEEK_MS
                 exo.seekTo(target)
@@ -998,6 +1002,8 @@ class PlayerActivity : Activity() {
         private const val STREAMS_SHOWN = 60
         /** A seek may land up to this far from its target to reach a keyframe. */
         const val SEEK_SNAP_MS = 2_000L
+        /** From this distance a seek lands on whichever keyframe is closest, in either direction. */
+        const val SNAP_CLOSEST_FROM_MS = 10_000L
         const val QUIET_SEEK_MS = 4_000L
         val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
         val TRACK_TYPES = listOf(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_TEXT)
