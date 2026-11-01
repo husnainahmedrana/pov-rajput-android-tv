@@ -3922,8 +3922,10 @@ class MainActivity : Activity() {
         }
         frame.foreground = if (flix) null else FocusRingDrawable(theme.palette.border, dp(theme.layout.cornerRadiusDp).toFloat(), false, dp(1).toFloat())
         frame.setOnFocusChangeListener { view, focused ->
-            // The white outline cross-fades: the old card's fades out while the new one's fades in.
-            if (flix) FadeDrawable.foreground(view, if (focused) FocusRingDrawable(Color.WHITE, dp(theme.layout.cornerRadiusDp).toFloat(), true, dp(1).toFloat()) else null)
+            // In a sideways row one white outline glides from poster to poster; elsewhere the outline cross-fades.
+            val glide = if (flix) posterGlide(view) else null
+            if (glide != null) glide.focusChanged(view, focused)
+            else if (flix) FadeDrawable.foreground(view, if (focused) FocusRingDrawable(Color.WHITE, dp(theme.layout.cornerRadiusDp).toFloat(), true, dp(1).toFloat()) else null)
             else view.foreground = FocusRingDrawable(if (focused) accent else theme.palette.border, dp(theme.layout.cornerRadiusDp).toFloat(), focused, dp(1).toFloat())
             view.animate().scaleX(if (focused) theme.layout.focusScale else 1f).scaleY(if (focused) theme.layout.focusScale else 1f).setDuration(130).start()
             if (focused) scheduleFeature(item)
@@ -3935,6 +3937,16 @@ class MainActivity : Activity() {
     }
 
     private val listGlides = java.util.WeakHashMap<ViewGroup, SlidingFocusPill>()
+    /** The gliding outline of the sideways poster row holding [tile] (Home and catalog rows), or null outside one. */
+    private fun posterGlide(tile: View): SlidingFocusPill? {
+        val row = tile.parent as? ViewGroup ?: return null
+        if (row.parent !is HorizontalScrollView) return null
+        return listGlides.getOrPut(row) {
+            row.clipChildren = false; row.clipToPadding = false
+            SlidingFocusPill(row, fill = Color.WHITE, radius = dp(theme.layout.cornerRadiusDp).toFloat(), fadeText = false,
+                ring = maxOf(2f, dp(1) * 1.5f), scale = theme.layout.focusScale)
+        }
+    }
     /** The gliding highlight of the list holding [row] (episodes), created the first time one of its rows takes focus. */
     private fun listGlide(row: View): SlidingFocusPill? {
         val list = row.parent as? ViewGroup ?: return null

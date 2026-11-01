@@ -30,13 +30,17 @@ internal class SlidingFocusPill(
     radius: Float? = null,
     /** Text and icons of [buttons] fade white → black under the highlight. */
     private val fadeText: Boolean = true,
+    /** An outline of this width (px) drawn over the children (posters) instead of a fill behind them. */
+    ring: Float? = null,
+    /** The focused child grows by this much; the outline grows with it. */
+    private val scale: Float = 1f,
 ) {
-    private val pill = PillDrawable(fill, radius)
+    private val pill = PillDrawable(fill, radius, ring)
     private var motion: ValueAnimator? = null
     private val colours = HashMap<View, ValueAnimator>()
 
     init {
-        row.background = pill
+        if (ring != null) row.foreground = pill else row.background = pill
         if (fadeText) buttons.forEach { button -> button.background = null; paint(button, Color.WHITE) }
     }
 
@@ -48,7 +52,11 @@ internal class SlidingFocusPill(
     }
 
     private fun moveTo(child: View) {
-        val target = RectF(child.left.toFloat(), child.top.toFloat(), child.right.toFloat(), child.bottom.toFloat())
+        // Focus can arrive before the first layout (a menu just opening); wait for real bounds, or nothing is drawn
+        // while the text has already turned dark.
+        if (child.width == 0 || child.height == 0) { child.post { if (child.isFocused) moveTo(child) }; return }
+        val grow = (scale - 1f) / 2f
+        val target = RectF(child.left - child.width * grow, child.top - child.height * grow, child.right + child.width * grow, child.bottom + child.height * grow)
         // Arriving from outside (the seek bar, a season tab, controls just shown): appear in place rather than slide in.
         if (pill.shown == 0) { motion?.cancel(); pill.rect.set(target) }
         animateTo(target, 255)
@@ -87,7 +95,7 @@ internal class SlidingFocusPill(
         if (button is ImageView) button.imageTintList = tint
     }
 
-    private class PillDrawable(private val fill: Int, private val radius: Float?) : Drawable() {
+    private class PillDrawable(private val fill: Int, private val radius: Float?, private val ring: Float?) : Drawable() {
         val rect = RectF()
         /** 0 hidden … 255 fully shown; multiplies the fill colour's own alpha. */
         var shown = 0
@@ -97,7 +105,12 @@ internal class SlidingFocusPill(
             paint.color = fill
             paint.alpha = Color.alpha(fill) * shown / 255
             val r = radius ?: (rect.height() / 2)
-            canvas.drawRoundRect(rect, r, r, paint)
+            if (ring == null) { paint.style = Paint.Style.FILL; canvas.drawRoundRect(rect, r, r, paint) }
+            else {
+                paint.style = Paint.Style.STROKE; paint.strokeWidth = ring
+                val half = ring / 2
+                canvas.drawRoundRect(RectF(rect.left + half, rect.top + half, rect.right - half, rect.bottom - half), r, r, paint)
+            }
         }
         override fun setAlpha(alpha: Int) {}
         override fun setColorFilter(colorFilter: ColorFilter?) {}
