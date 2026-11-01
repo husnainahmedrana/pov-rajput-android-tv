@@ -605,13 +605,16 @@ class PlayerActivity : Activity() {
     /** The Seekr thumbnail nearest [position] above the seek label, or hide it when null. */
     private fun showThumb(position: Long?, offset: String? = null) {
         if (position == null) { seekrFrame?.cancel(); seekCard.visibility = View.GONE; seekThumb.setImageDrawable(null); return }
-        val track = activeSeekr ?: return
-        // The card carries the time, so the big centre label steps aside.
+        val track = activeSeekr
+        // The card carries the time, so the big centre label steps aside. Without a Seekr picture the card is just the
+        // time pill, in the same place, so seeking looks the same either way.
         seekLabel.visibility = View.GONE
         seekCardTime.text = DpadSeekPreview.time(position) + (offset?.let { "  ·  $it" } ?: "")
+        seekThumb.visibility = if (track != null) View.VISIBLE else View.GONE
         seekCard.visibility = View.VISIBLE
         placeSeekCard(position)
         seekrFrame?.cancel()
+        if (track == null) return
         seekrFrame = uiScope.launch {
             val frame = runCatching { nearestSeekrFrame(track, position) }.getOrNull()
             if (frame != null && seekCard.visibility == View.VISIBLE) seekThumb.setImageBitmap(frame)
