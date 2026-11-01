@@ -19,6 +19,9 @@ internal data class PlayerSheetChoice(
     val label: String,
     val checked: Boolean = false,
     val selectable: Boolean = true,
+    /** A second, muted line and source badges (quality, size, HDR...) make a richer row, as in the source list. */
+    val detail: String = "",
+    val badges: List<SourceBadge> = emptyList(),
     val action: () -> Unit,
 )
 
@@ -64,11 +67,16 @@ internal object PlayerOptionSheet {
         val split = columns.size > 1
         // Two columns (Audio | Subtitles) sit side by side in the landscape player; D-pad left/right moves between them.
         val holder = if (split) LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }.also { content.addView(it, LinearLayout.LayoutParams(-1, -2)) } else content
-        val maxHeight = (context.resources.displayMetrics.heightPixels * (if (split) 0.5 else 0.44)).toInt()
+        val rich = columns.any { column -> column.choices.any { it.badges.isNotEmpty() || it.detail.isNotBlank() } }
+        val maxHeight = (context.resources.displayMetrics.heightPixels * (if (split) 0.5 else if (rich) 0.62 else 0.44)).toInt()
         val buttons = columns.mapIndexed { column, sheetColumn ->
             val choices = sheetColumn.choices
             val rows = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
             val columnButtons = choices.mapIndexed { index, choice ->
+                if (choice.badges.isNotEmpty() || choice.detail.isNotBlank()) return@mapIndexed richRow(context, dialog, choice,
+                    if (split) "pov_sheet_choice_${column}_$index" else "pov_sheet_choice_$index").also {
+                    rows.addView(it, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
+                }
                 Button(context).apply {
                     tag = if (split) "pov_sheet_choice_${column}_$index" else "pov_sheet_choice_$index"
                     text = if (choice.checked) "✓   ${choice.label}" else "     ${choice.label}"
@@ -92,7 +100,7 @@ internal object PlayerOptionSheet {
                 }.also { rows.addView(it, LinearLayout.LayoutParams(-1, dp(49)).apply { bottomMargin = dp(6) }) }
             }
             val scroll = ScrollView(context).apply { isFillViewport = false; addView(rows) }
-            val height = LinearLayout.LayoutParams(-1, minOf(dp(55) * choices.size, maxHeight).coerceAtLeast(dp(50)))
+            val height = LinearLayout.LayoutParams(-1, minOf(dp(if (rich) 104 else 55) * choices.size, maxHeight).coerceAtLeast(dp(50)))
             if (!split) content.addView(scroll, height) else {
                 val box = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
                 box.addView(TextView(context).apply {
@@ -124,6 +132,41 @@ internal object PlayerOptionSheet {
             buttons[column].getOrNull(selected)?.let { button -> button.post { button.requestFocus() } }
         }
         return dialog
+    }
+
+    /**
+     * A source-list style row: badges, the name, and a muted detail line. The badges have dark fills, so focus is a
+     * light tint with a white outline rather than a white fill.
+     */
+    private fun richRow(context: Context, dialog: Dialog, choice: PlayerSheetChoice, id: String): View {
+        fun dp(value: Int) = (value * context.resources.displayMetrics.density).toInt()
+        return LinearLayout(context).apply {
+            tag = id; orientation = LinearLayout.VERTICAL
+            isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            contentDescription = (choice.badges.map { it.label } + listOf(choice.label, choice.detail)).filter(String::isNotBlank).joinToString(". ") +
+                if (choice.checked) ", playing" else ""
+            if (choice.badges.isNotEmpty()) addView(SourceBadgeStrip(context, choice.badges), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(7) })
+            addView(TextView(context).apply {
+                text = if (choice.checked) "✓  ${choice.label}" else choice.label
+                textSize = 14f; setTextColor(Color.WHITE); maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
+                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            }, LinearLayout.LayoutParams(-1, -2))
+            if (choice.detail.isNotBlank()) addView(TextView(context).apply {
+                text = choice.detail; textSize = 12f; setTextColor(0xFFC4C4C8.toInt()); maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(3), 0, 0)
+            }, LinearLayout.LayoutParams(-1, -2))
+            fun style(focused: Boolean) {
+                background = GradientDrawable().apply {
+                    setColor(if (focused) 0xFF3A3A40.toInt() else if (choice.checked) 0x33FFFFFF else 0x14FFFFFF)
+                    cornerRadius = dp(10).toFloat()
+                    if (focused) setStroke(dp(2), Color.WHITE) else if (choice.checked) setStroke(dp(1), 0x80FFFFFF.toInt())
+                }
+            }
+            style(false)
+            setOnFocusChangeListener { _, focused -> style(focused) }
+            setOnClickListener { if (choice.selectable) { dialog.dismiss(); choice.action() } }
+        }
     }
 }
 

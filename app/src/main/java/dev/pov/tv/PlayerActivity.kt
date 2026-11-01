@@ -564,6 +564,9 @@ class PlayerActivity : Activity() {
             links == null -> showSheet("Streams", "Searching for links… they appear here in a moment.", listOf(PlayerSheetChoice("Searching…", selectable = false) {}))
             links.isEmpty() -> showSheet("Streams", "No other links were found for this title.", listOf(PlayerSheetChoice("Close") { activeDialog?.dismiss() }))
             else -> {
+                // Quality, size, ≈bitrate (from this video's length), HDR, codec and language badges, as in the source list.
+                val languages = SourceSortPreferences(this).languages
+                val minutes = player?.duration?.takeIf { it > 0 }?.let { (it / 60_000).toInt() }
                 val choices = links.take(STREAMS_SHOWN).map { source ->
                     val status = when {
                         source.directUrl.isNotEmpty() -> "Direct"
@@ -572,7 +575,9 @@ class PlayerActivity : Activity() {
                     }
                     val name = source.title.lineSequence().firstOrNull().orEmpty()
                     val current = playing.isNotBlank() && name.isNotBlank() && playing.contains(name.take(40))
-                    PlayerSheetChoice("${source.title}\n${source.detail}  ·  $status  ·  ${source.provider}", checked = current) { pickStream(media, source) }
+                    PlayerSheetChoice(name.ifBlank { source.title }, checked = current,
+                        detail = listOf(status, source.provider, source.detail.replace('\n', ' ')).filter(String::isNotBlank).joinToString("  ·  "),
+                        badges = SourceBadges.from(source, languages, minutes)) { pickStream(media, source) }
                 }
                 showSheet("Streams", "${links.size} links · pick one to continue from the same spot.", choices)
             }
