@@ -105,8 +105,8 @@ internal class PhonePlayerGestures(
                 // A full sweep of the screen moves two minutes.
                 val offset = ((event.x - startX) / surface.width * SWEEP_MS).toLong()
                 seekTarget = (seekFrom + offset).coerceIn(0, exo.duration)
-                onSeekPreview(seekTarget)
                 show("${DpadSeekPreview.time(seekTarget)}\n${DpadSeekPreview.offset(seekTarget - seekFrom)}  ·  ${DpadSeekPreview.time(exo.duration)}")
+                onSeekPreview(seekTarget) // after the label: a thumbnail card replaces it
             }
             Mode.BRIGHTNESS -> {
                 val level = (startLevel + (startY - event.y) / (surface.height * 0.7f)).coerceIn(0.01f, 1f)

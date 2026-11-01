@@ -53,6 +53,9 @@ class PlayerActivity : Activity() {
     private var resumeAfterSeek = false
     private lateinit var seekLabel: TextView
     private lateinit var seekThumb: ImageView
+    /** The Seekr thumbnail with its time under it, floating above the seek bar at the scrubbed position. */
+    private lateinit var seekCard: android.widget.LinearLayout
+    private lateinit var seekCardTime: TextView
     /** Seekr's ready-made previews for this title, when the viewer has a key and Seekr has the title. */
     private var seekrTrack: tv.seekr.previews.android.SeekrTrack? = null
     private var seekrLoad: kotlinx.coroutines.Job? = null
@@ -117,14 +120,28 @@ class PlayerActivity : Activity() {
         }
         requireNotNull(view.overlayFrameLayout).addView(seekLabel,
             FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        // Seekr's tiles are about 320 px wide: shown near that size they stay sharp (the TV gets 360 px, not a blurry 512).
+        val thumbWidth = if (DeviceLayout.phone) dp(140) else (resources.displayMetrics.widthPixels * 0.1875f).toInt()
         seekThumb = ImageView(this).apply {
-            tag = "pov_seek_thumb"; scaleType = ImageView.ScaleType.FIT_CENTER; visibility = View.GONE
-            translationY = -dp(if (DeviceLayout.phone) 120 else 150).toFloat()
-            background = GradientDrawable().apply { setColor(0xE6000000.toInt()); cornerRadius = dp(10).toFloat(); setStroke(dp(2), 0x66FFFFFF) }
-            setPadding(dp(2), dp(2), dp(2), dp(2)); clipToOutline = true
+            tag = "pov_seek_thumb"; scaleType = ImageView.ScaleType.CENTER_CROP
+            // The picture fills the card edge to edge: rounded corners, a thin bright border and a soft shadow.
+            background = GradientDrawable().apply { setColor(Color.BLACK); cornerRadius = dp(8).toFloat() }
+            foreground = GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = dp(8).toFloat(); setStroke(maxOf(2, dp(1)), 0xE6FFFFFF.toInt()) }
+            clipToOutline = true; elevation = dp(10).toFloat()
         }
-        val thumbWidth = dp(if (DeviceLayout.phone) 200 else 256)
-        requireNotNull(view.overlayFrameLayout).addView(seekThumb, FrameLayout.LayoutParams(thumbWidth, thumbWidth * 9 / 16, Gravity.CENTER))
+        seekCardTime = TextView(this).apply {
+            textSize = 13f; setTextColor(Color.BLACK); gravity = Gravity.CENTER
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
+            setPadding(dp(10), dp(3), dp(10), dp(3)); elevation = dp(10).toFloat()
+            background = GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(20).toFloat() }
+        }
+        seekCard = android.widget.LinearLayout(this).apply {
+            tag = "pov_seek_card"; orientation = android.widget.LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+            visibility = View.GONE; clipChildren = false; clipToPadding = false; setPadding(dp(12), dp(12), dp(12), dp(4))
+            addView(seekThumb, android.widget.LinearLayout.LayoutParams(thumbWidth, thumbWidth * 9 / 16))
+            addView(seekCardTime, android.widget.LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
+        }
+        requireNotNull(view.overlayFrameLayout).addView(seekCard, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START))
         timeline.addListener(object : androidx.media3.ui.TimeBar.OnScrubListener {
             override fun onScrubStart(timeBar: androidx.media3.ui.TimeBar, position: Long) = showThumb(position)
             override fun onScrubMove(timeBar: androidx.media3.ui.TimeBar, position: Long) = showThumb(position)
@@ -547,7 +564,7 @@ class PlayerActivity : Activity() {
         timeline.previewPosition = seekPreview.position
         seekLabel.text = "${DpadSeekPreview.time(seekPreview.position)}\n${DpadSeekPreview.offset(seekPreview.offsetSeconds * 1000)}  ·  ${DpadSeekPreview.time(exo.duration)}"
         seekLabel.visibility = View.VISIBLE
-        showThumb(seekPreview.position)
+        showThumb(seekPreview.position, DpadSeekPreview.offset(seekPreview.offsetSeconds * 1000))
         return true
     }
 
@@ -586,14 +603,50 @@ class PlayerActivity : Activity() {
     }
 
     /** The Seekr thumbnail nearest [position] above the seek label, or hide it when null. */
-    private fun showThumb(position: Long?) {
-        if (position == null) { seekrFrame?.cancel(); seekThumb.visibility = View.GONE; seekThumb.setImageDrawable(null); return }
+    private fun showThumb(position: Long?, offset: String? = null) {
+        if (position == null) { seekrFrame?.cancel(); seekCard.visibility = View.GONE; seekThumb.setImageDrawable(null); return }
         val track = activeSeekr ?: return
-        seekThumb.visibility = View.VISIBLE
+        // The card carries the time, so the big centre label steps aside.
+        seekLabel.visibility = View.GONE
+        seekCardTime.text = DpadSeekPreview.time(position) + (offset?.let { "  ·  $it" } ?: "")
+        seekCard.visibility = View.VISIBLE
+        placeSeekCard(position)
         seekrFrame?.cancel()
         seekrFrame = uiScope.launch {
-            val frame = runCatching { track.thumbnailAt(position) }.getOrNull()
-            if (frame != null && seekThumb.visibility == View.VISIBLE) seekThumb.setImageBitmap(frame)
+            val frame = runCatching { nearestSeekrFrame(track, position) }.getOrNull()
+            if (frame != null && seekCard.visibility == View.VISIBLE) seekThumb.setImageBitmap(frame)
+        }
+    }
+
+    /**
+     * Seekr has a picture every ~10 s and looks up the one at or before a position; past the middle of that interval the
+     * next picture is closer to what the viewer lands on, so it is shown instead (never more than ~5 s off).
+     */
+    private suspend fun nearestSeekrFrame(track: tv.seekr.previews.android.SeekrTrack, position: Long): android.graphics.Bitmap? {
+        val cue = track.thumbnailFor(position) ?: return null
+        val laterIsCloser = cue.cueEndMs > cue.cueStartMs && position - cue.cueStartMs > cue.cueEndMs - position
+        return if (laterIsCloser) track.thumbnailFor(cue.cueEndMs)?.bitmap ?: cue.bitmap else cue.bitmap
+    }
+
+    /** Floats the card above the seek bar at [position], kept on screen; centred when the seek bar is hidden. */
+    private fun placeSeekCard(position: Long) {
+        val overlay = view.overlayFrameLayout ?: return
+        val duration = player?.duration ?: 0L
+        seekCard.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+        val w = seekCard.measuredWidth; val h = seekCard.measuredHeight
+        val bar: View? = timeline
+        if (bar != null && bar.isShown && bar.width > 0 && duration > 0) {
+            val o = IntArray(2); overlay.getLocationInWindow(o)
+            val b = IntArray(2); bar.getLocationInWindow(b)
+            val inset = dp(8) // the bar is drawn inside the time bar's scrubber padding
+            val fraction = (position.toFloat() / duration).coerceIn(0f, 1f)
+            val centre = b[0] - o[0] + inset + fraction * (bar.width - 2 * inset)
+            val margin = dp(16).toFloat()
+            seekCard.x = (centre - w / 2f).coerceIn(margin, (overlay.width - w - margin).coerceAtLeast(margin))
+            seekCard.y = (b[1] - o[1] - h + dp(4)).toFloat()
+        } else {
+            seekCard.x = (overlay.width - w) / 2f
+            seekCard.y = (overlay.height - h) / 2f
         }
     }
 
