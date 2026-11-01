@@ -124,8 +124,11 @@ class PlayerActivity : Activity() {
         requireNotNull(view.overlayFrameLayout).addView(seekLabel,
             FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         // Seekr's tiles are about 320 px wide: shown near that size they stay sharp (the TV gets 360 px, not a blurry 512).
-        // About WuPlay's size: 400 px wide on a 1080p TV (Seekr's ~320 px tiles stay crisp); the height follows each picture.
-        val thumbWidth = if (DeviceLayout.phone) dp(150) else (resources.displayMetrics.widthPixels * 0.2083f).toInt()
+        // WuPlay's size: a fixed height (213 px on a 1080p screen) with the width following each picture, so a wide
+        // film gets a wide card (about 522 px for 2.39:1) instead of a short one.
+        val metrics = resources.displayMetrics
+        val thumbHeight = (minOf(metrics.widthPixels, metrics.heightPixels) * 0.197f).toInt()
+        val thumbWidth = thumbHeight * 16 / 9
         seekThumb = ImageView(this).apply {
             tag = "pov_seek_thumb"; scaleType = ImageView.ScaleType.FIT_XY
             // The picture fills the card edge to edge: rounded corners, a thin bright border and a soft shadow.
@@ -142,7 +145,7 @@ class PlayerActivity : Activity() {
         seekCard = android.widget.LinearLayout(this).apply {
             tag = "pov_seek_card"; orientation = android.widget.LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
             visibility = View.GONE; clipChildren = false; clipToPadding = false; setPadding(dp(12), dp(12), dp(12), dp(4))
-            addView(seekThumb, android.widget.LinearLayout.LayoutParams(thumbWidth, thumbWidth * 9 / 16))
+            addView(seekThumb, android.widget.LinearLayout.LayoutParams(thumbWidth, thumbHeight))
             addView(seekCardTime, android.widget.LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
         }
         requireNotNull(view.overlayFrameLayout).addView(seekCard, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START))
@@ -640,8 +643,8 @@ class PlayerActivity : Activity() {
             if (frame != null && seekCard.visibility == View.VISIBLE) {
                 // The card takes the picture's own shape (films are often wider than 16:9), so nothing is cropped.
                 val params = seekThumb.layoutParams
-                val height = (params.width.toLong() * frame.height / frame.width.coerceAtLeast(1)).toInt()
-                if (params.height != height) { params.height = height; seekThumb.layoutParams = params }
+                val width = (params.height.toLong() * frame.width / frame.height.coerceAtLeast(1)).toInt()
+                if (params.width != width) { params.width = width; seekThumb.layoutParams = params }
                 seekThumb.setImageBitmap(frame)
                 placeSeekCard(position)
             }
