@@ -34,8 +34,8 @@ internal class ReadAheadPreferences(context: Context) {
     }
 
     companion object {
-        /** Thirty seconds: short jumps back play from memory instead of reloading the file. */
-        const val BACK_BUFFER_MS = 30_000
+        /** Ten seconds covers the keyframe gap of almost every film encode. */
+        const val BACK_BUFFER_MS = 10_000
         /** Up to half the heap: about 190 MB on the onn 4K's 384 MB, enough for over a minute of a typical 1080p file. */
         internal fun budgetBytes(maxMemory: Long, read: ReadAhead): Int {
             val ceiling = maxMemory / 2
