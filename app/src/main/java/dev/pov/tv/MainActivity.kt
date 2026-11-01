@@ -1560,7 +1560,8 @@ class MainActivity : Activity() {
         view.setOnLongClickListener {
             val account = wetrakr.accountRevision()
             AlertDialog.Builder(this).setTitle(title)
-                .setItems(arrayOf("Open Media", "Remove from Continue Watching")) { _, choice ->
+                .setItems(if (identity != null) arrayOf("Open Media", "Remove from Continue Watching", "☰  Streams") else arrayOf("Open Media", "Remove from Continue Watching")) { _, choice ->
+                    if (choice == 2 && identity != null) { navigate { showSources(identity, manual = true) }; return@setItems }
                     if (choice == 0) {
                         if (identity != null) {
                             if (identity.type == "series") selectedSeasons[identity.imdbId] = identity.season
@@ -2273,12 +2274,20 @@ class MainActivity : Activity() {
         // Flix: one white Play (Resume or the right episode for shows), then compact icon actions.
         fun play(label: String, width: Int, action: () -> Unit) = actions.addView(
             if (flix) primaryButton(label, action) else button(label, action).apply { gravity = Gravity.CENTER }, margin(width, 44, right = 12))
-        if (result.type == "movie") play("▶  Play", 130) { navigate { showSources(savedFor(result)?.identity ?: identity) } }
-        if (episode != null) play("▶  Play S${episode.season} E${episode.episode}", 180) { navigate { showSources(episode) } }
+        // Streams sits beside Play: the full link list for picking by hand, never auto-played even with Auto-play on.
+        fun streams(target: PlaybackIdentity) = actions.addView(button("☰  Streams") { navigate { showSources(target, manual = true) } }
+            .apply { gravity = Gravity.CENTER; tag = "details-streams" }, margin(140, 44, right = 12))
+        if (result.type == "movie") {
+            val target = savedFor(result)?.identity ?: identity
+            play("▶  Play", 130) { navigate { showSources(target) } }
+            streams(target)
+        }
+        if (episode != null) { play("▶  Play S${episode.season} E${episode.episode}", 180) { navigate { showSources(episode) } }; streams(episode) }
         else if (flix) playTarget(result)?.let { (target, _) ->
             play("▶  Play S${target.season} E${target.episode}", 200) {
                 navigate { showSources(target) }
             }
+            streams(target)
         }
         // The flix details page already shows the full synopsis.
         if (result.description.isNotBlank() && !flix) actions.addView(button("Synopsis") {
@@ -2407,9 +2416,7 @@ class MainActivity : Activity() {
         }
         row.setOnClickListener { if (future) toast("This episode has not been released yet") else navigate { showSources(identity) } }
         row.pressable(6)
-        if (tracker.connected() && !future) row.setOnLongClickListener {
-            confirm("Mark S${identity.season} E${identity.episode} as watched?") { load(generation, { tracker.markWatched(identity) }) { markedWatched(identity); toast("Episode marked watched") } }; true
-        }
+        if (!future) row.setOnLongClickListener { episodeMenu(identity, "S${identity.season} E${identity.episode}"); true }
         return row
     }
 
@@ -2422,14 +2429,13 @@ class MainActivity : Activity() {
         }.apply {
             tag = "episode:${identity.imdbId}:${identity.season}:${identity.episode}"
             contentDescription = "$number. $title. ${if (future) "Not yet released" else detail}"
-            if (tracker.connected() && !future) setOnLongClickListener {
-                confirm("Mark $number as watched?") { load(generation, { tracker.markWatched(identity) }) { markedWatched(identity); toast("Episode marked watched") } }; true
-            }
+            if (!future) setOnLongClickListener { episodeMenu(identity, number); true }
         }
     }
 
-    private fun showSources(identity: PlaybackIdentity) {
-        current = { showSources(identity) }
+    /** The link list for [identity]; [manual] (the Streams button) never auto-plays, whatever the Auto-play setting. */
+    private fun showSources(identity: PlaybackIdentity, manual: Boolean = false) {
+        current = { showSources(identity, manual) }
         val suffix = if (identity.type == "series") "  ·  S${identity.season} E${identity.episode}" else ""
         val connected = DebridServices.connected(store)
         val order = connected.joinToString(" → ") { DebridServices.name(it) }
@@ -2440,7 +2446,7 @@ class MainActivity : Activity() {
         val title = MediaItemData(identity.imdbId, identity.type, identity.title)
         val details = if (cachedDetails(title) != null) null else metadataWorker.submit(java.util.concurrent.Callable { runCatching { fetchDetails(title) }.getOrNull() })
         read(id, { resolver.search(identity).also { runCatching { details?.get(1_500, java.util.concurrent.TimeUnit.MILLISECONDS) } } }) { result ->
-            sourceResults(identity, result.items, result.unavailableProviders, autoplay = store.get(AUTOPLAY_FIRST) == "true")
+            sourceResults(identity, result.items, result.unavailableProviders, autoplay = !manual && store.get(AUTOPLAY_FIRST) == "true")
         }
     }
 
@@ -3922,7 +3928,52 @@ class MainActivity : Activity() {
             if (focused) scheduleFeature(item)
         }
         frame.setOnClickListener { action() }
+        // Holding OK gives the same choices everywhere: play, pick a stream by hand, details, mark watched.
+        frame.setOnLongClickListener { titleMenu(item, action); true }
         return frame.pressable(theme.layout.cornerRadiusDp)
+    }
+
+    /** One hold-OK menu for a title anywhere (rows, search, anime): [open] is what a normal press does. */
+    private fun titleMenu(item: MediaItemData, open: () -> Unit) {
+        val options = mutableListOf<Pair<String, () -> Unit>>()
+        val saved = savedFor(item)?.identity
+        val playable = item.imdbId.matches(Regex("tt\\d+"))
+        when {
+            playable && item.type == "movie" -> {
+                val target = saved ?: PlaybackIdentity(item.imdbId, item.type, item.title)
+                options += "▶  Play" to { navigate { showSources(target) } }
+                options += "☰  Streams" to { navigate { showSources(target, manual = true) } }
+            }
+            playable && saved != null && saved.type == "series" -> {
+                val number = "S${saved.season} E${saved.episode}"
+                options += "▶  Play $number" to { navigate { showSources(saved) } }
+                options += "☰  Streams · $number" to { navigate { showSources(saved, manual = true) } }
+            }
+        }
+        options += "ⓘ  More Info" to open
+        val tracker = weTrakrClient()
+        if (playable && item.type == "movie" && tracker.connected()) {
+            val identity = PlaybackIdentity(item.imdbId, item.type, item.title)
+            options += "Mark as watched" to { load(generation, { tracker.markWatched(identity) }) { markedWatched(identity); toast("${item.title} marked watched") } }
+        }
+        holdMenu(item.title, options)
+    }
+
+    /** One hold-OK menu for an episode: play, pick a stream by hand, mark watched. */
+    private fun episodeMenu(identity: PlaybackIdentity, number: String) {
+        val tracker = weTrakrClient()
+        val options = mutableListOf<Pair<String, () -> Unit>>(
+            "▶  Play" to { navigate { showSources(identity) } },
+            "☰  Streams" to { navigate { showSources(identity, manual = true) } })
+        if (tracker.connected()) options += "Mark as watched" to {
+            load(generation, { tracker.markWatched(identity) }) { markedWatched(identity); toast("Episode marked watched") }
+        }
+        holdMenu("${identity.title} · $number", options)
+    }
+
+    private fun holdMenu(title: String, options: List<Pair<String, () -> Unit>>) {
+        AlertDialog.Builder(this).setTitle(title).setItems(options.map { it.first }.toTypedArray()) { _, index -> options[index].second() }
+            .setNegativeButton("Cancel", null).show()
     }
 
     private fun image(view: ImageView, address: String, keep: Boolean = false, feature: Boolean = false, loaded: ((Boolean) -> Unit)? = null) {
