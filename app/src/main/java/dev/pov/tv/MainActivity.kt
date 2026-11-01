@@ -1390,11 +1390,10 @@ class MainActivity : Activity() {
         featureHero()?.let { renderFeature(it, item) }
         val address = backdropFor(item)
         if (address.isBlank() || backdropArt.tag == address) return
-        // The previous artwork stays until the next arrives, then dissolves in.
+        // The previous artwork stays until the next arrives; image() then cross-fades old into new.
         fun reveal(loaded: Boolean) {
             if (!loaded || featureShown != item) return
-            backdropArt.animate().cancel(); backdropArt.alpha = 0.35f
-            backdropArt.animate().alpha(1f).setDuration(300).start()
+            backdropArt.animate().cancel(); backdropArt.alpha = 1f
         }
         image(backdropArt, address, keep = true, feature = true) { loaded ->
             if (loaded) reveal(true)
@@ -1506,12 +1505,17 @@ class MainActivity : Activity() {
         watchedBadge(if (item.type == "movie") "movie" else "series", item.imdbId)?.let {
             poster.addView(it, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.TOP or Gravity.END).apply { topMargin = dp(5); rightMargin = dp(5) })
         }
+        poster.tag = "rank-poster"
         frame.setOnFocusChangeListener { view, focused ->
-            poster.foreground = if (focused) FocusRingDrawable(Color.WHITE, dp(4).toFloat(), true, dp(1).toFloat()) else null
+            // One outline glides along the Top 10 row, around the poster only (not the rank number).
+            val glide = if (flix) posterGlide(view, radius = 4, scale = 1.07f) { card -> card.findViewWithTag("rank-poster") } else null
+            if (glide != null) glide.focusChanged(view, focused)
+            else poster.foreground = if (focused) FocusRingDrawable(Color.WHITE, dp(4).toFloat(), true, dp(1).toFloat()) else null
             view.animate().scaleX(if (focused) 1.07f else 1f).scaleY(if (focused) 1.07f else 1f).setDuration(140).start()
             if (focused) scheduleFeature(item)
         }
         frame.setOnClickListener { navigate { details(item) } }
+        frame.setOnLongClickListener { titleMenu(item) { navigate { details(item) } }; true }
         return frame.pressable(4)
     }
 
@@ -2149,7 +2153,7 @@ class MainActivity : Activity() {
         }
     }
     private companion object {
-        private const val QR_DP = 110; const val VOICE_REQUEST = 701; const val PLAYBACK_REQUEST = 702; const val MIC_REQUEST = 703; const val FLIX_ROW_LINE = 236; const val FEATURE_INTERVAL_MS = 5_000L; const val AUTOPLAY_FIRST = "sources.autoplay_first"; const val AUTOPLAY_MAX_GB = "sources.autoplay_max_gb"; const val AUTOPLAY_MAX_GB_EPISODE = "sources.autoplay_max_gb_episode"; const val AUTOPLAY_MAX_MBPS = "sources.autoplay_max_mbps"; const val AUTOPLAY_LIMIT_ON = "sources.autoplay_limit_on"; const val BACKDROP_WIDTH = 1280; const val CONTINUE_CACHE = "wetrakr.continue_cache"
+        private const val QR_DP = 110; const val BACKDROP_FADE_MS = 220; const val VOICE_REQUEST = 701; const val PLAYBACK_REQUEST = 702; const val MIC_REQUEST = 703; const val FLIX_ROW_LINE = 236; const val FEATURE_INTERVAL_MS = 5_000L; const val AUTOPLAY_FIRST = "sources.autoplay_first"; const val AUTOPLAY_MAX_GB = "sources.autoplay_max_gb"; const val AUTOPLAY_MAX_GB_EPISODE = "sources.autoplay_max_gb_episode"; const val AUTOPLAY_MAX_MBPS = "sources.autoplay_max_mbps"; const val AUTOPLAY_LIMIT_ON = "sources.autoplay_limit_on"; const val BACKDROP_WIDTH = 1280; const val CONTINUE_CACHE = "wetrakr.continue_cache"
         const val TMDB_KEY = "tmdb.key"; const val TMDB_REGION = "tmdb.region"
         const val HOME_KEEP_MS = 15 * 60_000L
         const val HOME_BACKDROP_SCALE = 0.72f
@@ -3938,13 +3942,14 @@ class MainActivity : Activity() {
 
     private val listGlides = java.util.WeakHashMap<ViewGroup, SlidingFocusPill>()
     /** The gliding outline of the sideways poster row holding [tile] (Home and catalog rows), or null outside one. */
-    private fun posterGlide(tile: View): SlidingFocusPill? {
+    private fun posterGlide(tile: View, radius: Int = theme.layout.cornerRadiusDp, scale: Float = theme.layout.focusScale,
+                            part: ((View) -> View?)? = null): SlidingFocusPill? {
         val row = tile.parent as? ViewGroup ?: return null
         if (row.parent !is HorizontalScrollView) return null
         return listGlides.getOrPut(row) {
             row.clipChildren = false; row.clipToPadding = false
-            SlidingFocusPill(row, fill = Color.WHITE, radius = dp(theme.layout.cornerRadiusDp).toFloat(), fadeText = false,
-                ring = maxOf(2f, dp(1) * 1.5f), scale = theme.layout.focusScale)
+            SlidingFocusPill(row, fill = Color.WHITE, radius = dp(radius).toFloat(), fadeText = false,
+                ring = maxOf(2f, dp(1) * 1.5f), scale = scale, part = part)
         }
     }
     /** The gliding highlight of the list holding [row] (episodes), created the first time one of its rows takes focus. */
@@ -4003,7 +4008,14 @@ class MainActivity : Activity() {
         val corner = backdrop && heroBackdrop.layoutParams.width > 0
         val key = if (corner) "backdrop-corner:$address" else if (backdrop) "backdrop:$address" else address
         fun show(bitmap: Bitmap) {
-            view.setImageBitmap(bitmap)
+            val previous = (view.drawable as? android.graphics.drawable.TransitionDrawable)?.let { it.getDrawable(it.numberOfLayers - 1) } ?: view.drawable
+            if (backdrop && feature && previous != null) {
+                // Home's backdrop: the old picture fades out while the new one fades in, quickly.
+                val fade = android.graphics.drawable.TransitionDrawable(arrayOf(previous, android.graphics.drawable.BitmapDrawable(resources, bitmap)))
+                    .apply { isCrossFadeEnabled = true }
+                view.setImageDrawable(fade)
+                fade.startTransition(BACKDROP_FADE_MS)
+            } else view.setImageBitmap(bitmap)
             if (backdrop) {
                 view.setTag(R.id.pov_backdrop_key, key)
                 // The details art fades up from the dimmed Home version instead of switching at once.

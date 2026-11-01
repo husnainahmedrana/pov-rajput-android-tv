@@ -32,8 +32,10 @@ internal class SlidingFocusPill(
     private val fadeText: Boolean = true,
     /** An outline of this width (px) drawn over the children (posters) instead of a fill behind them. */
     ring: Float? = null,
-    /** The focused child grows by this much; the outline grows with it. */
+    /** The focused child grows by this much (around its centre); the outline grows with it. */
     private val scale: Float = 1f,
+    /** The part of a child to outline (a Top 10 card's poster beside its rank number); the whole child by default. */
+    private val part: ((View) -> View?)? = null,
 ) {
     private val pill = PillDrawable(fill, radius, ring)
     private var motion: ValueAnimator? = null
@@ -55,8 +57,12 @@ internal class SlidingFocusPill(
         // Focus can arrive before the first layout (a menu just opening); wait for real bounds, or nothing is drawn
         // while the text has already turned dark.
         if (child.width == 0 || child.height == 0) { child.post { if (child.isFocused) moveTo(child) }; return }
-        val grow = (scale - 1f) / 2f
-        val target = RectF(child.left - child.width * grow, child.top - child.height * grow, child.right + child.width * grow, child.bottom + child.height * grow)
+        val inner = part?.invoke(child)
+        val l = inner?.left ?: 0; val t = inner?.top ?: 0
+        val r = inner?.right ?: child.width; val b = inner?.bottom ?: child.height
+        val cx = child.width / 2f; val cy = child.height / 2f
+        val target = RectF(child.left + cx + (l - cx) * scale, child.top + cy + (t - cy) * scale,
+            child.left + cx + (r - cx) * scale, child.top + cy + (b - cy) * scale)
         // Arriving from outside (the seek bar, a season tab, controls just shown): appear in place rather than slide in.
         if (pill.shown == 0) { motion?.cancel(); pill.rect.set(target) }
         animateTo(target, 255)

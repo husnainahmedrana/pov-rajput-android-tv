@@ -51,9 +51,9 @@ internal object HoldMenu {
             addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
             attributes = attributes.apply { dimAmount = 0.5f; gravity = Gravity.CENTER }
             setLayout(minOf(dp(440), (context.resources.displayMetrics.widthPixels * 0.9f).toInt()), WindowManager.LayoutParams.WRAP_CONTENT)
-            setWindowAnimations(android.R.style.Animation_Toast) // a soft fade in and out
         }
-        dialog.setOnShowListener { views.firstOrNull()?.let { first -> first.post { first.requestFocus() } } }
+        QuickFade.attach(dialog, card)
+        dialog.setOnShowListener { QuickFade.fadeIn(card); views.firstOrNull()?.let { first -> first.post { first.requestFocus() } } }
         dialog.show()
         return dialog
     }
