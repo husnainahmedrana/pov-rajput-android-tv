@@ -136,17 +136,20 @@ class PlayerActivity : Activity() {
             foreground = GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = dp(8).toFloat(); setStroke(maxOf(2, dp(1)), 0xE6FFFFFF.toInt()) }
             clipToOutline = true; elevation = dp(10).toFloat()
         }
+        // The time pill sits on the seek bar itself, over the scrubber (as in WuPlay), inside the controls so it draws
+        // above the bar and never collides with the title row.
         seekCardTime = TextView(this).apply {
-            textSize = 13f; setTextColor(Color.BLACK); gravity = Gravity.CENTER
+            tag = "pov_seek_time"; textSize = 13f; setTextColor(Color.BLACK); gravity = Gravity.CENTER; visibility = View.GONE
             typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
-            setPadding(dp(10), dp(3), dp(10), dp(3)); elevation = dp(10).toFloat()
+            setPadding(dp(12), dp(5), dp(12), dp(5)); elevation = dp(6).toFloat()
             background = GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(20).toFloat() }
         }
+        view.findViewById<FrameLayout>(androidx.media3.ui.R.id.exo_controller)
+            ?.addView(seekCardTime, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START))
         seekCard = android.widget.LinearLayout(this).apply {
             tag = "pov_seek_card"; orientation = android.widget.LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
-            visibility = View.GONE; clipChildren = false; clipToPadding = false; setPadding(dp(12), dp(12), dp(12), dp(4))
+            visibility = View.GONE; clipChildren = false; clipToPadding = false; setPadding(dp(12), dp(12), dp(12), dp(12))
             addView(seekThumb, android.widget.LinearLayout.LayoutParams(thumbWidth, thumbHeight))
-            addView(seekCardTime, android.widget.LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
         }
         requireNotNull(view.overlayFrameLayout).addView(seekCard, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START))
         timeline.addListener(object : androidx.media3.ui.TimeBar.OnScrubListener {
@@ -621,27 +624,30 @@ class PlayerActivity : Activity() {
         view.removeCallbacks(hideCard)
         if (position == null) {
             seekrFrame?.cancel()
-            // Fades out rather than vanishing.
-            if (seekCard.visibility == View.VISIBLE) seekCard.animate().alpha(0f).setDuration(CARD_FADE_MS).withEndAction {
-                seekCard.visibility = View.GONE; seekCard.alpha = 1f; seekThumb.setImageDrawable(null)
-            }.start()
+            // Both fade out rather than vanishing.
+            for (part in listOf<View>(seekCard, seekCardTime)) if (part.visibility == View.VISIBLE)
+                part.animate().alpha(0f).setDuration(CARD_FADE_MS).withEndAction {
+                    part.visibility = View.GONE; part.alpha = 1f; if (part === seekCard) seekThumb.setImageDrawable(null)
+                }.start()
             return
         }
-        seekCard.animate().cancel(); seekCard.alpha = 1f
+        for (part in listOf<View>(seekCard, seekCardTime)) { part.animate().cancel(); part.alpha = 1f }
         val track = activeSeekr
-        // The card carries the time, so the big centre label steps aside. Without a Seekr picture the card is just the
-        // time pill, in the same place, so seeking looks the same either way.
-        seekLabel.visibility = View.GONE
+        val onBar = seekBarShown()
+        // The pill carries the time on the seek bar, so the big centre label steps aside. When the bar is hidden (a
+        // phone swipe) the label stays and only the picture shows.
+        if (onBar) seekLabel.visibility = View.GONE
         seekCardTime.text = DpadSeekPreview.time(position) + (offset?.let { "  ·  $it" } ?: "")
-        seekThumb.visibility = if (track != null) View.VISIBLE else View.GONE
-        seekCard.visibility = View.VISIBLE
+        seekCardTime.visibility = if (onBar) View.VISIBLE else View.GONE
+        seekCard.visibility = if (track != null) View.VISIBLE else View.GONE
         placeSeekCard(position)
         seekrFrame?.cancel()
         if (track == null) return
         seekrFrame = uiScope.launch {
-            val frame = runCatching { nearestSeekrFrame(track, position) }.getOrNull()
-            if (frame != null && seekCard.visibility == View.VISIBLE) {
-                // The card takes the picture's own shape (films are often wider than 16:9), so nothing is cropped.
+            val raw = runCatching { nearestSeekrFrame(track, position) }.getOrNull()
+            if (raw != null && seekCard.visibility == View.VISIBLE) {
+                val frame = withoutBlackBars(track, raw)
+                // The card takes the picture's own shape at a fixed height, so a wide film gets a wide card.
                 val params = seekThumb.layoutParams
                 val width = (params.height.toLong() * frame.width / frame.height.coerceAtLeast(1)).toInt()
                 if (params.width != width) { params.width = width; seekThumb.layoutParams = params }
@@ -649,6 +655,38 @@ class PlayerActivity : Activity() {
                 placeSeekCard(position)
             }
         }
+    }
+
+    private fun seekBarShown(): Boolean = timeline?.let { it.isShown && it.width > 0 } == true && (player?.duration ?: 0L) > 0
+
+    /**
+     * The black bars Seekr keeps in its 16:9 pictures of wider (or narrower) films, learned per title. The thinnest bars
+     * seen win, because a dark scene looks like all bar.
+     */
+    private var barsFor: Any? = null
+    private var bars = android.graphics.Rect()
+
+    /** Trims the film's letterbox or pillarbox bars off a Seekr picture, so the card shows only the picture. */
+    private fun withoutBlackBars(track: Any, frame: android.graphics.Bitmap): android.graphics.Bitmap {
+        val w = frame.width; val h = frame.height
+        if (w < 16 || h < 16) return frame
+        val pixels = IntArray(w * h).also { frame.getPixels(it, 0, w, 0, 0, w, h) }
+        fun dark(p: Int) = maxOf((p shr 16) and 0xFF, (p shr 8) and 0xFF, p and 0xFF) < 28
+        fun rowDark(y: Int) = (0 until w step 2).all { dark(pixels[y * w + it]) }
+        fun colDark(x: Int) = (0 until h step 2).all { dark(pixels[it * w + x]) }
+        var top = 0; while (top < h / 2 && rowDark(top)) top++
+        var bottom = h - 1; while (bottom > h / 2 && rowDark(bottom)) bottom--
+        var left = 0; while (left < w / 2 && colDark(left)) left++
+        var right = w - 1; while (right > w / 2 && colDark(right)) right--
+        val found = android.graphics.Rect(left, top, right + 1, bottom + 1)
+        // An all-dark scene says nothing about the bars.
+        val usable = found.height() >= h * 0.35f && found.width() >= w * 0.35f
+        if (barsFor !== track) { barsFor = track; bars = if (usable) found else android.graphics.Rect(0, 0, w, h) }
+        else if (usable) bars = android.graphics.Rect(minOf(bars.left, found.left), minOf(bars.top, found.top),
+            maxOf(bars.right, found.right), maxOf(bars.bottom, found.bottom))
+        val crop = android.graphics.Rect(bars)
+        if (!crop.intersect(0, 0, w, h) || (crop.width() >= w - 2 && crop.height() >= h - 2)) return frame
+        return android.graphics.Bitmap.createBitmap(frame, crop.left, crop.top, crop.width(), crop.height())
     }
 
     /**
@@ -661,25 +699,34 @@ class PlayerActivity : Activity() {
         return if (laterIsCloser) track.thumbnailFor(cue.cueEndMs)?.bitmap ?: cue.bitmap else cue.bitmap
     }
 
-    /** Floats the card above the seek bar at [position], kept on screen; centred when the seek bar is hidden. */
+    /** The pill on the seek bar at [position] and the picture just above it, kept on screen; centred when the bar is hidden. */
     private fun placeSeekCard(position: Long) {
         val overlay = view.overlayFrameLayout ?: return
         val duration = player?.duration ?: 0L
         seekCard.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
         val w = seekCard.measuredWidth; val h = seekCard.measuredHeight
         val bar: View? = timeline
-        if (bar != null && bar.isShown && bar.width > 0 && duration > 0) {
+        if (bar != null && seekBarShown()) {
             val o = IntArray(2); overlay.getLocationInWindow(o)
             val b = IntArray(2); bar.getLocationInWindow(b)
             val inset = dp(8) // the bar is drawn inside the time bar's scrubber padding
             val fraction = (position.toFloat() / duration).coerceIn(0f, 1f)
-            val centre = b[0] - o[0] + inset + fraction * (bar.width - 2 * inset)
+            val centreInWindow = b[0] + inset + fraction * (bar.width - 2 * inset)
             val margin = dp(16).toFloat()
-            seekCard.x = (centre - w / 2f).coerceIn(margin, (overlay.width - w - margin).coerceAtLeast(margin))
-            seekCard.y = (b[1] - o[1] - h + dp(4)).toFloat()
+            seekCard.x = (centreInWindow - o[0] - w / 2f).coerceIn(margin, (overlay.width - w - margin).coerceAtLeast(margin))
+            // The picture's bottom sits a little above the bar, clear of the pill.
+            seekCard.y = (b[1] - o[1] - h - dp(6)).toFloat()
+            (seekCardTime.parent as? View)?.let { controls ->
+                val c = IntArray(2); controls.getLocationInWindow(c)
+                seekCardTime.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+                val pw = seekCardTime.measuredWidth; val ph = seekCardTime.measuredHeight
+                val lo = (b[0] - c[0]).toFloat(); val hi = (b[0] - c[0] + bar.width - pw).toFloat().coerceAtLeast(lo)
+                seekCardTime.x = (centreInWindow - c[0] - pw / 2f).coerceIn(lo, hi)
+                seekCardTime.y = b[1] - c[1] + bar.height / 2f - ph / 2f
+            }
         } else {
             seekCard.x = (overlay.width - w) / 2f
-            seekCard.y = (overlay.height - h) / 2f
+            seekCard.y = (overlay.height - h) / 2f - dp(90)
         }
     }
 
