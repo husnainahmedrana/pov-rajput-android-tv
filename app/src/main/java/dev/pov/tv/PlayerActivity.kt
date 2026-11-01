@@ -186,11 +186,8 @@ class PlayerActivity : Activity() {
     }
 
     private fun configureButtons() {
-        // Focused controls become solid white pills with dark icons and text.
-        val tint = ColorStateList(
-            arrayOf(intArrayOf(android.R.attr.state_focused), intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
-            intArrayOf(Color.BLACK, 0xFF6B6B70.toInt(), Color.WHITE)
-        )
+        // The focused control is a white pill with dark icon and text; the pill glides between buttons.
+        val pill = SlidingFocusPill(view.findViewById(R.id.pov_player_actions), rowIds.map { view.findViewById<View>(it) })
         rowIds.forEachIndexed { index, id ->
             val button = view.findViewById<View>(id)
             button.isFocusable = true
@@ -198,20 +195,7 @@ class PlayerActivity : Activity() {
             button.nextFocusUpId = androidx.media3.ui.R.id.exo_progress
             button.nextFocusLeftId = rowIds[(index - 1).coerceAtLeast(0)]
             button.nextFocusRightId = rowIds[(index + 1).coerceAtMost(rowIds.lastIndex)]
-            fun style(focused: Boolean) {
-                // Transport buttons are round, the text actions are pills; neither zooms, so the highlight stays inside the strip.
-                button.background = GradientDrawable().apply {
-                    setColor(if (focused) Color.WHITE else Color.TRANSPARENT)
-                    if (button is ImageView) shape = GradientDrawable.OVAL else cornerRadius = dp(20).toFloat()
-                }
-                if (button is TextView) {
-                    button.setTextColor(if (focused) Color.BLACK else Color.WHITE)
-                    button.compoundDrawableTintList = tint
-                }
-                if (button is ImageView) button.imageTintList = tint
-            }
-            style(false)
-            button.setOnFocusChangeListener { _, focused -> style(focused) }
+            button.setOnFocusChangeListener { _, focused -> pill.focusChanged(button, focused) }
         }
         view.findViewById<View>(R.id.pov_audio).setOnClickListener { showTracks(C.TRACK_TYPE_AUDIO) }
         speedButton = view.findViewById(R.id.pov_speed)
@@ -835,7 +819,8 @@ class PlayerActivity : Activity() {
         val target = seekPreview.finish(cancelled)
         timeline.previewPosition = null
         seekLabel.visibility = View.GONE
-        showThumb(null)
+        // A landed seek keeps its preview for a moment, then it fades; a cancelled one goes at once.
+        if (target == null) showThumb(null) else { view.removeCallbacks(hideCard); view.postDelayed(hideCard, SEEK_LINGER_MS) }
         seekKey = KeyEvent.KEYCODE_UNKNOWN
         player?.let { exo ->
             if (target != null) {
@@ -872,12 +857,9 @@ class PlayerActivity : Activity() {
         if (backHold.intercept(event)) return true
         val horizontal = event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT || event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
         if (event.action == KeyEvent.ACTION_UP && horizontal && seekPreview.active) {
-            // Releasing the key leaves the preview up for a moment, so the scene can be seen and another press can
-            // fine-tune it; the video jumps once the presses stop (or at once with OK).
-            if (event.keyCode == seekKey) {
-                if (event.isCanceled) finishSeek(cancelled = true)
-                else { view.removeCallbacks(commitSeek); view.postDelayed(commitSeek, SEEK_LINGER_MS) }
-            }
+            // Releasing the key seeks at once (buffered video plays instantly); the preview stays up a moment so the scene
+            // can be seen, and another press fine-tunes from there.
+            if (event.keyCode == seekKey) finishSeek(cancelled = event.isCanceled)
             return true
         }
         if (event.action == KeyEvent.ACTION_DOWN && seekPreview.active && !horizontal) {
