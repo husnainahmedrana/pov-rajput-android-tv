@@ -2394,6 +2394,24 @@ class MainActivity : Activity() {
     private var episodeDownTarget: View? = null
     private var episodeTabs: View? = null
 
+    /**
+     * The row scrolls only until a focused card touches its edge; the card then grows and takes its outline, which would
+     * be cut off. Keep a gap beside it on either side so the whole card always shows.
+     */
+    private fun keepCardInRow(card: View) {
+        val scroll = card.parent?.parent as? HorizontalScrollView ?: return
+        scroll.post {
+            if (!card.isAttachedToWindow) return@post
+            val gap = dp(24) + (card.width * 0.05f).toInt()
+            val right = card.right + gap - scroll.width
+            val left = card.left - gap
+            when {
+                right > scroll.scrollX -> scroll.smoothScrollTo(right, 0)
+                left < scroll.scrollX -> scroll.smoothScrollTo(left.coerceAtLeast(0), 0)
+            }
+        }
+    }
+
     /** With an episode focused, the season tabs beneath the row are scrolled into view too. */
     private fun revealEpisodeTabs() {
         val tabs = episodeTabs?.takeIf { it.isAttachedToWindow } ?: return
@@ -2446,7 +2464,7 @@ class MainActivity : Activity() {
             val glide = posterGlide(view, radius = 8, scale = 1.05f)
             if (glide != null) glide.focusChanged(view, focused)
             view.animate().scaleX(if (focused) 1.05f else 1f).scaleY(if (focused) 1.05f else 1f).setDuration(130).start()
-            if (focused) { episodeFocused(identity, episode, show); revealEpisodeTabs() }
+            if (focused) { episodeFocused(identity, episode, show); revealEpisodeTabs(); keepCardInRow(view) }
         }
         frame.setOnClickListener { if (future) toast("This episode has not been released yet") else navigate { showSources(identity) } }
         if (!future) frame.setOnLongClickListener { episodeMenu(identity, "S${identity.season} E${identity.episode}"); true }
