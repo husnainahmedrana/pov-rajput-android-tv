@@ -2397,9 +2397,9 @@ class MainActivity : Activity() {
             }.setNegativeButton("Cancel", null).show()
         }
         if (flix) {
-            // The episode row comes first, right under the buttons; the seasons sit in a row of tabs beneath it.
-            body.addView(text("Episodes", 20, ink, true), margin(-1, -2, top = 18, bottom = 4))
-            body.addView(host, margin(-1, -2, top = 4))
+            // The episode row comes first, right under the buttons (no heading, so whole cards fit on the first screen);
+            // the seasons sit in a row of tabs beneath it.
+            body.addView(host, margin(-1, -2, top = 14))
             val row = horizontalRow()
             episodeTabs = row.parent as? View ?: row
             seasons.forEach { season ->
