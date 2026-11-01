@@ -585,11 +585,56 @@ class PlayerActivity : Activity() {
         streamsDialog = activeDialog
     }
 
+    private val switcher by lazy { StreamSwitcher(this) }
+    private var switching = false
+
+    /** Prepares the picked link here in the player and switches to it at the same spot; the player never closes. */
     private fun pickStream(media: PlaybackIdentity, source: dev.pov.tv.data.SourceItem) {
         val exo = player ?: return
-        StreamChoices.pendingSwitch = Triple(media, source, exo.currentPosition)
+        if (switching) { Toast.makeText(this, "Preparing the link you picked…", Toast.LENGTH_SHORT).show(); return }
+        val at = exo.currentPosition
+        val ordered = StreamChoices.items.orEmpty()
         activeDialog?.dismiss()
-        finish()
+        runSwitch(media, source, at, "Preparing ${source.title.lineSequence().firstOrNull().orEmpty().take(60)}…") { switcher.prepare(source, media, ordered) }
+    }
+
+    private fun runSwitch(media: PlaybackIdentity, source: dev.pov.tv.data.SourceItem, at: Long, message: String, work: () -> StreamSwitcher.Result) {
+        switching = true
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        Thread {
+            val result = runCatching(work).getOrElse { StreamSwitcher.Result.Failed(it.message ?: "This link could not be prepared. Pick another link.") }
+            runOnUiThread {
+                switching = false
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                when (result) {
+                    is StreamSwitcher.Result.Ready -> startSwitchedStream(media, result, at)
+                    is StreamSwitcher.Result.Failed -> Toast.makeText(this, result.message, Toast.LENGTH_LONG).show()
+                    is StreamSwitcher.Result.ChooseFile -> showSheet("Choose a file", "This link has several videos. Pick the one to play.",
+                        result.files.map { (id, name, size) ->
+                            PlayerSheetChoice(name, detail = if (size > 0) "%.2f GB".format(java.util.Locale.ROOT, size / 1_000_000_000.0) else "") {
+                                runSwitch(media, source, at, "Preparing ${name.take(60)}…") { switcher.file(result.prepared, source, id) }
+                            }
+                        })
+                }
+            }
+        }.start()
+    }
+
+    /** Starts the new link in this player at [at]; the session's old link is saved and released first. */
+    private fun startSwitchedStream(media: PlaybackIdentity, ready: StreamSwitcher.Result.Ready, at: Long) {
+        val service = PlaybackDebrid.normalize(ready.service)
+        val intent = Intent().putExtra("url", ready.url).putExtra("title", InAppPlaybackSession.title.ifBlank { media.title })
+            .putExtra("identity", media.toJson().toString()).putExtra("key", "media:${media.imdbId}:${media.season}:${media.episode}")
+            .putExtra("resume", at).putExtra("debrid_service", service)
+            .putExtra("playback_account", dev.pov.tv.data.LastPlayedLinks(dev.pov.tv.data.SecureStore(this)).scope(service))
+            .putExtra("media_name", ready.name).putExtra("media_size", ready.size)
+            .putExtra("headers", org.json.JSONObject(ready.headers).toString())
+        observedError = null
+        if (!InAppPlaybackSession.start(this, intent)) {
+            Toast.makeText(this, "This link did not return a playable web link. Pick another link.", Toast.LENGTH_LONG).show(); return
+        }
+        InAppPlaybackSession.attachPlayerView(view)
+        updateControls()
     }
 
     private fun showSheet(title: String, detail: String, choices: List<PlayerSheetChoice>) =

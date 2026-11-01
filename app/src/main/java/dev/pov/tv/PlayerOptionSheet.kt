@@ -120,6 +120,9 @@ internal object PlayerOptionSheet {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
             attributes = attributes.apply { dimAmount = 0.35f; gravity = Gravity.BOTTOM }
+            // Full width from the first frame and a fade instead of the zoom-in, so the sheet never opens small and then grows.
+            setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT)
+            setWindowAnimations(android.R.style.Animation_Toast) // a soft fade in and out
         }
         dialog.setOnShowListener {
             (context as? Activity)?.window?.decorView?.systemUiVisibility?.let { flags ->
