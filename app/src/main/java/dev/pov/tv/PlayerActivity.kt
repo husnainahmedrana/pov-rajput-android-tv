@@ -31,6 +31,7 @@ import androidx.media3.common.Player
 import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerView
 import dev.pov.tv.data.PlaybackIdentity
+import dev.pov.tv.data.SkipKind
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
@@ -221,6 +222,7 @@ class PlayerActivity : Activity() {
         InAppPlaybackSession.attachPlayerView(view)
         controls.start()
         view.removeCallbacks(endTimeTicker); view.post(endTimeTicker)
+        view.removeCallbacks(skipTicker); view.post(skipTicker)
         view.removeCallbacks(seekrLookup); view.postDelayed(seekrLookup, 1_000)
         updateControls()
         InAppPlaybackSession.error?.let { if (observedError !== it) showPlaybackFailure(it) }
@@ -257,6 +259,13 @@ class PlayerActivity : Activity() {
         }
         requireNotNull(view.overlayFrameLayout).addView(pauseLogo, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply {
             topMargin = dp(30); leftMargin = dp(30)
+        })
+        // Skip / Next episode sits just above the title row and the streaming service's badge (the controls' 124 dp
+        // bottom panel), right-aligned with the badge, and is drawn above the controls. Up from the seek bar reaches it.
+        skipPill = SkipPill(this, DeviceLayout.tv).apply { setOnClickListener { skipAction?.run?.invoke() } }
+        // 48 dp button plus 9 dp of glow on each side; the margins place the outline itself 28 dp in and 126 dp up.
+        view.addView(skipPill, FrameLayout.LayoutParams(-2, dp(66), Gravity.BOTTOM or Gravity.END).apply {
+            rightMargin = dp(19); bottomMargin = dp(117)
         })
         val imdb = try { intent.getStringExtra("identity")?.let { org.json.JSONObject(it).optString("imdbId") } } catch (_: Exception) { null }
         if (imdb != null && imdb.matches(Regex("tt\\d+"))) {
@@ -311,6 +320,93 @@ class PlayerActivity : Activity() {
             val quiet = (quietSeekUntil - android.os.SystemClock.uptimeMillis()).coerceAtLeast(0)
             splashHandler.postDelayed(showSplashLater, maxOf(500, quiet))
         }
+    }
+
+    private lateinit var skipPill: SkipPill
+    private class SkipAction(val key: String, val label: String, val progress: Float, val next: Boolean, val run: () -> Unit)
+    private var skipAction: SkipAction? = null
+    /** When each segment's button first appeared, so it tucks away after a while if ignored. */
+    private val skipFirstSeen = HashMap<String, Long>()
+    private val skipUsed = HashSet<String>()
+    private val episode: PlaybackIdentity? by lazy {
+        try { intent.getStringExtra("identity")?.let { PlaybackIdentity.fromJson(org.json.JSONObject(it)) } } catch (_: Exception) { null }
+    }
+    private val skipTicker = object : Runnable {
+        override fun run() { updateSkip(); if (!stopped) view.postDelayed(this, 250) }
+    }
+
+    /**
+     * Skip intro / recap / credits while inside one, and Next episode once an episode's end credits start (or in its
+     * last 40 seconds when the credits aren't known). Ignored, the button tucks away after 12 s while the controls are
+     * hidden; it is always there while they show.
+     */
+    private fun updateSkip() {
+        val exo = player
+        val duration = exo?.duration?.takeIf { it > 0 && it != C.TIME_UNSET }
+        val series = episode?.type == "series"
+        val preferences = SkipButtonPreferences(this)
+        // Auto-play next episode: an episode that plays to its very end goes straight on to the next.
+        if (exo != null && series && preferences.autoNext && exo.playbackState == Player.STATE_ENDED && "next" !in skipUsed &&
+            InAppPlaybackSession.error == null) { playNextEpisode(); return }
+        if (exo == null || duration == null || !preferences.enabled || seekPreview.active ||
+            activeDialog?.isShowing == true || InAppPlaybackSession.error != null) { hideSkip(); nextCountdownFrom = 0L; return }
+        val position = exo.currentPosition
+        val segments = InAppPlaybackSession.skipSegments
+        val segment = segments.firstOrNull { position >= it.startMs && position < (it.endMs ?: duration) - 1_500 }
+        val creditsKnown = segments.any { it.kind == SkipKind.CREDITS }
+        val action = when {
+            series && segment?.kind == SkipKind.CREDITS && segment.endMs == null ->
+                SkipAction("next", "Next Episode", (position - segment.startMs).toFloat() / (duration - segment.startMs), true) { playNextEpisode() }
+            segment != null -> {
+                val end = segment.endMs ?: duration
+                SkipAction("${segment.kind}:${segment.startMs}", segment.kind.label, (position - segment.startMs).toFloat() / (end - segment.startMs), false) {
+                    skipUsed += "${segment.kind}:${segment.startMs}"; exo.seekTo(end); hideSkip()
+                }
+            }
+            series && !creditsKnown && duration - position in 1..40_000 ->
+                SkipAction("next", "Next Episode", 1f - (duration - position) / 40_000f, true) { playNextEpisode() }
+            else -> null
+        }
+        if (action == null || action.key in skipUsed) { hideSkip(); nextCountdownFrom = 0L; return }
+        val now = android.os.SystemClock.elapsedRealtime()
+        val firstSeen = skipFirstSeen.getOrPut(action.key) { now }
+        if (!view.isControllerFullyVisible && action.key != "next" && now - firstSeen > 12_000) { hideSkip(); return }
+        skipAction = action
+        // Auto-play next episode: a 10 s countdown on the button once the credits start (or in the last 12 s when
+        // they aren't known, so the episode itself is never cut short). Rewinding out of the credits cancels it.
+        val countdownZone = action.key == "next" && preferences.autoNext && (creditsKnown || duration - position <= NEXT_COUNTDOWN_MS + 2_000)
+        val sinceLastTick = now - lastSkipTick
+        lastSkipTick = now
+        if (!countdownZone) { nextCountdownFrom = 0L; skipPill.show(action.label, null); return }
+        if (nextCountdownFrom == 0L) {
+            if (!exo.isPlaying) { skipPill.show(action.label, null); return }
+            nextCountdownFrom = now
+        } else if (!exo.isPlaying) nextCountdownFrom += sinceLastTick // paused: the countdown holds
+        val elapsed = now - nextCountdownFrom
+        if (elapsed >= NEXT_COUNTDOWN_MS) { nextCountdownFrom = 0L; playNextEpisode(); return }
+        val seconds = ((NEXT_COUNTDOWN_MS - elapsed + 999) / 1000).coerceAtLeast(1)
+        skipPill.show("Next Episode in $seconds", elapsed.toFloat() / NEXT_COUNTDOWN_MS)
+    }
+    /** When the Next Episode countdown started (0: not counting), moved on while paused so the countdown holds. */
+    private var nextCountdownFrom = 0L
+    private var lastSkipTick = 0L
+
+    private fun hideSkip() {
+        skipAction = null
+        if (!::skipPill.isInitialized) return
+        // Never leave focus on a button that is going away: hand it back to the seek bar.
+        if (skipPill.hasFocus()) view.findViewById<View>(androidx.media3.ui.R.id.exo_progress)?.requestFocus()
+        skipPill.hide()
+    }
+
+    /** Closes the player and asks Home to play the next episode (or the next season's first). */
+    private fun playNextEpisode() {
+        val current = intent.getStringExtra("identity") ?: return
+        skipUsed += "next"; hideSkip()
+        // Home picks this up when it comes back to the front, whether the player was opened for a result or reopened
+        // from the mini player.
+        nextEpisodeAfter = current
+        InAppPlaybackSession.stop(); finish()
     }
 
     private val endTimeTicker = object : Runnable {
@@ -383,13 +479,27 @@ class PlayerActivity : Activity() {
                 listOf(PlayerSheetChoice("Choose another source") { showStreams() }))
             return
         }
-        showSheet("Playback stopped",
-            "The link may have expired, the connection may be unavailable, or this TV may not support the format. Code: ${error.errorCodeName}",
+        showSheet("Playback stopped", "${failureReason(error)} Code: ${error.errorCodeName}",
             listOf(
                 PlayerSheetChoice("Retry") { if (!stopped) { observedError = null; InAppPlaybackSession.retry() } },
                 // The title's other links open right here in the Streams panel; picking one continues from the same spot.
                 PlayerSheetChoice("Browse sources") { showStreams() }
             ))
+    }
+
+    /** What actually went wrong, from the player's error code, instead of one message for every failure. */
+    private fun failureReason(error: PlaybackException): String = when (error.errorCode) {
+        PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS, PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND, PlaybackException.ERROR_CODE_IO_NO_PERMISSION ->
+            "The server refused this link. It may have expired: choose it again from the sources, or pick another one."
+        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT, PlaybackException.ERROR_CODE_TIMEOUT ->
+            "The link took too long to respond. The server may be busy: try again, or pick another source."
+        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ->
+            "The connection to the server was lost. Check the internet connection, then try again."
+        in PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED..PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED ->
+            "This file couldn't be read. It may be damaged or in an unsupported format: pick another source."
+        in PlaybackException.ERROR_CODE_DECODER_INIT_FAILED..PlaybackException.ERROR_CODE_DECODING_RESOURCES_RECLAIMED ->
+            "This TV couldn't decode this video or audio. Pick another source."
+        else -> "The video stream stopped unexpectedly, even after retrying. Try again, or pick another source."
     }
 
     private fun trackChoices(exo: Player) = TRACK_TYPES.flatMap { PlayerTrackOptions.choices(exo.currentTracks, exo.trackSelectionParameters, it) }
@@ -900,6 +1010,11 @@ class PlayerActivity : Activity() {
             revealKey = KeyEvent.KEYCODE_UNKNOWN
             return true
         }
+        // With the controls hidden, OK presses the Skip / Next episode button while it shows.
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && skipPill.showing && !view.isControllerFullyVisible &&
+            activeDialog?.isShowing != true && (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER || event.keyCode == KeyEvent.KEYCODE_ENTER)) {
+            skipAction?.run?.invoke(); revealKey = event.keyCode; return true
+        }
         if (event.action == KeyEvent.ACTION_DOWN) controls.userInteraction()
         if (event.keyCode == KeyEvent.KEYCODE_MENU || event.keyCode == KeyEvent.KEYCODE_CAPTIONS) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
@@ -917,6 +1032,17 @@ class PlayerActivity : Activity() {
                 return true
             }
             val focused = currentFocus
+            // Up from the seek bar reaches the Skip / Next episode button while it shows; Down comes back.
+            if (event.keyCode == KeyEvent.KEYCODE_DPAD_UP && skipPill.showing &&
+                (focused?.id == androidx.media3.ui.R.id.exo_progress || (focused != null && focused.id in rowIds))) {
+                skipPill.requestFocus(); return true
+            }
+            if (focused === skipPill) {
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_DOWN -> { view.findViewById<View>(androidx.media3.ui.R.id.exo_progress).requestFocus(); return true }
+                    KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> return true
+                }
+            }
             if (event.keyCode == KeyEvent.KEYCODE_DPAD_UP && focused != null && focused.id in rowIds) {
                 view.findViewById<View>(androidx.media3.ui.R.id.exo_progress).requestFocus()
                 return true
@@ -990,6 +1116,7 @@ class PlayerActivity : Activity() {
 
     override fun onStop() {
         view.removeCallbacks(seekrLookup)
+        view.removeCallbacks(skipTicker)
         finishSeek(cancelled = true, restorePlayback = false)
         stopped = true
         controls.stop()
@@ -1023,8 +1150,12 @@ class PlayerActivity : Activity() {
         const val SEEK_SHORT_OF_MS = 5_000L
         const val SEEK_KEEP_MOVING_MS = 500L
         const val QUIET_SEEK_MS = 4_000L
+        /** Auto-play next episode: how long the Next Episode button counts down before starting it. */
+        const val NEXT_COUNTDOWN_MS = 10_000L
         val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
         val TRACK_TYPES = listOf(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_TEXT)
+        /** Set by Next episode: the identity (JSON) of the episode that just ended; Home consumes it once. */
+        @Volatile var nextEpisodeAfter: String? = null
         fun openCurrent(context: Context): Boolean {
             val intent = InAppPlaybackSession.currentIntent(context) ?: return false
             if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

@@ -84,6 +84,8 @@ internal class EasynewsParallelDataSource(
             next = piece.start + piece.size
             pool!!.execute { fill(piece, first) }
             schedule()
+            // Positions and sizes only: never the address (it carries a download token) or the login.
+            android.util.Log.i(TAG, "open at $position of $total (${end - position} bytes) over $connections connections")
             opened = true
             transferStarted(dataSpec)
             return end - position
@@ -110,6 +112,7 @@ internal class EasynewsParallelDataSource(
                 val current = connection ?: request(target, piece.start + piece.filled, piece.start + piece.size - 1).let { (opened, finalUrl) ->
                     if (opened.responseCode in setOf(401, 403, 404, 410)) {
                         // The download server's link expired: ask Easynews for a fresh one.
+                        android.util.Log.i(TAG, "download link refused (HTTP ${opened.responseCode}); asking Easynews for a fresh one")
                         disconnect(opened)
                         request(origin, piece.start + piece.filled, piece.start + piece.size - 1).also { target = it.second }.first
                     } else { if (finalUrl != target) target = finalUrl; opened }
@@ -125,6 +128,7 @@ internal class EasynewsParallelDataSource(
             } catch (error: IOException) {
                 connection?.let(::disconnect); connection = null
                 if (closed) return
+                android.util.Log.w(TAG, "piece at ${piece.start} stopped at ${piece.filled}/${piece.size} (attempt ${attempts + 1}): ${error.javaClass.simpleName}")
                 if (++attempts >= 4) { piece.fail(error); return }
                 try { Thread.sleep(400L * attempts) } catch (_: InterruptedException) { return }
             } catch (_: RuntimeException) {
@@ -152,7 +156,7 @@ internal class EasynewsParallelDataSource(
             val current = connect(URI(next))
             live += current
             current.instanceFollowRedirects = false
-            current.connectTimeout = 15_000; current.readTimeout = 20_000
+            current.connectTimeout = 15_000; current.readTimeout = 45_000
             current.requestMethod = "GET"
             current.setRequestProperty("Accept-Encoding", "identity")
             extra.forEach { (key, value) -> current.setRequestProperty(key, value) }
@@ -175,8 +179,19 @@ internal class EasynewsParallelDataSource(
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
         if (length == 0) return 0
         val piece = pieces.firstOrNull() ?: return C.RESULT_END_OF_INPUT
+        // The player interrupts this thread when it cancels a load (a seek or resume). A normal network read ignores
+        // that and finishes, letting the MKV reader complete its current element; aborting here instead left the
+        // reader mid-element and crashed it on the next load (Media3 SampleQueue NullPointerException, 2026-11-02).
+        // So keep waiting like a socket would, for at most INTERRUPTED_WAIT_MS once interrupted.
+        var interruptedAt = 0L
         synchronized(piece.lock) {
-            while (!closed && piece.filled <= readOffset && piece.failure == null) piece.lock.wait(250)
+            while (!closed && piece.filled <= readOffset && piece.failure == null) {
+                if (Thread.interrupted() && interruptedAt == 0L) interruptedAt = android.os.SystemClock.elapsedRealtime()
+                if (interruptedAt != 0L && android.os.SystemClock.elapsedRealtime() - interruptedAt > INTERRUPTED_WAIT_MS)
+                    throw InterruptedIOException("Easynews load cancelled.")
+                try { piece.lock.wait(250) }
+                catch (_: InterruptedException) { if (interruptedAt == 0L) interruptedAt = android.os.SystemClock.elapsedRealtime() }
+            }
         }
         if (closed) throw InterruptedIOException("Closed.")
         if (piece.filled <= readOffset) throw piece.failure ?: IOException("Easynews stopped sending this video.")
@@ -202,4 +217,9 @@ internal class EasynewsParallelDataSource(
     override fun clearRequestProperty(name: String) { extra.remove(name) }
     override fun clearAllRequestProperties() { extra.clear() }
     override fun getResponseCode(): Int = code
+
+    private companion object {
+        const val TAG = "PovEasynews"
+        const val INTERRUPTED_WAIT_MS = 10_000L
+    }
 }

@@ -78,7 +78,7 @@ internal class EasynewsHttpDataSource(
                 val current = connect(URI(next))
                 connection = current
                 current.instanceFollowRedirects = false
-                current.connectTimeout = 15_000; current.readTimeout = 20_000
+                current.connectTimeout = 15_000; current.readTimeout = 45_000
                 current.requestMethod = "GET"
                 current.setRequestProperty("Accept-Encoding", "identity")
                 extra.forEach { (key, value) -> current.setRequestProperty(key, value) }

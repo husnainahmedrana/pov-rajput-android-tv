@@ -102,6 +102,8 @@ object InAppPlaybackSession {
     private const val QUIET_RETRY_WINDOW_MS = 15_000L
     private const val QUIET_RETRY_DELAY_MS = 1_500L
     private const val MAX_QUIET_RETRIES = 3
+    private const val SOURCE_RETRY_DELAY_MS = 1_000L
+    private const val MAX_SOURCE_RETRIES = 2
     private val surfaceAttachment = SurfaceReadyAttachment<ExoPlayer, PlayerView>(
         currentSession = { player?.takeUnless { releasing } },
         isReady = { view ->
@@ -163,6 +165,10 @@ object InAppPlaybackSession {
     private var foregroundAt = 0L
     private var networkRetryPending = false
     private var quietRetries = 0
+    /** Quiet retries after a source error in the foreground; reset once the video is playing again. */
+    private var sourceRetries = 0
+    /** Set when parallel Easynews downloads keep failing for the current video; cleared when another video starts. */
+    @Volatile private var easynewsSingle = false
     private fun isNetworkFailure(failure: PlaybackException) =
         failure.errorCode in PlaybackException.ERROR_CODE_IO_UNSPECIFIED..PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
             failure.errorCode == PlaybackException.ERROR_CODE_TIMEOUT
@@ -199,6 +205,8 @@ object InAppPlaybackSession {
         if (uri == null || uri.scheme !in setOf("https", "http") || uri.host.isNullOrBlank() || uri.userInfo != null) return false
         stopInternal(notify = false)
         sourceUrl = address
+        easynewsSingle = false
+        skipSegments = emptyList(); skipLookupFor = ""
         sourceKey = intent.getStringExtra("key").orEmpty()
         sourceHeaders = runCatching { JSONObject(intent.getStringExtra("headers") ?: "{}").let { json ->
             json.keys().asSequence().associateWith { json.getString(it) } } }.getOrDefault(emptyMap())
@@ -283,13 +291,15 @@ object InAppPlaybackSession {
         // Direct links often redirect http <-> https (e.g. 307 to a CDN); ExoPlayer refuses
         // cross-protocol redirects by default, while Stremio and VLC follow them.
         val playing = sourceUrl
+        // Debrid and Usenet-backed links can take well over the default 8 s to send their first bytes.
         val http = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(15_000).setReadTimeoutMs(30_000)
             .setTransferListener(sizeFromServer(playing))
             .setDefaultRequestProperties(sourceHeaders)
         val exo = ExoPlayer.Builder(application!!, renderers)
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(application!!,
                 // Easynews links get the saved login inside the player; it is never in the link or the intent.
-                EasynewsRoutingDataSource.Factory(http, { dev.pov.tv.data.Easynews.connections(secureStore) }) { dev.pov.tv.data.Easynews.credentials(secureStore)?.let { (user, password) ->
+                EasynewsRoutingDataSource.Factory(http, { if (easynewsSingle) 1 else dev.pov.tv.data.Easynews.connections(secureStore) }) { dev.pov.tv.data.Easynews.credentials(secureStore)?.let { (user, password) ->
                     runCatching { dev.pov.tv.data.Easynews.auth(user, password) }.getOrNull() } })))
             .setLoadControl(ReadAheadPreferences(application!!).loadControl())
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
@@ -346,7 +356,7 @@ object InAppPlaybackSession {
             override fun onPlaybackStateChanged(state: Int) {
                 if (!isCurrent(exo)) return
                 if (state != Player.STATE_ENDED && enforceVideoCompatibility(exo)) return
-                if (state == Player.STATE_READY) quietRetries = 0
+                if (state == Player.STATE_READY) { quietRetries = 0; sourceRetries = 0; lookUpSkips(exo) }
                 if (state == Player.STATE_READY && !lastLinkSaved) {
                     lastLinkSaved = true
                     val media = identity; val account = playbackAccount
@@ -379,6 +389,26 @@ object InAppPlaybackSession {
                     else handler.postDelayed({
                         if (isCurrent(exo) && exo.playerError != null && error == null) { exo.prepare(); exo.play() }
                     }, QUIET_RETRY_DELAY_MS)
+                    notifyChanged()
+                    return
+                }
+                // A stream that stops for a source reason (a dropped connection, a read glitch such as the MKV reader's
+                // intermittent "Source error") usually plays on a second try, as a manual Retry showed: retry the same
+                // link at the same spot quietly before showing an error. A refused link (403/404) won't recover.
+                val sourceFailure = (failure as? androidx.media3.exoplayer.ExoPlaybackException)?.type == androidx.media3.exoplayer.ExoPlaybackException.TYPE_SOURCE
+                if (sourceFailure && error == null && sourceRetries < MAX_SOURCE_RETRIES &&
+                    failure.errorCode !in setOf(PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS, PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
+                        PlaybackException.ERROR_CODE_IO_NO_PERMISSION)) {
+                    sourceRetries++
+                    // A second failure on an Easynews video: fall back to one connection for this video only.
+                    if (sourceRetries >= 2 && dev.pov.tv.data.Easynews.isHost(sourceUrl) && !easynewsSingle) {
+                        easynewsSingle = true
+                        android.util.Log.w("PovPlayer", "Easynews keeps failing over parallel connections; retrying this video over one")
+                    }
+                    android.util.Log.w("PovPlayer", "Source error ${failure.errorCodeName}; quiet retry $sourceRetries of $MAX_SOURCE_RETRIES", failure)
+                    handler.postDelayed({
+                        if (isCurrent(exo) && exo.playerError != null && error == null) { exo.prepare(); exo.play() }
+                    }, SOURCE_RETRY_DELAY_MS)
                     notifyChanged()
                     return
                 }
@@ -459,7 +489,7 @@ object InAppPlaybackSession {
         surfaceAttachment.cancelAll()
         handler.removeCallbacks(checkpoint)
         resumeAfterBackground = false
-        networkRetryPending = false; quietRetries = 0
+        networkRetryPending = false; quietRetries = 0; sourceRetries = 0
         volumeBoost.close()
         targetView?.get()?.let { it.player = null; it.keepScreenOn = false }
         targetView = null
@@ -526,6 +556,28 @@ object InAppPlaybackSession {
     }
 
     private fun isCurrent(exo: ExoPlayer) = !releasing && player === exo
+
+    /** Intro, recap and credits times for the current video, once found (the player shows Skip buttons for them). */
+    @Volatile var skipSegments: List<dev.pov.tv.data.SkipSegment> = emptyList()
+        private set
+    private var skipLookupFor = ""
+
+    /** Once per video, when its length is known: the length picks the matching cut in the skip databases. */
+    private fun lookUpSkips(exo: ExoPlayer) {
+        val media = identity ?: return
+        val app = application ?: return
+        val duration = exo.duration.takeIf { it > 0 && it != C.TIME_UNSET } ?: return
+        val lookup = sourceUrl
+        if (lookup.isEmpty() || skipLookupFor == lookup || !SkipButtonPreferences(app).enabled) return
+        skipLookupFor = lookup
+        val anime = dev.pov.tv.data.AnimeEpisodeRefs.find(app, media)
+        Thread {
+            val found = runCatching { dev.pov.tv.data.SkipSegmentsApi().segments(media, duration, anime) }.getOrDefault(emptyList())
+            android.util.Log.i("PovSkip", "${found.size} skip segments (${if (anime != null) "anime" else "show/movie"}): " +
+                found.joinToString { "${it.kind} ${it.startMs / 1000}-${it.endMs?.div(1000) ?: "end"}s" })
+            handler.post { if (sourceUrl == lookup && isCurrent(exo)) { skipSegments = found; notifyChanged() } }
+        }.apply { isDaemon = true }.start()
+    }
 
     /**
      * Without a known size (a link saved before sizes were kept), the size the server reports for the video file

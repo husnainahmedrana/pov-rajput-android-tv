@@ -90,6 +90,7 @@ With **Auto-play first result** on (Settings → Playback), Play starts the best
 
 ### Player
 
+- **Skip buttons** — during an intro, recap or end credits a glowing **Skip Intro** / **Skip Recap** / **Skip Credits** button appears above the title row; press OK (or Up from the controls, then OK) to skip it. Once an episode's credits start it becomes **Next Episode**, which plays the following episode. Turn on **Auto-play next episode** (Settings → Playback) for a 10-second countdown that starts it by itself. Times come from [TheIntroDB](https://theintrodb.org) and, for anime, [AniSkip](https://aniskip.com).
 - **Seeking** — tap Left/Right for one second. Hold to keep going: one-second steps for the first 10 seconds, then 5 s, 10 s, 20 s and at most 30 s steps. A small card above the seek bar shows the target time and offset, with a thumbnail of the scene from [Seekr](https://seekr.tv) when you've added your free Seekr key (Settings → Playback); the video jumps as soon as you release (to the nearest keyframe, so loaded video plays at once) and the preview stays a moment.
 - **Ends at** — the local finish time sits in the top-right corner with the controls.
 - **Loading and buffering** — the title's logo pulses over its blurred artwork, like Stremio.
@@ -143,6 +144,7 @@ Pushes to `main`, pull requests and manual runs build APKs after unit tests and 
 - **[WeTrakr](https://wetrakr.com/) and [alberdev](https://www.reddit.com/user/alberdev/), its developer** — tracking service, API, official logo and developer access that made this integration possible.
 - **[TMDB](https://www.themoviedb.org/)** — this product uses the TMDB API but is not endorsed or certified by TMDB.
 - **[Queued Up](https://queued-up.app/)** — the free community Stremio catalog add-on behind the Latest Releases rows, and the Top 10 and Newest lists without a TMDB key.
+- **[TheIntroDB](https://theintrodb.org)** and **[AniSkip](https://aniskip.com)** — community intro, recap and credits timestamps behind the skip buttons (anime matched through Kitsu's MyAnimeList mappings).
 - **[Seekr](https://seekr.tv)** — ready-made seek preview thumbnails, with your own free key from [seekr.tv/join](https://seekr.tv/join). If it works well for you, consider [supporting Seekr](https://buymeacoffee.com/seekrtvdev).
 - **[OpenSubtitles](https://www.opensubtitles.org/)** — subtitles found online when a video has none in your language (via its free Stremio add-on), plus **[Wyzie Subs](https://sub.wyzie.io/)** with your own key.
 - **[FFmpeg](https://ffmpeg.org/)** and **[Jellyfin](https://github.com/jellyfin/jellyfin-androidx-media)** — software audio decoding through Jellyfin's prebuilt Media3 FFmpeg decoder.

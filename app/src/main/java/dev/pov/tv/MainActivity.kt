@@ -184,6 +184,28 @@ class MainActivity : Activity() {
         if (!publicPreview && ::store.isInitialized && android.os.SystemClock.elapsedRealtime() - watchedCheckedAt > 60_000) refreshWatched()
         if (::shellRoot.isInitialized) updateMiniPlayer()
         if (BackHoldGesture.settingsRequested && ::shellRoot.isInitialized) { BackHoldGesture.settingsRequested = false; openSettingsAnywhere() }
+        PlayerActivity.nextEpisodeAfter?.let { finished ->
+            PlayerActivity.nextEpisodeAfter = null
+            if (::shellRoot.isInitialized) runCatching { PlaybackIdentity.fromJson(org.json.JSONObject(finished)) }.getOrNull()?.let(::playNextEpisode)
+        }
+    }
+
+    /**
+     * The player's Next episode: the following episode of the same season, else the next season's first (specials
+     * skipped), from the show's episode list. Its links are searched and the best one starts, as with Auto-play.
+     */
+    private fun playNextEpisode(finished: PlaybackIdentity) {
+        if (finished.type != "series") return
+        val show = MediaItemData(finished.imdbId, "series", finished.title)
+        load(generation, { cachedDetails(show) ?: fetchDetails(show) }) { details ->
+            val today = java.time.LocalDate.now().toString()
+            val next = details.episodes.filter { it.season > 0 && (it.released.isBlank() || it.released.take(10) <= today) }
+                .sortedWith(compareBy({ it.season }, { it.episode }))
+                .firstOrNull { it.season > finished.season || (it.season == finished.season && it.episode > finished.episode) }
+            if (next == null) { toast("That was the latest episode available."); return@load }
+            toast("Playing S${next.season} E${next.episode}${if (next.title.isNotBlank()) " · ${next.title}" else ""}")
+            navigate { showSources(finished.copy(season = next.season, episode = next.episode), autoplayNext = true) }
+        }
     }
     override fun onPause() {
         // Keep the outgoing target until the incoming fullscreen view can attach first.
@@ -216,7 +238,8 @@ class MainActivity : Activity() {
             val saved = backStack.removeLast(); current = saved.screen; destination = saved.destination
             pendingFocus = saved.focus
             val cached = saved.retained
-            if (cached != null && cached.revision == pageRevision()) {
+            // Settings pages are always redrawn: switches on their sub-pages change values a kept copy would show stale.
+            if (cached != null && cached.revision == pageRevision() && saved.destination != "settings") {
                 restorePage(cached)
                 wantsContentFocus = true; focusAfterRender(generation)
             } else current()
@@ -354,7 +377,37 @@ class MainActivity : Activity() {
                     next.requestFocus(); return true
                 }
             }
-            // A shelf ends at its last card ("See all") rather than wrapping elsewhere.
+            // Settings: from any setting under the section cards, Right and Left go straight to the next and previous
+            // section (focus on its card, at the top); Left on the first section opens the menu. Up from the top setting
+            // returns to the shown section's card instead of jumping diagonally onto another one.
+            if (destination == "settings" && direction != null && direction != View.FOCUS_DOWN && inSettingsContent(currentFocus)) {
+                val target = focusController.next(direction)
+                val ontoCard = (target?.tag as? String)?.startsWith("settings-section:") == true
+                when {
+                    direction == View.FOCUS_RIGHT || direction == View.FOCUS_LEFT -> {
+                        val index = settingsSections.indexOfFirst { it.first == settingsSection }
+                        val next = settingsSections.getOrNull(index + if (direction == View.FOCUS_RIGHT) 1 else -1)?.first
+                        if (next == null) {
+                            if (direction == View.FOCUS_LEFT && theme.layout.navigation == NavigationPlacement.LEFT_RAIL) {
+                                if (flix) openMenu() else navigationViews[destination]?.requestFocus()
+                            }
+                            return true
+                        }
+                        settingsChoose?.invoke(next)
+                        body.findViewWithTag<View>("settings-section:$next")?.requestFocus()
+                        scroller.smoothScrollTo(0, 0)
+                        return true
+                    }
+                    ontoCard || target == null -> {
+                        body.findViewWithTag<View>("settings-section:$settingsSection")?.requestFocus()
+                        scroller.smoothScrollTo(0, 0)
+                        return true
+                    }
+                }
+            }
+            // A shelf ends at its last card ("See all") rather than wrapping elsewhere, even when a card of the next
+            // row lies further right.
+            if (direction == View.FOCUS_RIGHT && body.hasFocus() && atRowEnd(currentFocus)) return true
             if (flix && direction == View.FOCUS_RIGHT && body.hasFocus() && focusController.next(direction) == null) return true
             if (body.hasFocus() && direction != null && focusController.next(direction) == null) {
                 val leaving = (theme.layout.navigation == NavigationPlacement.TOP_BAR && direction == View.FOCUS_UP) ||
@@ -839,6 +892,7 @@ class MainActivity : Activity() {
 
     /** Settings → Home rows: order and switch off the rows after Top 10, and manage catalog add-ons. */
     private fun homeRowsPage(focusTag: String? = null) {
+        val keepScroll = scroller.scrollY
         current = { homeRowsPage() }
         destination = "settings"; refreshNavigation()
         page("Home rows", "Continue Watching and Top 10 stay at the top. Arrange the rows that follow them.")
@@ -873,14 +927,7 @@ class MainActivity : Activity() {
         }
         settingsRow(addons, "Add catalog add-on", "", "Paste a Stremio catalog add-on URL, such as your AIOMetadata manifest, then pick the catalogs to show on Home.") { addCatalogAddon() }
         body.addView(View(this), margin(-1, 24))
-        val wanted = focusTag
-        body.post {
-            if (isDestroyed || destination != "settings") return@post
-            if (wanted != null) body.findViewWithTag<View>(wanted)?.takeIf { it.isFocusable }?.let { target ->
-                target.requestFocus(); val rect = android.graphics.Rect(); target.getDrawingRect(rect); body.offsetDescendantRectToMyCoords(target, rect)
-                scroller.scrollTo(0, (rect.centerY() - scroller.height / 2).coerceAtLeast(0))
-            } else focusAfterRender(generation)
-        }
+        if (focusTag != null) keepPlace(generation, focusTag, keepScroll) else focusAfterRender(generation)
     }
 
     private fun addCatalogAddon() {
@@ -1853,6 +1900,8 @@ class MainActivity : Activity() {
         }
         body.addView(button("Choose a matching title manually") { matchAnime(title) }, margin(280, 40, bottom = 10))
         fun render(result: AnimeEpisodeCatalog) {
+            // The player asks AniSkip for skip times by this anime's own episode numbers.
+            AnimeEpisodeRefs.remember(this, result)
             // Play sits right under the synopsis, then one row of related entries, then the episodes.
             body.removeAllViews(); hero(result.media, false, synopsisLines = if (DeviceLayout.phone) 4 else 3)
             mediaActions(result.media)
@@ -2197,6 +2246,7 @@ class MainActivity : Activity() {
     private companion object {
         private const val QR_DP = 110; const val WARM_BACKDROPS = 6; const val HIDE_UNCACHED = "sources.hide_uncached"; const val BACKDROP_FADE_MS = 220; const val VOICE_REQUEST = 701; const val PLAYBACK_REQUEST = 702; const val MIC_REQUEST = 703; const val FLIX_ROW_LINE = 236; const val FEATURE_INTERVAL_MS = 5_000L; const val AUTOPLAY_FIRST = "sources.autoplay_first"; const val AUTOPLAY_MAX_GB = "sources.autoplay_max_gb"; const val AUTOPLAY_MAX_GB_EPISODE = "sources.autoplay_max_gb_episode"; const val AUTOPLAY_MAX_MBPS = "sources.autoplay_max_mbps"; const val AUTOPLAY_LIMIT_ON = "sources.autoplay_limit_on"; const val BACKDROP_WIDTH = 1280; const val CONTINUE_CACHE = "wetrakr.continue_cache"
         const val TMDB_KEY = "tmdb.key"; const val TMDB_REGION = "tmdb.region"
+        const val SETTINGS_SECTION = "settings.section"
         const val HOME_KEEP_MS = 15 * 60_000L
         const val HOME_BACKDROP_SCALE = 0.72f
         const val COMPACT_HERO_HEIGHT = 236
@@ -2587,8 +2637,11 @@ class MainActivity : Activity() {
         }
     }
 
-    /** The link list for [identity]; [manual] (the Streams button) never auto-plays, whatever the Auto-play setting. */
-    private fun showSources(identity: PlaybackIdentity, manual: Boolean = false) {
+    /**
+     * The link list for [identity]; [manual] (the Streams button) never auto-plays, whatever the Auto-play setting;
+     * [autoplayNext] (the player's Next episode) always does, once.
+     */
+    private fun showSources(identity: PlaybackIdentity, manual: Boolean = false, autoplayNext: Boolean = false) {
         current = { showSources(identity, manual) }
         val suffix = if (identity.type == "series") "  ·  S${identity.season} E${identity.episode}" else ""
         val connected = DebridServices.connected(store)
@@ -2600,7 +2653,7 @@ class MainActivity : Activity() {
         val title = MediaItemData(identity.imdbId, identity.type, identity.title)
         val details = if (cachedDetails(title) != null) null else metadataWorker.submit(java.util.concurrent.Callable { runCatching { fetchDetails(title) }.getOrNull() })
         read(id, { resolver.search(identity).also { runCatching { details?.get(1_500, java.util.concurrent.TimeUnit.MILLISECONDS) } } }) { result ->
-            sourceResults(identity, result.items, result.unavailableProviders, autoplay = !manual && store.get(AUTOPLAY_FIRST) == "true")
+            sourceResults(identity, result.items, result.unavailableProviders, autoplay = autoplayNext || (!manual && store.get(AUTOPLAY_FIRST) == "true"))
         }
     }
 
@@ -3277,6 +3330,7 @@ class MainActivity : Activity() {
 
     /** Settings → Debrid services: order, switch on or off, and connect or remove each account. */
     private fun debridServicesPage(focusTag: String? = null) {
+        val keepScroll = scroller.scrollY
         current = { debridServicesPage() }
         destination = "settings"; refreshNavigation()
         page("Debrid services", "Cached links play from the first service that's on, in this order. Off keeps the account saved but skips it.")
@@ -3310,14 +3364,7 @@ class MainActivity : Activity() {
             "the first cached one of the top ${LinkDebrids.CHECK_LIMIT} plays. Premiumize, Offcloud and TorBox are checked while the link list loads.", 11, muted).apply {
             setLineSpacing(dp(1).toFloat(), 1f) }, margin(-1, -2, top = 12))
         body.addView(View(this), margin(-1, 24))
-        val wanted = focusTag
-        body.post {
-            if (isDestroyed || destination != "settings") return@post
-            if (wanted != null) body.findViewWithTag<View>(wanted)?.takeIf { it.isFocusable }?.let { target ->
-                target.requestFocus(); val rect = android.graphics.Rect(); target.getDrawingRect(rect); body.offsetDescendantRectToMyCoords(target, rect)
-                scroller.scrollTo(0, (rect.centerY() - scroller.height / 2).coerceAtLeast(0))
-            } else focusAfterRender(generation)
-        }
+        if (focusTag != null) keepPlace(generation, focusTag, keepScroll) else focusAfterRender(generation)
     }
 
     /** Connect, replace the key of, or remove one debrid account. */
@@ -3468,181 +3515,327 @@ class MainActivity : Activity() {
         destination = "settings"; refreshNavigation()
         page("Settings", "Make POV yours.")
 
-        val home = settingsGroup("Home & appearance", "home")
-        val tmdbKey = store.get(TMDB_KEY)
-        settingsRow(home, "TMDB", if (tmdbKey.isBlank()) "Not set" else "Connected",
-            "Your own free TMDB key adds TMDB catalogs, and makes artwork load faster: TMDB backdrops are a fraction of the size.",
-            status = tmdbKey.isNotBlank()) {
-            inputSetting("TMDB API key", "TMDB API key or API Read Access Token", "", secret = true) { key ->
-                load(generation, { TmdbCatalog(this, key, tmdbRegion()).validate() }) { store.put(TMDB_KEY, key); toast("TMDB connected. Home now uses TMDB catalogs."); refreshSettings() }
-            }
-        }
-        settingsRow(home, "Cinema country", countryName(tmdbRegion()), "Used for Now Playing in Cinemas.") {
-            val countries = java.util.Locale.getISOCountries().map { it to countryName(it) }.sortedBy { it.second }
-            AlertDialog.Builder(this).setTitle("Now Playing in Cinemas · country")
-                .setSingleChoiceItems(countries.map { it.second }.toTypedArray(), countries.indexOfFirst { it.first == tmdbRegion() }) { dialog, index ->
-                    store.put(TMDB_REGION, countries[index].first); dialog.dismiss(); refreshSettings()
-                }.setNegativeButton("Cancel", null).show()
-        }
-        settingsRow(home, "Home rows", "", "Reorder or hide the rows after Top 10, and add catalog add-ons such as AIOMetadata.") { navigate { homeRowsPage() } }
-        settingsToggle(home, "Resume cards", "Continue Watching as wide cards with the episode, time left and progress beside the artwork.",
-            store.get(RESUME_CARDS) != "false") { on -> store.put(RESUME_CARDS, on.toString()) }
-        if (tmdbKey.isNotBlank()) settingsRow(home, "Remove TMDB key", danger = true) {
-            confirm("Remove your TMDB key? Home will use Cinemeta catalogs.") { store.remove(TMDB_KEY); refreshSettings() }
-        }
+        val section = settingsSection
+        settingsCards(section)
+        val content = column()
+        body.addView(content, margin(-1, -2))
+        settingsContent = content
+        settingsSectionContent(section)
+        body.addView(View(this), margin(-1, 24))
+    }
 
-        val playback = settingsGroup("Playback", "nowplaying")
-        settingsRow(playback, "Source sorting", SourceSortPreferences(this).label,
-            "Links in your audio language first (then multi-audio), then quality, then file size. Auto-play follows this order.") {
-            SourceSortPreferences.show(this) { refreshSettings() }
-        }
-        settingsToggle(playback, "Auto-play first result", "Play starts the first cached or direct link in your sort order. The full list stays open behind it, so you can pick another link if it fails.",
-            store.get(AUTOPLAY_FIRST) == "true") { on -> store.put(AUTOPLAY_FIRST, on.toString()) }
-        settingsToggle(playback, "Hide uncached links", "Show only links that play at once (cached or direct) in the link list and the player's Streams. Real-Debrid, AllDebrid and Debrid-Link can't tell in advance, so their links stay.",
-            store.get(HIDE_UNCACHED) == "true") { on -> store.put(HIDE_UNCACHED, on.toString()) }
-        settingsToggle(playback, "Auto-play limit", "Auto-play skips links above your bitrate limit (file size over the title's runtime). When the runtime is unknown, the movie or episode size limit applies. Links of unknown size can still play, and you can still choose any link yourself.",
-            store.get(AUTOPLAY_LIMIT_ON) == "true") { on -> store.put(AUTOPLAY_LIMIT_ON, on.toString()); refreshSettings() }
-        if (store.get(AUTOPLAY_LIMIT_ON) == "true") {
-            settingsRow(playback, "Highest bitrate", "${autoplayMaxMbps()} Mbps", "For movies and episodes. Pick it from your internet speed, e.g. 25 Mbps on a 40 Mbps connection.") {
-                inputSetting("Highest bitrate for Auto-play (Mbps)", "A whole number of Mbps, e.g. 25", autoplayMaxMbps().toString()) { value ->
-                    val mbps = value.trim().toIntOrNull()
-                    if (mbps == null || mbps !in 1..500) toast("Enter a whole number of Mbps, such as 25")
-                    else { store.put(AUTOPLAY_MAX_MBPS, mbps.toString()); toast("Auto-play limited to $mbps Mbps"); refreshSettings() }
+    /** The settings of one section, built into the area under the section cards. */
+    private fun settingsSectionContent(section: String) {
+        val content = settingsContent ?: return
+        content.removeAllViews()
+        settingsTarget = content
+        try {
+            when (section) {
+                "home" -> {
+            val home = settingsGroup("Home & appearance", "home")
+            val tmdbKey = store.get(TMDB_KEY)
+            settingsRow(home, "TMDB", if (tmdbKey.isBlank()) "Not set" else "Connected",
+                "Your own free TMDB key adds TMDB catalogs, and makes artwork load faster: TMDB backdrops are a fraction of the size.",
+                status = tmdbKey.isNotBlank()) {
+                inputSetting("TMDB API key", "TMDB API key or API Read Access Token", "", secret = true) { key ->
+                    load(generation, { TmdbCatalog(this, key, tmdbRegion()).validate() }) { store.put(TMDB_KEY, key); toast("TMDB connected. Home now uses TMDB catalogs."); refreshSettings() }
                 }
             }
-            listOf(false to "Movie", true to "Episode").forEach { (episode, kind) ->
-                settingsRow(playback, "$kind size fallback", "${autoplayLimitGb(episode)} GB", "Used when the ${kind.lowercase()}'s runtime is unknown.") {
-                    inputSetting("Largest $kind file (GB)", "A whole number of GB, e.g. ${if (episode) 5 else 20}", autoplayLimitGb(episode).toString()) { value ->
-                        val gb = value.trim().toIntOrNull()
-                        if (gb == null || gb !in 1..1000) toast("Enter a whole number of GB, such as ${if (episode) 5 else 20}")
-                        else { store.put(if (episode) AUTOPLAY_MAX_GB_EPISODE else AUTOPLAY_MAX_GB, gb.toString()); toast("$kind size fallback set to $gb GB"); refreshSettings() }
+            settingsRow(home, "Cinema country", countryName(tmdbRegion()), "Used for Now Playing in Cinemas.") {
+                val countries = java.util.Locale.getISOCountries().map { it to countryName(it) }.sortedBy { it.second }
+                AlertDialog.Builder(this).setTitle("Now Playing in Cinemas · country")
+                    .setSingleChoiceItems(countries.map { it.second }.toTypedArray(), countries.indexOfFirst { it.first == tmdbRegion() }) { dialog, index ->
+                        store.put(TMDB_REGION, countries[index].first); dialog.dismiss(); refreshSettings()
+                    }.setNegativeButton("Cancel", null).show()
+            }
+            settingsRow(home, "Home rows", "", "Reorder or hide the rows after Top 10, and add catalog add-ons such as AIOMetadata.") { navigate { homeRowsPage() } }
+            settingsToggle(home, "Resume cards", "Continue Watching as wide cards with the episode, time left and progress beside the artwork.",
+                store.get(RESUME_CARDS) != "false") { on -> store.put(RESUME_CARDS, on.toString()) }
+            if (tmdbKey.isNotBlank()) settingsRow(home, "Remove TMDB key", danger = true) {
+                confirm("Remove your TMDB key? Home will use Cinemeta catalogs.") { store.remove(TMDB_KEY); refreshSettings() }
+            }
+                }
+                "playback" -> {
+            val playback = settingsGroup("Playback", "nowplaying")
+            settingsRow(playback, "Source sorting", SourceSortPreferences(this).label,
+                "Links in your audio language first (then multi-audio), then quality, then file size. Auto-play follows this order.") {
+                SourceSortPreferences.show(this) { refreshSettings() }
+            }
+            settingsToggle(playback, "Auto-play first result", "Play starts the first cached or direct link in your sort order. The full list stays open behind it, so you can pick another link if it fails.",
+                store.get(AUTOPLAY_FIRST) == "true") { on -> store.put(AUTOPLAY_FIRST, on.toString()) }
+            settingsToggle(playback, "Hide uncached links", "Show only links that play at once (cached or direct) in the link list and the player's Streams. Real-Debrid, AllDebrid and Debrid-Link can't tell in advance, so their links stay.",
+                store.get(HIDE_UNCACHED) == "true") { on -> store.put(HIDE_UNCACHED, on.toString()) }
+            settingsToggle(playback, "Auto-play limit", "Auto-play skips links above your bitrate limit (file size over the title's runtime). When the runtime is unknown, the movie or episode size limit applies. Links of unknown size can still play, and you can still choose any link yourself.",
+                store.get(AUTOPLAY_LIMIT_ON) == "true") { on -> store.put(AUTOPLAY_LIMIT_ON, on.toString()); refreshSettings() }
+            if (store.get(AUTOPLAY_LIMIT_ON) == "true") {
+                settingsRow(playback, "Highest bitrate", "${autoplayMaxMbps()} Mbps", "For movies and episodes. Pick it from your internet speed, e.g. 25 Mbps on a 40 Mbps connection.") {
+                    inputSetting("Highest bitrate for Auto-play (Mbps)", "A whole number of Mbps, e.g. 25", autoplayMaxMbps().toString()) { value ->
+                        val mbps = value.trim().toIntOrNull()
+                        if (mbps == null || mbps !in 1..500) toast("Enter a whole number of Mbps, such as 25")
+                        else { store.put(AUTOPLAY_MAX_MBPS, mbps.toString()); toast("Auto-play limited to $mbps Mbps"); refreshSettings() }
+                    }
+                }
+                listOf(false to "Movie", true to "Episode").forEach { (episode, kind) ->
+                    settingsRow(playback, "$kind size fallback", "${autoplayLimitGb(episode)} GB", "Used when the ${kind.lowercase()}'s runtime is unknown.") {
+                        inputSetting("Largest $kind file (GB)", "A whole number of GB, e.g. ${if (episode) 5 else 20}", autoplayLimitGb(episode).toString()) { value ->
+                            val gb = value.trim().toIntOrNull()
+                            if (gb == null || gb !in 1..1000) toast("Enter a whole number of GB, such as ${if (episode) 5 else 20}")
+                            else { store.put(if (episode) AUTOPLAY_MAX_GB_EPISODE else AUTOPLAY_MAX_GB, gb.toString()); toast("$kind size fallback set to $gb GB"); refreshSettings() }
+                        }
                     }
                 }
             }
-        }
-        val readAhead = ReadAheadPreferences(this)
-        settingsRow(playback, "Read-ahead", readAhead.mode.label,
-            "How far ahead the player downloads, to ride out slow connections. Applies to the next video.") {
-            AlertDialog.Builder(this).setTitle("Read-ahead")
-                .setSingleChoiceItems(ReadAhead.entries.map { it.label }.toTypedArray(), readAhead.mode.ordinal) { dialog, index ->
-                    readAhead.mode = ReadAhead.entries[index]; dialog.dismiss(); refreshSettings()
-                }.setNegativeButton("Cancel", null).show()
-        }
-        val videoPreferences = VideoCompatibilityPreferences(this)
-        settingsRow(playback, "Dolby Vision", videoPreferences.mode.label,
-            "Applies to the next video. Uses a verified Profile 7/8 HDR10 or HLG base picture when supported. Profile 5 needs compatible Dolby Vision decoding.") {
-            AlertDialog.Builder(this).setTitle("Dolby Vision compatibility")
-                .setSingleChoiceItems(DolbyVisionMode.entries.map { it.label }.toTypedArray(), videoPreferences.mode.ordinal) { dialog, index ->
-                    videoPreferences.mode = DolbyVisionMode.entries[index]; dialog.dismiss(); refreshSettings()
-                }.setNegativeButton("Cancel", null).show()
-        }
-
-        settingsToggle(playback, "Mini player", "Leaving the player keeps the video going in a small window while you browse. Turn it off to stop the video instead when you leave (your progress is saved).",
-            MiniPlayerPreferences(this).enabled) { on -> MiniPlayerPreferences(this).enabled = on }
-        settingsToggle(playback, "Seek previews (Seekr)", "Shows a thumbnail of the scene above the seek bar while you seek. Previews come from Seekr, which has them ready for many movies and shows. Needs your Seekr API key below.",
-            SeekrPreferences(this).enabled) { on -> SeekrPreferences(this).enabled = on }
-        seekrInfo(playback)
-        val seekr = store.get(SeekrPreferences.KEY)
-        val seekrBuilt = BuildConfig.SEEKR_KEY.isNotBlank()
-        settingsRow(playback, "Seekr API key", if (seekr.isNotBlank()) "Connected" else if (seekrBuilt) "Built in" else "Not set",
-            "Put your API key from seekr.tv here to get thumbnail previews while seeking. Sign up at seekr.tv, copy your key (it starts with sk_live_) and paste it here. Titles Seekr doesn't have simply show no preview.",
-            status = seekr.isNotBlank() || seekrBuilt) {
-            inputSetting("Seekr API key", "Paste your key from seekr.tv (sk_live_...)", "", secret = true) { key ->
-                store.put(SeekrPreferences.KEY, key.trim()); refreshSettings()
-                // Ask Seekr whether it accepts the key, so a typo is caught here rather than as missing previews later.
-                Thread {
-                    val ok = runCatching { kotlinx.coroutines.runBlocking { tv.seekr.previews.android.Seekr.create(key.trim()).validateKey() } }.getOrNull()
-                    runOnUiThread { toast(when (ok) { true -> "Seekr key saved · ✓ Seekr accepts the key"; false -> "Seekr key saved, but Seekr doesn't accept it. Check the key."; null -> "Seekr key saved (couldn't reach Seekr to check it)" }) }
-                }.start()
+            val readAhead = ReadAheadPreferences(this)
+            settingsRow(playback, "Read-ahead", readAhead.mode.label,
+                "How far ahead the player downloads, to ride out slow connections. Applies to the next video.") {
+                AlertDialog.Builder(this).setTitle("Read-ahead")
+                    .setSingleChoiceItems(ReadAhead.entries.map { it.label }.toTypedArray(), readAhead.mode.ordinal) { dialog, index ->
+                        readAhead.mode = ReadAhead.entries[index]; dialog.dismiss(); refreshSettings()
+                    }.setNegativeButton("Cancel", null).show()
             }
-        }
-        if (seekr.isNotBlank()) settingsRow(playback, "Remove Seekr key", danger = true) {
-            confirm("Remove your Seekr key?") { store.remove(SeekrPreferences.KEY); refreshSettings() }
-        }
-        val captions = settingsGroup("Subtitles & audio", "series")
-        val subtitlePreferences = SubtitlePreferences(this)
-        settingsRow(captions, "Subtitle style", "${subtitlePreferences.sizeLabel} · text and size") {
-            val preferences = SubtitlePreferences(this)
-            AlertDialog.Builder(this).setTitle("Subtitle style")
-                .setMultiChoiceItems(arrayOf("Transparent background", "Bold text"),
-                    booleanArrayOf(preferences.transparentBackground, preferences.boldText)) { _, which, checked ->
-                    if (which == 0) preferences.transparentBackground = checked else preferences.boldText = checked
-                    InAppPlaybackSession.refreshSubtitleStyle()
-                }.setNeutralButton("Size · ${preferences.sizeLabel}") { _, _ ->
-                    AlertDialog.Builder(this).setTitle("Subtitle size")
-                        .setSingleChoiceItems(SubtitlePreferences.SIZE_LABELS.toTypedArray(), SubtitlePreferences.SIZES.indexOf(preferences.sizePercent)) { dialog, index ->
-                            preferences.sizePercent = SubtitlePreferences.SIZES[index]
-                            InAppPlaybackSession.refreshSubtitleStyle(); dialog.dismiss(); refreshSettings()
-                        }.setPositiveButton("Done", null).show()
-                }.setPositiveButton("Done", null).show()
-        }
-        settingsRow(captions, "Subtitle position", subtitlePreferences.positionLabel) {
-            SubtitlePositionPicker.show(this, liveVideo = false,
-                changed = { InAppPlaybackSession.refreshSubtitleStyle() }, dismissed = { refreshSettings() })
-        }
-        settingsRow(captions, "Subtitle language", subtitlePreferences.languageLabel, "Chosen automatically when available. You can pick another track in the player.") { subtitleLanguage() }
-        settingsToggle(captions, "Find missing subtitles", "When a video has no subtitles in your language, the best matches from OpenSubtitles are added and the first one is turned on. Others are in the player's Subtitles list.",
-            subtitlePreferences.autoFetch) { on -> SubtitlePreferences(this).autoFetch = on }
-        val wyzie = store.get(InAppPlaybackSession.WYZIE_KEY)
-        settingsRow(captions, "Wyzie Subs", if (wyzie.isBlank()) "Not set" else "Connected",
-            "Optional: your own free Wyzie key (store.wyzie.io) adds more subtitle sources to Find missing subtitles.", status = wyzie.isNotBlank()) {
-            inputSetting("Wyzie Subs API key", "Paste your free Wyzie key", "", secret = true) { key ->
-                store.put(InAppPlaybackSession.WYZIE_KEY, key.trim()); toast("Wyzie Subs added"); refreshSettings()
+            val videoPreferences = VideoCompatibilityPreferences(this)
+            settingsRow(playback, "Dolby Vision", videoPreferences.mode.label,
+                "Applies to the next video. Uses a verified Profile 7/8 HDR10 or HLG base picture when supported. Profile 5 needs compatible Dolby Vision decoding.") {
+                AlertDialog.Builder(this).setTitle("Dolby Vision compatibility")
+                    .setSingleChoiceItems(DolbyVisionMode.entries.map { it.label }.toTypedArray(), videoPreferences.mode.ordinal) { dialog, index ->
+                        videoPreferences.mode = DolbyVisionMode.entries[index]; dialog.dismiss(); refreshSettings()
+                    }.setNegativeButton("Cancel", null).show()
             }
-        }
-        if (wyzie.isNotBlank()) settingsRow(captions, "Remove Wyzie key", danger = true) {
-            confirm("Remove your Wyzie Subs key?") { store.remove(InAppPlaybackSession.WYZIE_KEY); refreshSettings() }
-        }
-        settingsToggle(captions, "English fallback", "If a video has no audio or subtitles in your language, English is chosen instead. English links are also listed before other languages.",
-            AudioPreferences(this).englishFallback) { on ->
-            AudioPreferences(this).englishFallback = on
-            InAppPlaybackSession.refreshAudioLanguage(); InAppPlaybackSession.refreshSubtitleLanguage()
-        }
-        settingsRow(captions, "Audio language", AudioPreferences(this).languageLabel, "Chosen automatically when available, and links in this language are listed and auto-played first. You can pick another track in the player.") { audioLanguage() }
 
-        val sources = settingsGroup("Sources", "library")
-        val linkedDebrids = DebridServices.linked(store); val activeDebrids = DebridServices.connected(store)
-        settingsRow(sources, "Debrid services", if (linkedDebrids.isEmpty()) "None connected" else "${activeDebrids.size} of ${linkedDebrids.size} on",
-            if (activeDebrids.isEmpty()) "Connect Offcloud, TorBox, Real-Debrid and more, switch each on or off, and choose which plays first."
-            else "Cached links play from: ${activeDebrids.joinToString(" → ") { DebridServices.name(it) }}.", status = activeDebrids.isNotEmpty()) { navigate { debridServicesPage() } }
-        val easynewsLinked = Easynews.credentials(store) != null
-        settingsRow(sources, "Easynews", if (!easynewsLinked) "Not connected" else if (Easynews.enabled(store)) "On" else "Off",
-            "Search Usenet with your Easynews account. Its results play directly, listed with your add-ons' links. Experimental: it uses the Easynews members website.",
-            status = Easynews.active(store)) { easynewsActions() }
-        val providerList = runCatching { SourceProviders(store).load() }.getOrDefault(emptyList())
-        settingsRow(sources, "Source providers", if (providerList.isEmpty()) "None added" else "${providerList.count { it.enabled }} of ${providerList.size} on",
-            "Your Stremio scraper add-ons, such as Torrentio. Switch each on or off, and add, edit or remove them.",
-            status = providerList.any { it.enabled }) { navigate { sourceProvidersPage() } }
+            settingsToggle(playback, "Mini player", "Leaving the player keeps the video going in a small window while you browse. Turn it off to stop the video instead when you leave (your progress is saved).",
+                MiniPlayerPreferences(this).enabled) { on -> MiniPlayerPreferences(this).enabled = on }
+            settingsToggle(playback, "Skip buttons", "Skip intro, Skip recap and Skip credits buttons, and Next episode when an episode's credits start. " +
+                "Times come from TheIntroDB, and AniSkip for anime; titles they don't know show no button.",
+                SkipButtonPreferences(this).enabled) { on -> SkipButtonPreferences(this).enabled = on }
+            settingsToggle(playback, "Auto-play next episode", "When an episode's credits start, Next Episode counts down from 10 and then plays the next episode " +
+                "(in the last 12 seconds when the credits aren't known). Press OK on it to start at once, or rewind to cancel.",
+                SkipButtonPreferences(this).autoNext) { on -> SkipButtonPreferences(this).autoNext = on }
+            settingsToggle(playback, "Seek previews (Seekr)", "Shows a thumbnail of the scene above the seek bar while you seek. Previews come from Seekr, which has them ready for many movies and shows. Needs your Seekr API key below.",
+                SeekrPreferences(this).enabled) { on -> SeekrPreferences(this).enabled = on }
+            seekrInfo(playback)
+            val seekr = store.get(SeekrPreferences.KEY)
+            val seekrBuilt = BuildConfig.SEEKR_KEY.isNotBlank()
+            settingsRow(playback, "Seekr API key", if (seekr.isNotBlank()) "Connected" else if (seekrBuilt) "Built in" else "Not set",
+                "Put your API key from seekr.tv here to get thumbnail previews while seeking. Sign up at seekr.tv, copy your key (it starts with sk_live_) and paste it here. Titles Seekr doesn't have simply show no preview.",
+                status = seekr.isNotBlank() || seekrBuilt) {
+                inputSetting("Seekr API key", "Paste your key from seekr.tv (sk_live_...)", "", secret = true) { key ->
+                    store.put(SeekrPreferences.KEY, key.trim()); refreshSettings()
+                    // Ask Seekr whether it accepts the key, so a typo is caught here rather than as missing previews later.
+                    Thread {
+                        val ok = runCatching { kotlinx.coroutines.runBlocking { tv.seekr.previews.android.Seekr.create(key.trim()).validateKey() } }.getOrNull()
+                        runOnUiThread { toast(when (ok) { true -> "Seekr key saved · ✓ Seekr accepts the key"; false -> "Seekr key saved, but Seekr doesn't accept it. Check the key."; null -> "Seekr key saved (couldn't reach Seekr to check it)" }) }
+                    }.start()
+                }
+            }
+            if (seekr.isNotBlank()) settingsRow(playback, "Remove Seekr key", danger = true) {
+                confirm("Remove your Seekr key?") { store.remove(SeekrPreferences.KEY); refreshSettings() }
+            }
+                }
+                "captions" -> {
+            val captions = settingsGroup("Subtitles & audio", "series")
+            val subtitlePreferences = SubtitlePreferences(this)
+            settingsRow(captions, "Subtitle style", "${subtitlePreferences.sizeLabel} · text and size") {
+                val preferences = SubtitlePreferences(this)
+                AlertDialog.Builder(this).setTitle("Subtitle style")
+                    .setMultiChoiceItems(arrayOf("Transparent background", "Bold text"),
+                        booleanArrayOf(preferences.transparentBackground, preferences.boldText)) { _, which, checked ->
+                        if (which == 0) preferences.transparentBackground = checked else preferences.boldText = checked
+                        InAppPlaybackSession.refreshSubtitleStyle()
+                    }.setNeutralButton("Size · ${preferences.sizeLabel}") { _, _ ->
+                        AlertDialog.Builder(this).setTitle("Subtitle size")
+                            .setSingleChoiceItems(SubtitlePreferences.SIZE_LABELS.toTypedArray(), SubtitlePreferences.SIZES.indexOf(preferences.sizePercent)) { dialog, index ->
+                                preferences.sizePercent = SubtitlePreferences.SIZES[index]
+                                InAppPlaybackSession.refreshSubtitleStyle(); dialog.dismiss(); refreshSettings()
+                            }.setPositiveButton("Done", null).show()
+                    }.setPositiveButton("Done", null).show()
+            }
+            settingsRow(captions, "Subtitle position", subtitlePreferences.positionLabel) {
+                SubtitlePositionPicker.show(this, liveVideo = false,
+                    changed = { InAppPlaybackSession.refreshSubtitleStyle() }, dismissed = { refreshSettings() })
+            }
+            settingsRow(captions, "Subtitle language", subtitlePreferences.languageLabel, "Chosen automatically when available. You can pick another track in the player.") { subtitleLanguage() }
+            settingsToggle(captions, "Find missing subtitles", "When a video has no subtitles in your language, the best matches from OpenSubtitles are added and the first one is turned on. Others are in the player's Subtitles list.",
+                subtitlePreferences.autoFetch) { on -> SubtitlePreferences(this).autoFetch = on }
+            val wyzie = store.get(InAppPlaybackSession.WYZIE_KEY)
+            settingsRow(captions, "Wyzie Subs", if (wyzie.isBlank()) "Not set" else "Connected",
+                "Optional: your own free Wyzie key (store.wyzie.io) adds more subtitle sources to Find missing subtitles.", status = wyzie.isNotBlank()) {
+                inputSetting("Wyzie Subs API key", "Paste your free Wyzie key", "", secret = true) { key ->
+                    store.put(InAppPlaybackSession.WYZIE_KEY, key.trim()); toast("Wyzie Subs added"); refreshSettings()
+                }
+            }
+            if (wyzie.isNotBlank()) settingsRow(captions, "Remove Wyzie key", danger = true) {
+                confirm("Remove your Wyzie Subs key?") { store.remove(InAppPlaybackSession.WYZIE_KEY); refreshSettings() }
+            }
+            settingsToggle(captions, "English fallback", "If a video has no audio or subtitles in your language, English is chosen instead. English links are also listed before other languages.",
+                AudioPreferences(this).englishFallback) { on ->
+                AudioPreferences(this).englishFallback = on
+                InAppPlaybackSession.refreshAudioLanguage(); InAppPlaybackSession.refreshSubtitleLanguage()
+            }
+            settingsRow(captions, "Audio language", AudioPreferences(this).languageLabel, "Chosen automatically when available, and links in this language are listed and auto-played first. You can pick another track in the player.") { audioLanguage() }
+                }
+                "sources" -> {
+            val sources = settingsGroup("Sources", "library")
+            val linkedDebrids = DebridServices.linked(store); val activeDebrids = DebridServices.connected(store)
+            settingsRow(sources, "Debrid services", if (linkedDebrids.isEmpty()) "None connected" else "${activeDebrids.size} of ${linkedDebrids.size} on",
+                if (activeDebrids.isEmpty()) "Connect Offcloud, TorBox, Real-Debrid and more, switch each on or off, and choose which plays first."
+                else "Cached links play from: ${activeDebrids.joinToString(" → ") { DebridServices.name(it) }}.", status = activeDebrids.isNotEmpty()) { navigate { debridServicesPage() } }
+            val easynewsLinked = Easynews.credentials(store) != null
+            settingsRow(sources, "Easynews", if (!easynewsLinked) "Not connected" else if (Easynews.enabled(store)) "On" else "Off",
+                "Search Usenet with your Easynews account. Its results play directly, listed with your add-ons' links. Experimental: it uses the Easynews members website.",
+                status = Easynews.active(store)) { easynewsActions() }
+            val providerList = runCatching { SourceProviders(store).load() }.getOrDefault(emptyList())
+            settingsRow(sources, "Source providers", if (providerList.isEmpty()) "None added" else "${providerList.count { it.enabled }} of ${providerList.size} on",
+                "Your Stremio scraper add-ons, such as Torrentio. Switch each on or off, and add, edit or remove them.",
+                status = providerList.any { it.enabled }) { navigate { sourceProvidersPage() } }
+                }
+                "tracking" -> {
+            val tracking = settingsGroup("Tracking", "wetrakr")
+            settingsRow(tracking, "Service", wetrakr.name, "WeTrakr or Simkl: watchlists, Continue Watching, Up Next and progress sync.") { chooseTracker() }
+            settingsRow(tracking, "Account", if (wetrakr.signedIn()) "Connected" else "Not connected",
+                if (wetrakr.signedIn()) "Select to sign in again." else "Sign in with a code to sync watchlists and progress.", status = wetrakr.signedIn()) { startWeTrakr() }
+            if (wetrakr.signedIn()) settingsToggle(tracking, "Use ${wetrakr.name}", "Off keeps you signed in, but hides its Home rows, watched badges and lists, and sends no playback updates. Turn it back on any time.",
+                wetrakr.enabled(), contentLabel = "Use ${wetrakr.name}") { on ->
+                wetrakr.setEnabled(on); wetrakrOutbox.clearPending(); remoteProgress.clear(); retainedHome = null; refreshWatched(force = on)
+            }
+            settingsToggle(tracking, "Scrobbling", "Automatic playback updates. Your library, Continue Watching and manual actions still work when this is off.",
+                wetrakr.scrobblingEnabled(), contentLabel = "${wetrakr.name} scrobbling") { on -> wetrakr.setScrobblingEnabled(on); wetrakrOutbox.clearPending() }
+            if (wetrakr.supportsLists) settingsToggle(tracking, "Liked lists on Home", "Shows your liked ${wetrakr.name} lists as rows on Home.",
+                store.get("wetrakr.home_liked_opt_in") == "true", contentLabel = "${wetrakr.name} liked lists on Home") { on -> store.put("wetrakr.home_liked_opt_in", on.toString()) }
+            if (wetrakr.signedIn()) settingsRow(tracking, "Disconnect ${wetrakr.name}", danger = true) {
+                confirm("Disconnect ${wetrakr.name} on this device?") { wetrakr.disconnect(); wetrakrOutbox.clearPending(); remoteProgress.clear(); refreshWatched(); refreshSettings() }
+            }
+                }
+                "updates" -> {
+            val updates = settingsGroup("Updates", "settings")
+            settingsRow(updates, "Check for updates", "POV Rajput ${packageManager.getPackageInfo(packageName, 0).versionName.orEmpty().removeSuffix("-rajput")}") { startActivity(Intent(this, UpdateActivity::class.java)) }
+            settingsToggle(updates, "Check on startup", "Looks for a newer signed release each time the app opens.",
+                store.get("updates.startup") != "false", contentLabel = "Check for updates on startup") { on -> store.put("updates.startup", on.toString()) }
+                }
+                "about" -> {
+            val about = settingsGroup("About", null)
+            about.addView(text("POV Rajput fork by Rajput · Android TV port by Mark Mateo · based on the POV Kodi add-on by kodifitzwell (github.com/kodifitzwell/repo). Licensed under GNU GPL v3. WeTrakr tracking and API by alberdev (wetrakr.com). Catalogs: TMDB, Queued Up (queued-up.app), Cinemeta, Kitsu and your own catalog add-ons. Subtitles found online: OpenSubtitles, and Wyzie Subs with your key. Skip intro, recap and credits times: TheIntroDB (theintrodb.org) and, for anime, AniSkip (aniskip.com) with Kitsu ID mappings. Seek previews: Seekr (seekr.tv) with your key; support it at buymeacoffee.com/seekrtvdev. This product uses the TMDB API but is not endorsed or certified by TMDB. Playback: AndroidX Media3, with FFmpeg audio decoding via Jellyfin's Media3 FFmpeg decoder.", 12, muted).apply {
+                setLineSpacing(dp(2).toFloat(), 1f); setPadding(dp(14), dp(12), dp(14), dp(12))
+            }, margin(-1, -2))
+            settingsRow(about, "Open-source notices") {
+                AlertDialog.Builder(this).setTitle("Open-source notices").setMessage(assets.open("NOTICE.txt").bufferedReader().use { it.readText() }).setPositiveButton("Close", null).show()
+            }
+                }
+            }
+        } finally { settingsTarget = null }
+    }
 
-        val tracking = settingsGroup("Tracking", "wetrakr")
-        settingsRow(tracking, "Service", wetrakr.name, "WeTrakr or Simkl: watchlists, Continue Watching, Up Next and progress sync.") { chooseTracker() }
-        settingsRow(tracking, "Account", if (wetrakr.signedIn()) "Connected" else "Not connected",
-            if (wetrakr.signedIn()) "Select to sign in again." else "Sign in with a code to sync watchlists and progress.", status = wetrakr.signedIn()) { startWeTrakr() }
-        if (wetrakr.signedIn()) settingsToggle(tracking, "Use ${wetrakr.name}", "Off keeps you signed in, but hides its Home rows, watched badges and lists, and sends no playback updates. Turn it back on any time.",
-            wetrakr.enabled(), contentLabel = "Use ${wetrakr.name}") { on ->
-            wetrakr.setEnabled(on); wetrakrOutbox.clearPending(); remoteProgress.clear(); retainedHome = null; refreshWatched(force = on)
-        }
-        settingsToggle(tracking, "Scrobbling", "Automatic playback updates. Your library, Continue Watching and manual actions still work when this is off.",
-            wetrakr.scrobblingEnabled(), contentLabel = "${wetrakr.name} scrobbling") { on -> wetrakr.setScrobblingEnabled(on); wetrakrOutbox.clearPending() }
-        if (wetrakr.supportsLists) settingsToggle(tracking, "Liked lists on Home", "Shows your liked ${wetrakr.name} lists as rows on Home.",
-            store.get("wetrakr.home_liked_opt_in") == "true", contentLabel = "${wetrakr.name} liked lists on Home") { on -> store.put("wetrakr.home_liked_opt_in", on.toString()) }
-        if (wetrakr.signedIn()) settingsRow(tracking, "Disconnect ${wetrakr.name}", danger = true) {
-            confirm("Disconnect ${wetrakr.name} on this device?") { wetrakr.disconnect(); wetrakrOutbox.clearPending(); remoteProgress.clear(); refreshWatched(); refreshSettings() }
-        }
+    /**
+     * After a settings sub-page redraws itself for a change made on it: the same scroll position, and focus back on
+     * the control that was pressed ([tag]) on the TV. Runs once the new rows are laid out.
+     */
+    private fun keepPlace(id: Int, tag: String, scrollY: Int) {
+        body.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (body.viewTreeObserver.isAlive) body.viewTreeObserver.removeOnPreDrawListener(this)
+                if (id != generation || isDestroyed) return true
+                if (DeviceLayout.tv) body.findViewWithTag<View>(tag)?.takeIf { it.isFocusable }?.requestFocus()
+                scroller.scrollTo(0, scrollY)
+                wantsContentFocus = false; pendingFocus = null
+                return true
+            }
+        })
+    }
 
-        val updates = settingsGroup("Updates", "settings")
-        settingsRow(updates, "Check for updates", "POV Rajput ${packageManager.getPackageInfo(packageName, 0).versionName.orEmpty().removeSuffix("-rajput")}") { startActivity(Intent(this, UpdateActivity::class.java)) }
-        settingsToggle(updates, "Check on startup", "Looks for a newer signed release each time the app opens.",
-            store.get("updates.startup") != "false", contentLabel = "Check for updates on startup") { on -> store.put("updates.startup", on.toString()) }
+    // Short names fit seven cards across the TV; each section's own headings keep the full names.
+    private val settingsSections = listOf("home" to "Home", "playback" to "Playback", "captions" to "Subtitles",
+        "sources" to "Sources", "tracking" to "Tracking", "updates" to "Updates", "about" to "About")
+    /** The Settings section shown under the cards, remembered between visits. */
+    private var settingsSection: String
+        get() = store.get(SETTINGS_SECTION).takeIf { saved -> settingsSections.any { it.first == saved } } ?: "home"
+        set(value) { store.put(SETTINGS_SECTION, value) }
+    private var settingsContent: LinearLayout? = null
+    /** Where settingsGroup adds its cards while a section is being built (null: the page body). */
+    private var settingsTarget: LinearLayout? = null
+    private var settingsCardsAt = 0L
+    /** Switches the section shown under the cards (set by the current cards row). */
+    private var settingsChoose: ((String) -> Unit)? = null
+    private var refreshingSettings = false
 
-        val about = settingsGroup("About", null)
-        about.addView(text("POV Rajput fork by Rajput · Android TV port by Mark Mateo · based on the POV Kodi add-on by kodifitzwell (github.com/kodifitzwell/repo). Licensed under GNU GPL v3. WeTrakr tracking and API by alberdev (wetrakr.com). Catalogs: TMDB, Queued Up (queued-up.app), Cinemeta, Kitsu and your own catalog add-ons. Subtitles found online: OpenSubtitles, and Wyzie Subs with your key. Seek previews: Seekr (seekr.tv) with your key; support it at buymeacoffee.com/seekrtvdev. This product uses the TMDB API but is not endorsed or certified by TMDB. Playback: AndroidX Media3, with FFmpeg audio decoding via Jellyfin's Media3 FFmpeg decoder.", 12, muted).apply {
-            setLineSpacing(dp(2).toFloat(), 1f); setPadding(dp(14), dp(12), dp(14), dp(12))
-        }, margin(-1, -2))
-        settingsRow(about, "Open-source notices") {
-            AlertDialog.Builder(this).setTitle("Open-source notices").setMessage(assets.open("NOTICE.txt").bufferedReader().use { it.readText() }).setPositiveButton("Close", null).show()
+    private fun settingsSummary(id: String): String = when (id) {
+        "home" -> if (store.get(TMDB_KEY).isBlank()) "Cinemeta catalogs" else "TMDB connected"
+        "playback" -> listOfNotNull(if (store.get(AUTOPLAY_FIRST) == "true") "Auto-play on" else "Auto-play off",
+            if (SkipButtonPreferences(this).enabled) "skip buttons" else null).joinToString(" · ")
+        "captions" -> "${SubtitlePreferences(this).languageLabel} subtitles"
+        "sources" -> {
+            val debrids = DebridServices.connected(store).size
+            val addons = runCatching { SourceProviders(store).load().count { it.enabled } }.getOrDefault(0)
+            listOfNotNull("$debrids debrid", "$addons add-on${if (addons == 1) "" else "s"}", if (Easynews.active(store)) "Easynews" else null).joinToString(" · ")
         }
-        body.addView(View(this), margin(-1, 24))
+        "tracking" -> "${wetrakr.name} · ${when { !wetrakr.signedIn() -> "not connected"; !wetrakr.enabled() -> "off"; else -> "connected" }}"
+        "updates" -> "Version ${packageManager.getPackageInfo(packageName, 0).versionName.orEmpty().removeSuffix("-rajput")}"
+        else -> "Credits and notices"
+    }
+
+    private fun settingsIcon(id: String): String? = when (id) {
+        "home" -> "home"; "playback" -> "nowplaying"; "captions" -> "series"; "sources" -> "library"; "tracking" -> "wetrakr"
+        "updates" -> "settings"; else -> null
+    }
+
+    /**
+     * A sideways row of cards, one per section: moving onto a card (TV) or tapping it (phone) shows just that
+     * section below. Down goes into its settings; Up from the first one comes back to the cards.
+     */
+    private fun settingsCards(selected: String) {
+        // TV: the seven cards share the page width, lined up with the settings below. Phone: a sideways scroll.
+        val strip = LinearLayout(this).apply { clipToPadding = false; clipChildren = false; setPadding(0, dp(4), 0, dp(6)) }
+        val row: android.view.ViewGroup = if (DeviceLayout.tv) strip else android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false; clipToPadding = false; clipChildren = false; overScrollMode = View.OVER_SCROLL_NEVER
+            addView(strip)
+        }
+        body.addView(row, margin(-1, -2, bottom = 4))
+        settingsCardsAt = android.os.SystemClock.elapsedRealtime()
+        val cards = LinkedHashMap<String, Pair<LinearLayout, TextView>>()
+        fun style(id: String, card: LinearLayout, title: TextView, focused: Boolean) {
+            val chosen = id == settingsSection
+            card.background = rounded(withAlpha(Color.WHITE, when { focused -> 40; chosen -> 30; else -> 12 }), 12)
+            card.foreground = if (focused) FocusRingDrawable(if (flix) Color.WHITE else accent, dp(12).toFloat(), true, dp(1).toFloat())
+                else if (chosen) FocusRingDrawable(withAlpha(Color.WHITE, 90), dp(12).toFloat(), true, dp(1).toFloat()) else null
+            title.setTextColor(if (chosen || focused) ink else muted)
+        }
+        fun choose(id: String) {
+            if (id == settingsSection) return
+            settingsSection = id
+            cards.forEach { (key, views) -> style(key, views.first, views.second, views.first.hasFocus()) }
+            settingsSectionContent(id)
+        }
+        settingsChoose = ::choose
+        settingsSections.forEach { (id, label) ->
+            val card = column().apply {
+                setPadding(dp(12), dp(10), dp(12), dp(10)); isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true
+                tag = "settings-section:$id"; contentDescription = label
+            }
+            val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            settingsIcon(id)?.let { top.addView(NavigationIconView(this, it, ink), margin(16, 16, right = 7)) }
+            val title = text(label, 13, muted, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+            top.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+            card.addView(top, margin(-1, -2))
+            card.addView(text(settingsSummary(id), 11, muted).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 5))
+            cards[id] = card to title
+            style(id, card, title, false)
+            card.setOnClickListener { choose(id) }
+            card.setOnFocusChangeListener { _, focused ->
+                style(id, card, title, focused)
+                // Moving along the cards switches section; focus set by the page itself as it opens does not.
+                if (focused && DeviceLayout.tv && android.os.SystemClock.elapsedRealtime() - settingsCardsAt > 500) {
+                    card.postDelayed({ if (card.hasFocus() && !isDestroyed) choose(id) }, 180)
+                }
+            }
+            val last = id == settingsSections.last().first
+            strip.addView(card.pressable(12), (if (DeviceLayout.tv) LinearLayout.LayoutParams(0, -2, 1f) else LinearLayout.LayoutParams(dp(140), -2))
+                .apply { rightMargin = if (last) 0 else dp(if (DeviceLayout.tv) 8 else 10) })
+        }
+        val chosenCard = cards[selected]?.first
+        if (row is android.widget.HorizontalScrollView) row.post { chosenCard?.let { row.scrollTo((it.left - dp(24)).coerceAtLeast(0), 0) } }
+        // Opening Settings puts focus on the chosen section's card (a refresh or Back restores the row that was focused).
+        if (!refreshingSettings && pendingFocus == null && DeviceLayout.tv) {
+            val opened = generation
+            body.postDelayed({ if (opened == generation && !isDestroyed && destination == "settings") chosenCard?.requestFocus() }, 60)
+        }
     }
 
     /** A titled card that holds one group of settings rows. */
@@ -3650,9 +3843,11 @@ class MainActivity : Activity() {
         val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         if (icon != null) header.addView(NavigationIconView(this, icon, muted), margin(16, 16, right = 8))
         header.addView(text(title.uppercase(), 11, muted, true).apply { letterSpacing = 0.12f })
-        body.addView(header, margin(-1, -2, top = if (body.childCount <= 2) 6 else 22, bottom = 8))
+        val parent = settingsTarget ?: body
+        val first = if (settingsTarget != null) parent.childCount == 0 else body.childCount <= 2
+        parent.addView(header, margin(-1, -2, top = if (first) 6 else 22, bottom = 8))
         val card = column().apply { background = rounded(if (flix) withAlpha(Color.WHITE, 13) else panel, 12); setPadding(dp(4), dp(4), dp(4), dp(4)) }
-        body.addView(card, margin(-1, -2))
+        parent.addView(card, margin(-1, -2))
         return card
     }
 
@@ -3750,7 +3945,8 @@ class MainActivity : Activity() {
         val index = if (focused >= 0) focused else settingsReturnIndex
         val scroll = if (focused >= 0) scroller.scrollY else settingsReturnScroll
         // Sub-pages (Debrid services, Home rows) redraw themselves; anywhere else Settings is shown.
-        if (destination == "settings") current() else settings()
+        refreshingSettings = true
+        try { if (destination == "settings") current() else settings() } finally { refreshingSettings = false }
         body.post { if (!isDestroyed && destination == "settings") focusController.restoreIndex(index, scroll) }
     }
 
@@ -3791,6 +3987,7 @@ class MainActivity : Activity() {
 
     /** Settings → Source providers: order, switch on or off, edit and remove the scraper add-ons. */
     private fun sourceProvidersPage(focusTag: String? = null) {
+        val keepScroll = scroller.scrollY
         current = { sourceProvidersPage() }
         destination = "settings"; refreshNavigation()
         page("Source providers", "Stremio add-ons such as Torrentio. Links from every provider that's on are merged into one list.")
@@ -3830,14 +4027,7 @@ class MainActivity : Activity() {
         }
         if (providers.size < SourceProviders.MAX) settingsRow(list, "Add source provider", "", "Paste an HTTPS Stremio add-on or manifest URL, for example your Torrentio or Deepbrid add-on.") { editSourceProvider(null) }
         body.addView(View(this), margin(-1, 24))
-        val wanted = focusTag
-        body.post {
-            if (isDestroyed || destination != "settings") return@post
-            if (wanted != null) body.findViewWithTag<View>(wanted)?.takeIf { it.isFocusable }?.let { target ->
-                target.requestFocus(); val rect = android.graphics.Rect(); target.getDrawingRect(rect); body.offsetDescendantRectToMyCoords(target, rect)
-                scroller.scrollTo(0, (rect.centerY() - scroller.height / 2).coerceAtLeast(0))
-            } else focusAfterRender(generation)
-        }
+        if (focusTag != null) keepPlace(generation, focusTag, keepScroll) else focusAfterRender(generation)
     }
 
     private fun sourceProviderActions(provider: SourceProvider) {
@@ -4434,6 +4624,24 @@ class MainActivity : Activity() {
             }
             catch (_: Exception) { }
         }
+    }
+
+    /** True when [view] is one of the settings under the Settings section cards. */
+    private fun inSettingsContent(view: View?): Boolean {
+        val content = settingsContent ?: return false
+        var current: android.view.ViewParent? = view?.parent
+        while (current != null) { if (current === content) return true; current = current.parent }
+        return false
+    }
+
+    /** True when [view] is (inside) the last focusable item of a sideways row such as a Home shelf. */
+    private fun atRowEnd(view: View?): Boolean {
+        var child = view ?: return false
+        var parent = child.parent
+        while (parent is View && parent !is CullingLinearLayout) { child = parent; parent = parent.parent }
+        val row = parent as? CullingLinearLayout ?: return false
+        val last = (row.childCount - 1 downTo 0).firstOrNull { index -> row.getChildAt(index).let { it.isShown && (it.isFocusable || it.hasFocusable()) } }
+        return last != null && row.indexOfChild(child) == last
     }
 
     private fun horizontalRow(host: LinearLayout = body): LinearLayout {

@@ -47,11 +47,15 @@ class EasynewsParallelDataSourceTest {
                 var index = 0
                 override fun read() = if (index < bytes.size / 2) bytes[index++].toInt() and 255 else throw IOException("reset")
             }
+            if (slow) Thread.sleep(30)
             return bytes.inputStream()
         }
     }
 
-    private fun readAll(position: Long, connections: Int, auth: MutableList<String?> = mutableListOf()): ByteArray {
+    /** Makes every download wait a little, so the reader really blocks waiting for pieces. */
+    @Volatile private var slow = false
+
+    private fun readAll(position: Long, connections: Int, auth: MutableList<String?> = mutableListOf(), interrupt: Boolean = false): ByteArray {
         val drops = AtomicInteger(1)
         val source = EasynewsParallelDataSource(mapOf("Authorization" to "Basic abc"), connections, chunkSize = 300_000,
             connect = { uri: URI -> Fake(uri.toURL(), drops, auth) })
@@ -60,6 +64,8 @@ class EasynewsParallelDataSourceTest {
         val out = ByteArrayOutputStream()
         val buffer = ByteArray(65_536)
         while (true) {
+            // The player interrupts the loading thread when it cancels a load; a read must ride that out like a socket.
+            if (interrupt) Thread.currentThread().interrupt()
             val count = source.read(buffer, 0, buffer.size)
             if (count == C.RESULT_END_OF_INPUT) break
             out.write(buffer, 0, count)
@@ -71,6 +77,12 @@ class EasynewsParallelDataSourceTest {
     @Test fun `pieces arrive in order with the exact bytes from any start`() {
         assertArrayEquals(file, readAll(0, 4))
         assertArrayEquals(file.copyOfRange(1_234_567, file.size), readAll(1_234_567, 8))
+    }
+
+    @Test fun `an interrupted read keeps waiting and returns the right bytes`() {
+        slow = true
+        try { assertArrayEquals(file.copyOfRange(7_911, file.size), readAll(7_911, 8, interrupt = true)) }
+        finally { slow = false; Thread.interrupted() }
     }
 
     @Test fun `the login only goes to Easynews hosts`() {
