@@ -20,5 +20,7 @@ GNU GPL version 3: https://www.gnu.org/licenses/gpl-3.0.txt
 
 Offcloud API integration added 2026-10-23 to the MM-482 Android TV port. This modified build is independent of Offcloud and the original authors. Offcloud is a trademark of its respective owner. API reference: https://github.com/Offcloud/offcloud-api
 
+Easynews search adapted from the MM-482 POV Android TV fork (GPL v3). Easynews and its logo are trademarks of their respective owner; the logo is shown only to say which service is streaming. This independent app is not endorsed by Easynews. https://www.easynews.com/
+
 WeTrakr tracking service, API and official logo: WeTrakr and its developer, alberdev. Thank you for developing WeTrakr and providing API access for this integration. https://wetrakr.com/ | https://api.wetrakr.com/ | https://www.reddit.com/user/alberdev/
 Official logo paths and colors are represented as Android vector drawables. WeTrakr names, artwork, metadata and service remain the property of their respective owners. This independent app is not endorsed by WeTrakr.

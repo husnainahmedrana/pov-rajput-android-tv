@@ -25,7 +25,9 @@ class SimklApi internal constructor(
     override val supportsLists = false
     @Volatile private var pending: DeviceAuth? = null
 
-    override fun connected() = credentials.get("access_token").isNotBlank()
+    override fun signedIn() = credentials.get("access_token").isNotBlank()
+    override fun enabled() = credentials.get("off") != "true"
+    override fun setEnabled(on: Boolean) = credentials.put(mapOf("off" to if (on) "" else "true"))
     override fun accountRevision() = credentials.get("account_revision")
     override fun disconnect() = synchronized(lock) { pending = null; cache.clear(); credentials.put(EMPTY_ACCOUNT) }
 

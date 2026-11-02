@@ -9,7 +9,13 @@ interface Tracker {
     /** Personal and liked lists. Simkl has no list API yet, so its screens hide them. */
     val supportsLists: Boolean get() = true
 
-    fun connected(): Boolean
+    /** Signed in, whether tracking is switched on or off. */
+    fun signedIn(): Boolean
+    /** Signed in and switched on: only then are rows, badges, scrobbles and list actions used. */
+    fun connected(): Boolean = signedIn() && enabled()
+    /** Off keeps the sign-in but stops everything the service does in the app. */
+    fun enabled(): Boolean
+    fun setEnabled(on: Boolean)
     /** Changes whenever the linked account changes, so cached rows and queued scrobbles never cross accounts. */
     fun accountRevision(): String
     fun disconnect()

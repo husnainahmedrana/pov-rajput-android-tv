@@ -365,7 +365,7 @@ class PlayerActivity : Activity() {
         updateEndTime()
         if (player?.playbackState == Player.STATE_READY) cachedLinkAttempt = false
         view.findViewById<TextView>(R.id.pov_playback_title).text = InAppPlaybackSession.title.ifBlank { "Now playing" }
-        PlaybackDebrid.bind(view, InAppPlaybackSession.debridService)
+        PlaybackDebrid.bind(view, InAppPlaybackSession.debridService, InAppPlaybackSession.sourceUrl)
         view.findViewById<PlayerBadgeRow>(R.id.pov_media_badges)?.show(PlayerMediaBadges.from(PlayerMediaFacts.from(
             InAppPlaybackSession.mediaName, InAppPlaybackSession.mediaSize, player?.videoFormat, player?.audioFormat)))
         speedButton.text = "Speed · ${speedLabel(player?.playbackParameters?.speed ?: 1f)}"

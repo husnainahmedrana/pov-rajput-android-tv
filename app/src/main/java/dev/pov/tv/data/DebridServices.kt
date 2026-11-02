@@ -22,7 +22,17 @@ object DebridServices {
         return first + available.filter { it !in first }
     }
     fun priority(store: SecureStore) = parsePriority(store.get("playback.priority"), store.get("playback.service"))
-    fun connected(store: SecureStore) = priority(store).filter { store.has(credential(it)) }
+    /** Accounts with a saved key, whether switched on or off. */
+    fun linked(store: SecureStore) = priority(store).filter { store.has(credential(it)) }
+    /** Linked accounts that are switched on: only these are checked for cached copies and used to play. */
+    fun connected(store: SecureStore) = linked(store).filter { enabled(store, it) }
+    fun enabled(store: SecureStore, id: String) = store.get(offKey(id)) != "true"
+    /** Switching a service off keeps its key, so turning it back on needs no new sign-in. */
+    fun setEnabled(store: SecureStore, id: String, on: Boolean) {
+        require(id in IDS)
+        if (on) store.remove(offKey(id)) else store.put(offKey(id), "true")
+    }
+    private fun offKey(id: String) = "debrid.off.$id"
     /** Saves a complete permutation, retaining ranks when accounts disconnect. */
     fun setPriority(store: SecureStore, order: List<String>) {
         require(order.size == IDS.size && order.toSet() == IDS.toSet())

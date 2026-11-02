@@ -55,8 +55,9 @@ Captured on a 55" TV in the app's public preview mode, which shows public catalo
 1. Download the APK for your device from [Releases](https://github.com/husnainahmedrana/pov-rajput-android-tv/releases/latest) and sideload it (Android 8.0 or later). The launcher name is **POV Rajput**.
    - **Android TV / Google TV:** `POV-Rajput-TV.apk` (package `dev.pov.tv.rajput`). `POV-Rajput-release.apk` is the same file under its older name.
    - **Phones:** `POV-Rajput-Mobile.apk` (package `dev.pov.rajput.mobile`), a separate app with a portrait layout, bottom navigation and a touch player.
-2. **Settings → Debrid Services**: connect **Offcloud**, **TorBox** (sign in with a code or paste an API key), **Real-Debrid**, **AllDebrid**, **Premiumize** or **Debrid-Link** with your own API keys. Real-Debrid, AllDebrid and Debrid-Link have no up-front cache check, so the app tries the first 7 links when you play and plays the first cached one.
-3. **Settings → Debrid Services → Source providers**: add your preferred HTTPS Stremio-compatible add-ons, each with a name you choose. Without a debrid service, add-ons that return direct links still work.
+2. **Settings → Sources → Debrid services**: connect **Offcloud**, **TorBox** (sign in with a code or paste an API key), **Real-Debrid**, **AllDebrid**, **Premiumize** or **Debrid-Link** with your own API keys. Real-Debrid, AllDebrid and Debrid-Link have no up-front cache check, so the app tries the first 7 links when you play and plays the first cached one. Each service has an **On/Off** switch (off keeps the key) and ▲ ▼ to set which plays first.
+3. **Settings → Sources → Source providers**: add your preferred HTTPS Stremio-compatible add-ons, each with a name you choose, and switch each on or off. Without a debrid service, add-ons that return direct links still work.
+   *Optional* — **Settings → Sources → Easynews**: sign in with your Easynews username and password to add Usenet results to the link list (experimental; it uses the Easynews members website). Pick a **Download server** (Amsterdam, Virginia or Los Angeles) if another one is faster for you.
 4. *Optional* — **Settings → Home & appearance → TMDB**: paste your free TMDB API key or read-access token from [themoviedb.org](https://www.themoviedb.org/settings/api), then pick a **Cinema country**.
 5. *Optional* — **Settings → Tracking**: choose **WeTrakr** or **Simkl**, press **Account**, then scan the QR code (or visit the address shown) and enter the code. No Client ID or setup needed.
 
@@ -114,7 +115,7 @@ Offcloud cached sources resolve directly without adding a dashboard entry. TorBo
 
 ## WeTrakr or Simkl
 
-Choose your tracking service in **Settings → Tracking**. Press Connect, scan the QR code or approve the code at **wetrakr.com/activate** or **simkl.com/pin**, and it supplies Home's Continue Watching (shown instantly from your last visit, then refreshed), watchlists, liked lists and Up Next (Simkl has no list API yet, so its personal and liked lists aren't shown). **Scrobbling** and **Liked lists on Home** are switches in Settings. Tokens are stored with Android Keystore encryption; library reads are cached and server retry limits are respected. API references: [api.wetrakr.com](https://api.wetrakr.com/), [api.simkl.org](https://api.simkl.org/).
+Choose your tracking service in **Settings → Tracking**. Press Connect, scan the QR code or approve the code at **wetrakr.com/activate** or **simkl.com/pin**, and it supplies Home's Continue Watching (shown instantly from your last visit, then refreshed), watchlists, liked lists and Up Next (Simkl has no list API yet, so its personal and liked lists aren't shown). **Use WeTrakr/Simkl** (off keeps you signed in), **Scrobbling** and **Liked lists on Home** are switches in Settings. Tokens are stored with Android Keystore encryption; library reads are cached and server retry limits are respected. API references: [api.wetrakr.com](https://api.wetrakr.com/), [api.simkl.org](https://api.simkl.org/).
 
 ## Updates
 
@@ -122,7 +123,7 @@ Choose your tracking service in **Settings → Tracking**. Press Connect, scan t
 
 ## Privacy
 
-- API keys (Offcloud, TorBox, TMDB), WeTrakr tokens and source-provider addresses are entered on your device and encrypted with Android Keystore. The app ships POV Rajput's public WeTrakr and Simkl Client IDs (no client secrets); requests made with your sign-in count against your own WeTrakr or Simkl quota.
+- API keys (Offcloud, TorBox, TMDB), your Easynews login (sent only to easynews.com), WeTrakr tokens and source-provider addresses are entered on your device and encrypted with Android Keystore. The app ships POV Rajput's public WeTrakr and Simkl Client IDs (no client secrets); requests made with your sign-in count against your own WeTrakr or Simkl quota.
 - Nothing personal is included in the repository or release APKs.
 - The microphone is used only while the voice-search screen is open.
 
@@ -147,7 +148,7 @@ Pushes to `main`, pull requests and manual runs build APKs after unit tests and 
 - **[FFmpeg](https://ffmpeg.org/)** and **[Jellyfin](https://github.com/jellyfin/jellyfin-androidx-media)** — software audio decoding through Jellyfin's prebuilt Media3 FFmpeg decoder.
 - **Cinemeta**, **Kitsu**, **Android Open Source Project / AndroidX Media3** and **JetBrains / Kotlin**.
 
-This project is not endorsed by Offcloud, TorBox, WeTrakr, Simkl, TMDB, Trakt, Kodi or the upstream authors. Product names and artwork remain with their respective owners. See the in-app open-source notices and the [original project documentation](docs/UPSTREAM_README.md).
+This project is not endorsed by Offcloud, TorBox, Easynews, WeTrakr, Simkl, TMDB, Trakt, Kodi or the upstream authors. Product names and artwork remain with their respective owners. See the in-app open-source notices and the [original project documentation](docs/UPSTREAM_README.md).
 
 ## License
 

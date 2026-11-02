@@ -14,7 +14,9 @@ class SourceResolver internal constructor(
     private val offcloud: () -> OffcloudApi? = { null },
     private val serviceOrder: (() -> List<String>)? = null,
     private val configuredProviders: (() -> List<SourceProvider>)? = null,
-    private val links: LinkDebrids? = null
+    private val links: LinkDebrids? = null,
+    /** Easynews when connected and switched on; its results are direct links like an add-on's. */
+    private val easynews: () -> EasynewsApi? = { null }
 ) {
     constructor(store: SecureStore, torbox: TorBoxApi) : this({ store.get("sources.endpoint") }, object : SourceTorBox {
         override fun cached(hashes: List<String>) = torbox.cached(hashes)
@@ -23,7 +25,7 @@ class SourceResolver internal constructor(
         override fun streamUrl(kind: String, folderId: Long, fileId: Long) = torbox.streamUrl(kind, folderId, fileId)
         override fun prepareCached(source: SourceItem, identity: PlaybackIdentity) = torbox.prepareCached(source, identity)
     }, offcloud = { OffcloudApi(store) }, serviceOrder = { DebridServices.connected(store) }, configuredProviders = { SourceProviders(store).load() },
-        links = LinkDebrids(store))
+        links = LinkDebrids(store), easynews = { if (Easynews.active(store)) EasynewsApi(store) else null })
     fun sources(identity: PlaybackIdentity): List<SourceItem> = search(identity).items
 
     internal data class SearchResult(val items: List<SourceItem>, val unavailableProviders: List<String>)
@@ -33,12 +35,13 @@ class SourceResolver internal constructor(
         validateIdentity(identity)
         val providers = (configuredProviders?.invoke()
             ?: listOf(SourceProvider("legacy", "Source 1", sourceEndpoint()))).filter { it.enabled }
-        require(providers.isNotEmpty()) { "Add or enable a source provider in Settings before searching for links." }
+        val usenet = easynews()
+        require(providers.isNotEmpty() || usenet != null) { "Add or enable a source provider in Settings before searching for links." }
         require(providers.size <= SourceProviders.MAX) { "Too many source providers. Check Settings." }
         // Validate before starting any requests; an empty legacy endpoint has the same setup guidance.
         val endpoints = providers.map { SourceProviders.endpoint(it.address) }
         val id = if (identity.type == "series") "${identity.imdbId}:${identity.season}:${identity.episode}" else identity.imdbId
-        val executor = java.util.concurrent.Executors.newFixedThreadPool(minOf(providers.size, 4))
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(minOf(providers.size, 4) + if (usenet != null) 1 else 0)
         val failures = mutableListOf<String>()
         var successful = 0
         val all = mutableListOf<SourceItem>()
@@ -49,10 +52,21 @@ class SourceResolver internal constructor(
                 catch (error: java.util.concurrent.CancellationException) { throw error }
                 catch (_: Exception) { null }
             }) }
+            val usenetTask = usenet?.let { api -> executor.submit(java.util.concurrent.Callable {
+                try { api.search(identity) }
+                catch (error: InterruptedException) { throw error }
+                catch (error: java.util.concurrent.CancellationException) { throw error }
+                catch (_: Exception) { null }
+            }) }
             tasks.forEachIndexed { index, task ->
                 val items = try { task.get() }
                     catch (error: java.util.concurrent.ExecutionException) { throw (error.cause as? Exception ?: error) }
                 if (items == null) failures += providers[index].name else { successful++; all += items }
+            }
+            if (usenetTask != null) {
+                val items = try { usenetTask.get() }
+                    catch (error: java.util.concurrent.ExecutionException) { throw (error.cause as? Exception ?: error) }
+                if (items == null) failures += "Easynews" else { successful++; all += items }
             }
         } finally { executor.shutdownNow() }
         check(successful > 0) { "The enabled source providers could not be reached. Try again or check source providers in Settings." }

@@ -28,7 +28,9 @@ class WeTrakrApi internal constructor(
     @Volatile private var pending: Pending? = null
     private var attempt = 0L
     fun configured() = validClientId(clientId())
-    override fun connected() = configured() && credentials.get("access_token").isNotBlank() && credentials.get("reauth") != "true"
+    override fun signedIn() = configured() && credentials.get("access_token").isNotBlank() && credentials.get("reauth") != "true"
+    override fun enabled() = credentials.get("off") != "true"
+    override fun setEnabled(on: Boolean) = credentials.put(mapOf("off" to if (on) "" else "true"))
     override fun accountRevision() = credentials.get("account_revision")
     /** Accounts linked with an older user-entered Client ID keep it until they disconnect; everyone else uses the app's. */
     fun clientId() = credentials.get("client_id").trim().takeIf(::validClientId) ?: CLIENT_ID

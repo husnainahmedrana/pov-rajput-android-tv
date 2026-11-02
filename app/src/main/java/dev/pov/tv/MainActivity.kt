@@ -601,7 +601,7 @@ class MainActivity : Activity() {
 
     private fun Int?.orZero() = this ?: 0
     private fun pageRevision() = java.security.MessageDigest.getInstance("SHA-256").digest(
-        listOf(theme.id, wetrakr.accountRevision(), store.get("offcloud.key"), store.get("torbox.token"), store.get("wetrakr.home_liked_opt_in"), store.get("sources.endpoint"), store.get(SourceProviders.KEY), store.get(TMDB_KEY), store.get(TMDB_REGION), store.get(RESUME_CARDS), store.get(CatalogAddons.KEY), homeRows.revision).joinToString("\u0000").toByteArray()
+        listOf(theme.id, wetrakr.accountRevision(), wetrakr.connected().toString(), store.get("offcloud.key"), store.get("torbox.token"), store.get("wetrakr.home_liked_opt_in"), store.get("sources.endpoint"), store.get(SourceProviders.KEY), store.get(TMDB_KEY), store.get(TMDB_REGION), store.get(RESUME_CARDS), store.get(CatalogAddons.KEY), homeRows.revision).joinToString("\u0000").toByteArray()
     ).joinToString("") { "%02x".format(it.toInt() and 255) }
     private fun focusAfterRender(id: Int) {
         body.post {
@@ -2606,10 +2606,14 @@ class MainActivity : Activity() {
 
     private fun sourceResults(identity: PlaybackIdentity, sources: List<SourceItem>) = sourceResults(identity, sources, emptyList())
 
+    /** Changes when providers, Easynews or the debrid services in use change, so a kept link list is searched again. */
+    private fun sourceRevision() = listOf(store.get(SourceProviders.KEY), store.get("sources.endpoint"), DebridServices.connected(store).joinToString(","),
+        Easynews.active(store).toString(), Easynews.server(store)).joinToString("\u0000")
+
     private fun sourceResults(identity: PlaybackIdentity, sources: List<SourceItem>, unavailable: List<String>, autoplay: Boolean = false) {
-        val providerRevision = store.get(SourceProviders.KEY) + "\u0000" + store.get("sources.endpoint")
+        val providerRevision = sourceRevision()
         current = {
-            if (providerRevision != store.get(SourceProviders.KEY) + "\u0000" + store.get("sources.endpoint")) showSources(identity)
+            if (providerRevision != sourceRevision()) showSources(identity)
             else sourceResults(identity, sources, unavailable)
         }
         val connected = DebridServices.connected(store)
@@ -2632,7 +2636,7 @@ class MainActivity : Activity() {
             body.addView(text("Only uncached links were found. Turn off Hide uncached links in Settings → Playback to see them.", 15, muted))
         } else if (playable.isEmpty()) {
             body.addView(text("Only torrent sources were found. Connect a debrid service to play them.", 15, muted))
-            body.addView(button("Connect a debrid service in Settings") { navigate { settings() } }, margin(-1, 44, top = 8))
+            body.addView(button("Connect a debrid service in Settings") { navigate { debridServicesPage() } }, margin(-1, 44, top = 8))
         }
         val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
         // The title's runtime (from details already loaded) turns each file size into an estimated bitrate.
@@ -2903,7 +2907,7 @@ class MainActivity : Activity() {
         }
         current = { selectedCloud() }; destination = "library"; refreshNavigation()
         page("Cloud library", "Choose a connected service to browse its downloads.")
-        if (services.isEmpty()) body.addView(button("Connect a debrid service in Settings") { navigate { settings() } }, margin(-1, 44))
+        if (services.isEmpty()) body.addView(button("Connect a debrid service in Settings") { navigate { debridServicesPage() } }, margin(-1, 44))
         services.forEach { service ->
             body.addView(button("${DebridServices.name(service)} cloud  ›") {
                 navigate { if (service == "offcloud") offcloudCloud() else cloud("torrents") }
@@ -2916,7 +2920,7 @@ class MainActivity : Activity() {
         val id = page("My Offcloud", "Your Offcloud downloads. Open a completed download to choose a video.")
         val api = OffcloudApi(store)
         if (!api.connected()) {
-            body.addView(button("Connect Offcloud in Settings") { navigate { settings() } }, margin(260, 44)); return
+            body.addView(button("Connect Offcloud in Settings") { navigate { debridServicesPage() } }, margin(260, 44)); return
         }
         body.addView(button("Refresh downloads") { offcloudCloud() }, margin(220, 44, bottom = 10))
         read(id, { api.cloud() }) { downloads ->
@@ -3175,6 +3179,10 @@ class MainActivity : Activity() {
         destination = "wetrakr"; refreshNavigation()
         val tracker = weTrakrClient()
         val id = page("My ${tracker.name}", "Your watchlist. Your progress. Your next episode.")
+        if (tracker.signedIn() && !tracker.enabled()) {
+            body.addView(text("${tracker.name} is switched off. Turn it on in Settings → Tracking.", 15, muted))
+            body.addView(button("Open Settings") { navigate { settings() } }, margin(210, 44, top = 10)); return
+        }
         if (!tracker.connected()) { body.addView(button("Connect ${tracker.name}") { startWeTrakr() }, margin(210, 44)); return }
         if (flix) { flixWeTrakrPage(id); return }
         // Start with the visual library shelves; progress rows must not push them off-screen.
@@ -3267,21 +3275,150 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun debridPriority() {
+    /** Settings → Debrid services: order, switch on or off, and connect or remove each account. */
+    private fun debridServicesPage(focusTag: String? = null) {
+        current = { debridServicesPage() }
+        destination = "settings"; refreshNavigation()
+        page("Debrid services", "Cached links play from the first service that's on, in this order. Off keeps the account saved but skips it.")
         val order = DebridServices.priority(store)
-        AlertDialog.Builder(this).setTitle("Debrid priority · 1 plays first")
-            .setItems(order.mapIndexed { index, id -> "${index + 1}. ${DebridServices.name(id)}" }.toTypedArray()) { _, index ->
-                val offsets = buildList {
-                    if (index > 0) add(-1)
-                    if (index < order.lastIndex) add(1)
+        val list = settingsGroup("Services · 1 plays first", "library")
+        order.forEachIndexed { index, id ->
+            settingsDivider(list)
+            val name = DebridServices.name(id)
+            val linked = store.has(DebridServices.credential(id))
+            val on = linked && DebridServices.enabled(store, id)
+            val line = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(8), dp(8)) }
+            val copy = column()
+            copy.addView(text("${index + 1}. $name", 14, if (on) ink else muted, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
+            copy.addView(text(if (!linked) "Not connected" else if (on) "On" else "Off · account kept", 11, if (on) 0xFF46D369.toInt() else muted), margin(-1, -2, top = 2))
+            line.addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
+            fun control(label: String, tagName: String, description: String, width: Int, enabled: Boolean = true, action: () -> Unit) {
+                line.addView(button(label) { if (enabled) action() }.apply {
+                    gravity = Gravity.CENTER; tag = "$tagName:$id"; contentDescription = description
+                    alpha = if (enabled) 1f else 0.3f; isFocusable = enabled
+                }, margin(width, 38).apply { leftMargin = dp(6) })
+            }
+            control("▲", "debrid-up", "Move $name up", 46, index > 0) { DebridServices.move(store, index, -1); debridServicesPage("debrid-up:$id") }
+            control("▼", "debrid-down", "Move $name down", 46, index < order.lastIndex) { DebridServices.move(store, index, 1); debridServicesPage("debrid-down:$id") }
+            if (linked) control(if (on) "On" else "Off", "debrid-on", "$name · ${if (on) "On" else "Off"}", 56) {
+                DebridServices.setEnabled(store, id, !on); debridServicesPage("debrid-on:$id")
+            } else line.addView(View(this), margin(56, 38).apply { leftMargin = dp(6) })
+            control(if (linked) "Manage" else "Connect", "debrid-manage", if (linked) "Manage $name" else "Connect $name", 84) { debridActions(id) }
+            list.addView(line, margin(-1, -2))
+        }
+        body.addView(text("Real-Debrid, AllDebrid and Debrid-Link can't say in advance what's cached, so their links are checked when you play: " +
+            "the first cached one of the top ${LinkDebrids.CHECK_LIMIT} plays. Premiumize, Offcloud and TorBox are checked while the link list loads.", 11, muted).apply {
+            setLineSpacing(dp(1).toFloat(), 1f) }, margin(-1, -2, top = 12))
+        body.addView(View(this), margin(-1, 24))
+        val wanted = focusTag
+        body.post {
+            if (isDestroyed || destination != "settings") return@post
+            if (wanted != null) body.findViewWithTag<View>(wanted)?.takeIf { it.isFocusable }?.let { target ->
+                target.requestFocus(); val rect = android.graphics.Rect(); target.getDrawingRect(rect); body.offsetDescendantRectToMyCoords(target, rect)
+                scroller.scrollTo(0, (rect.centerY() - scroller.height / 2).coerceAtLeast(0))
+            } else focusAfterRender(generation)
+        }
+    }
+
+    /** Connect, replace the key of, or remove one debrid account. */
+    private fun debridActions(id: String) {
+        val name = DebridServices.name(id)
+        val linked = store.has(DebridServices.credential(id))
+        val actions = mutableListOf<Pair<String, () -> Unit>>()
+        when (id) {
+            "offcloud" -> actions += (if (linked) "Replace API key" else "Connect with your API key") to { connectOffcloud() }
+            "torbox" -> {
+                actions += "Sign in with a code" to { startTorBox() }
+                actions += (if (linked) "Replace with an API key" else "Paste an API key") to {
+                    inputSetting("TorBox API key", "Paste your own TorBox API key", "", true) { key -> load(generation, { torbox.setApiKey(key) }) { toast("TorBox connected"); refreshSettings() } }
                 }
-                AlertDialog.Builder(this).setTitle("${index + 1}. ${DebridServices.name(order[index])}")
-                    .setItems(offsets.map { if (it < 0) "Move up" else "Move down" }.toTypedArray()) { _, choice ->
-                        DebridServices.move(store, index, offsets[choice])
-                        settings(); debridPriority()
-                    }.setNegativeButton("Back") { _, _ -> debridPriority() }
-                    .setOnCancelListener { debridPriority() }.show()
-            }.setPositiveButton("Done", null).show()
+            }
+            else -> actions += (if (linked) "Replace API key" else "Connect with your API key") to {
+                val links = LinkDebrids(store)
+                apiKeyDialog?.dismiss()
+                apiKeyDialog = ApiKeyDialog(this, name, worker,
+                    save = { key, cancelled -> links.setKey(id, key, cancelled) },
+                    onConnected = {
+                        toast("$name connected")
+                        if (destination == "settings") refreshSettings()
+                    }).also { it.show() }
+            }
+        }
+        if (linked) actions += "Disconnect" to {
+            confirm("Disconnect $name on this device?") {
+                when (id) { "offcloud" -> OffcloudApi(store).disconnect(); "torbox" -> torbox.disconnect(); else -> LinkDebrids(store).disconnect(id) }
+                DebridServices.setEnabled(store, id, true)
+                refreshSettings()
+            }
+        }
+        if (!linked && actions.size == 1) { actions.single().second(); return }
+        AlertDialog.Builder(this).setTitle(name).setItems(actions.map { it.first }.toTypedArray()) { _, index -> actions[index].second() }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    private fun easynewsActions() {
+        if (Easynews.credentials(store) == null) { connectEasynews(); return }
+        val on = Easynews.enabled(store)
+        val actions = listOf<Pair<String, () -> Unit>>(
+            (if (on) "Turn off (keep the login)" else "Turn on") to { Easynews.setEnabled(store, !on); refreshSettings() },
+            "Download server · ${Easynews.serverLabel(store)}" to { easynewsServer() },
+            "Change login" to { connectEasynews() },
+            "Disconnect" to { confirm("Disconnect Easynews on this device?") { Easynews.disconnect(store); Easynews.setEnabled(store, true); refreshSettings() } })
+        AlertDialog.Builder(this).setTitle("Easynews · ${if (on) "On" else "Off"}").setItems(actions.map { it.first }.toTypedArray()) { _, index -> actions[index].second() }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    /** Which Easynews server links stream from. Easynews ignores the download port, so the server is the speed setting. */
+    private fun easynewsServer() {
+        val servers = Easynews.SERVERS
+        AlertDialog.Builder(this).setTitle("Easynews download server")
+            .setSingleChoiceItems(servers.map { it.second }.toTypedArray(), servers.indexOfFirst { it.first == Easynews.server(store) }) { dialog, index ->
+                store.put(Easynews.SERVER, servers[index].first); dialog.dismiss()
+                toast("Easynews links now stream from ${servers[index].second}. Search again to use it."); refreshSettings()
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    /** Easynews username and password, checked against the members site before they are saved. */
+    private fun connectEasynews() {
+        val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
+        val user = TvEditText(this).apply {
+            hint = "Easynews username"; setSingleLine()
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        }
+        val password = TvEditText(this).apply {
+            hint = "Easynews password"; setSingleLine()
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        }
+        val status = text("", 14, muted)
+        content.addView(user, margin(-1, -2)); content.addView(password, margin(-1, -2, top = 8)); content.addView(status, margin(-1, -2, top = 8))
+        val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val dialog = AlertDialog.Builder(this).setTitle("Easynews account").setView(content)
+            .setPositiveButton("Connect", null).setNegativeButton("Cancel", null).create()
+        dialog.setOnDismissListener { cancelled.set(true); password.setText("") }
+        dialog.show(); dialog.submitOnEnter(password)
+        dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+            val name = user.text.toString().trim(); val secret = password.text.toString()
+            if (name.isBlank()) { user.error = "Enter your Easynews username"; return@setOnClickListener }
+            if (secret.isEmpty()) { password.error = "Enter your Easynews password"; return@setOnClickListener }
+            val request = generation
+            val connect = dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE)
+            connect.isEnabled = false; status.text = "Checking your Easynews account…"
+            worker.execute {
+                try {
+                    EasynewsApi(store).verify(name, secret)
+                    if (cancelled.get()) return@execute
+                    Easynews.save(store, name, secret)
+                    runOnUiThread {
+                        if (request == generation && !isFinishing && !isDestroyed) {
+                            if (dialog.isShowing) dialog.dismiss()
+                            toast("Easynews connected"); refreshSettings()
+                        }
+                    }
+                } catch (error: Exception) {
+                    runOnUiThread { if (dialog.isShowing) { connect.isEnabled = true; status.text = uiErrorMessage(error) } }
+                }
+            }
+        }
     }
 
     private fun subtitleLanguage(allLanguages: Boolean = false) {
@@ -3453,56 +3590,33 @@ class MainActivity : Activity() {
         }
         settingsRow(captions, "Audio language", AudioPreferences(this).languageLabel, "Chosen automatically when available, and links in this language are listed and auto-played first. You can pick another track in the player.") { audioLanguage() }
 
-        val services = settingsGroup("Debrid Services", "library")
-        val offcloud = OffcloudApi(store)
-        settingsRow(services, "Offcloud", if (offcloud.connected()) "Connected" else "Not connected",
-            if (offcloud.connected()) "Select to replace the API key." else "Connect with your Offcloud API key.", status = offcloud.connected()) { connectOffcloud() }
-        val torboxConnected = store.has("torbox.token")
-        settingsRow(services, "TorBox", if (torboxConnected) "Connected" else "Not connected",
-            "Sign in with a code on your phone or computer.", status = torboxConnected) { startTorBox() }
-        settingsRow(services, "TorBox API key", "", "Or paste your own TorBox API key instead of signing in.") {
-            inputSetting("TorBox API key", "Paste your own TorBox API key", "", true) { key -> load(generation, { torbox.setApiKey(key) }) { toast("TorBox connected"); refreshSettings() } }
-        }
-        val linkDebrids = LinkDebrids(store)
-        LinkDebrids.IDS.forEach { service ->
-            val name = DebridServices.name(service); val on = linkDebrids.connected(service)
-            val note = if (service in LinkDebrids.CHECK_ON_PLAY) " Links are checked when you play: the first cached one of the top ${LinkDebrids.CHECK_LIMIT} plays." else ""
-            settingsRow(services, name, if (on) "Connected" else "Not connected",
-                (if (on) "Select to replace the API key." else "Connect with your $name API key.") + note, status = on) {
-                apiKeyDialog?.dismiss()
-                apiKeyDialog = ApiKeyDialog(this, name, worker,
-                    save = { key, cancelled -> linkDebrids.setKey(service, key, cancelled) },
-                    onConnected = {
-                        toast("$name connected")
-                        if (destination == "settings") refreshSettings()
-                    }).also { it.show() }
-            }
-        }
-        settingsRow(services, "Debrid priority", DebridServices.priority(store).joinToString(" → ") { DebridServices.name(it) },
-            "All connected accounts are checked. Cached copies play from the first available service in this order.") { debridPriority() }
-        settingsRow(services, "Source providers", "", "Your HTTPS scraper add-ons, such as Torrentio. Results from enabled providers are merged.") { sourceProviders() }
-        if (offcloud.connected()) settingsRow(services, "Disconnect Offcloud", danger = true) {
-            confirm("Disconnect Offcloud on this device?") { offcloud.disconnect(); refreshSettings() }
-        }
-        if (torboxConnected) settingsRow(services, "Disconnect TorBox", danger = true) {
-            confirm("Disconnect TorBox on this device?") { torbox.disconnect(); refreshSettings() }
-        }
-        LinkDebrids.IDS.filter(linkDebrids::connected).forEach { service ->
-            val name = DebridServices.name(service)
-            settingsRow(services, "Disconnect $name", danger = true) {
-                confirm("Disconnect $name on this device?") { linkDebrids.disconnect(service); refreshSettings() }
-            }
-        }
+        val sources = settingsGroup("Sources", "library")
+        val linkedDebrids = DebridServices.linked(store); val activeDebrids = DebridServices.connected(store)
+        settingsRow(sources, "Debrid services", if (linkedDebrids.isEmpty()) "None connected" else "${activeDebrids.size} of ${linkedDebrids.size} on",
+            if (activeDebrids.isEmpty()) "Connect Offcloud, TorBox, Real-Debrid and more, switch each on or off, and choose which plays first."
+            else "Cached links play from: ${activeDebrids.joinToString(" → ") { DebridServices.name(it) }}.", status = activeDebrids.isNotEmpty()) { navigate { debridServicesPage() } }
+        val easynewsLinked = Easynews.credentials(store) != null
+        settingsRow(sources, "Easynews", if (!easynewsLinked) "Not connected" else if (Easynews.enabled(store)) "On" else "Off",
+            "Search Usenet with your Easynews account. Its results play directly, listed with your add-ons' links. Experimental: it uses the Easynews members website.",
+            status = Easynews.active(store)) { easynewsActions() }
+        val providerList = runCatching { SourceProviders(store).load() }.getOrDefault(emptyList())
+        settingsRow(sources, "Source providers", if (providerList.isEmpty()) "None added" else "${providerList.count { it.enabled }} of ${providerList.size} on",
+            "Your Stremio scraper add-ons, such as Torrentio. Switch each on or off, and add, edit or remove them.",
+            status = providerList.any { it.enabled }) { navigate { sourceProvidersPage() } }
 
         val tracking = settingsGroup("Tracking", "wetrakr")
         settingsRow(tracking, "Service", wetrakr.name, "WeTrakr or Simkl: watchlists, Continue Watching, Up Next and progress sync.") { chooseTracker() }
-        settingsRow(tracking, "Account", if (wetrakr.connected()) "Connected" else "Not connected",
-            if (wetrakr.connected()) "Select to sign in again." else "Sign in with a code to sync watchlists and progress.", status = wetrakr.connected()) { startWeTrakr() }
+        settingsRow(tracking, "Account", if (wetrakr.signedIn()) "Connected" else "Not connected",
+            if (wetrakr.signedIn()) "Select to sign in again." else "Sign in with a code to sync watchlists and progress.", status = wetrakr.signedIn()) { startWeTrakr() }
+        if (wetrakr.signedIn()) settingsToggle(tracking, "Use ${wetrakr.name}", "Off keeps you signed in, but hides its Home rows, watched badges and lists, and sends no playback updates. Turn it back on any time.",
+            wetrakr.enabled(), contentLabel = "Use ${wetrakr.name}") { on ->
+            wetrakr.setEnabled(on); wetrakrOutbox.clearPending(); remoteProgress.clear(); retainedHome = null; refreshWatched(force = on)
+        }
         settingsToggle(tracking, "Scrobbling", "Automatic playback updates. Your library, Continue Watching and manual actions still work when this is off.",
             wetrakr.scrobblingEnabled(), contentLabel = "${wetrakr.name} scrobbling") { on -> wetrakr.setScrobblingEnabled(on); wetrakrOutbox.clearPending() }
         if (wetrakr.supportsLists) settingsToggle(tracking, "Liked lists on Home", "Shows your liked ${wetrakr.name} lists as rows on Home.",
             store.get("wetrakr.home_liked_opt_in") == "true", contentLabel = "${wetrakr.name} liked lists on Home") { on -> store.put("wetrakr.home_liked_opt_in", on.toString()) }
-        if (wetrakr.connected()) settingsRow(tracking, "Disconnect ${wetrakr.name}", danger = true) {
+        if (wetrakr.signedIn()) settingsRow(tracking, "Disconnect ${wetrakr.name}", danger = true) {
             confirm("Disconnect ${wetrakr.name} on this device?") { wetrakr.disconnect(); wetrakrOutbox.clearPending(); remoteProgress.clear(); refreshWatched(); refreshSettings() }
         }
 
@@ -3625,7 +3739,8 @@ class MainActivity : Activity() {
         val focused = focusController.focusedIndex()
         val index = if (focused >= 0) focused else settingsReturnIndex
         val scroll = if (focused >= 0) scroller.scrollY else settingsReturnScroll
-        settings()
+        // Sub-pages (Debrid services, Home rows) redraw themselves; anywhere else Settings is shown.
+        if (destination == "settings") current() else settings()
         body.post { if (!isDestroyed && destination == "settings") focusController.restoreIndex(index, scroll) }
     }
 
@@ -3664,36 +3779,69 @@ class MainActivity : Activity() {
         return row
     }
 
-    private fun sourceProviders() {
+    /** Settings → Source providers: order, switch on or off, edit and remove the scraper add-ons. */
+    private fun sourceProvidersPage(focusTag: String? = null) {
+        current = { sourceProvidersPage() }
+        destination = "settings"; refreshNavigation()
+        page("Source providers", "Stremio add-ons such as Torrentio. Links from every provider that's on are merged into one list.")
         val config = SourceProviders(store)
-        val providers = try { config.load() } catch (error: Exception) { toast(uiErrorMessage(error)); return }
-        val labels = providers.map { "${it.name} · ${if (it.enabled) "On" else "Off"}  ›" } + "Add source provider…"
-        AlertDialog.Builder(this).setTitle("Source providers")
-            .setItems(labels.toTypedArray()) { _, index ->
-                if (index == providers.size) editSourceProvider(null)
-                else sourceProviderActions(providers[index])
-            }.setNegativeButton("Close", null).show()
+        val providers = try { config.load() } catch (error: Exception) { body.addView(text(uiErrorMessage(error), 15, muted)); emptyList() }
+        val list = settingsGroup("Providers", "library")
+        providers.forEachIndexed { index, provider ->
+            settingsDivider(list)
+            val on = provider.enabled
+            val line = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(8), dp(8)) }
+            val copy = column()
+            copy.addView(text(provider.name, 14, if (on) ink else muted, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
+            val host = runCatching { java.net.URI(provider.address).host }.getOrNull().orEmpty()
+            copy.addView(text(if (on) "On · $host" else "Off · $host", 11, if (on) 0xFF46D369.toInt() else muted).apply {
+                maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 2))
+            line.addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
+            fun control(label: String, tagName: String, description: String, width: Int, enabled: Boolean = true, action: () -> Unit) {
+                line.addView(button(label) { if (enabled) action() }.apply {
+                    gravity = Gravity.CENTER; tag = "$tagName:${provider.id}"; contentDescription = description
+                    alpha = if (enabled) 1f else 0.3f; isFocusable = enabled
+                }, margin(width, 38).apply { leftMargin = dp(6) })
+            }
+            fun save(updated: List<SourceProvider>, tagName: String) {
+                try { config.save(updated); sourceProvidersPage("$tagName:${provider.id}") } catch (error: Exception) { toast(uiErrorMessage(error)) }
+            }
+            control("▲", "provider-up", "Move ${provider.name} up", 46, index > 0) {
+                save(providers.toMutableList().apply { add(index - 1, removeAt(index)) }, "provider-up")
+            }
+            control("▼", "provider-down", "Move ${provider.name} down", 46, index < providers.lastIndex) {
+                save(providers.toMutableList().apply { add(index + 1, removeAt(index)) }, "provider-down")
+            }
+            control(if (on) "On" else "Off", "provider-on", "${provider.name} · ${if (on) "On" else "Off"}", 56) {
+                save(providers.map { if (it.id == provider.id) it.copy(enabled = !on) else it }, "provider-on")
+            }
+            control("Manage", "provider-manage", "Manage ${provider.name}", 84) { sourceProviderActions(provider) }
+            list.addView(line, margin(-1, -2))
+        }
+        if (providers.size < SourceProviders.MAX) settingsRow(list, "Add source provider", "", "Paste an HTTPS Stremio add-on or manifest URL, for example your Torrentio or Deepbrid add-on.") { editSourceProvider(null) }
+        body.addView(View(this), margin(-1, 24))
+        val wanted = focusTag
+        body.post {
+            if (isDestroyed || destination != "settings") return@post
+            if (wanted != null) body.findViewWithTag<View>(wanted)?.takeIf { it.isFocusable }?.let { target ->
+                target.requestFocus(); val rect = android.graphics.Rect(); target.getDrawingRect(rect); body.offsetDescendantRectToMyCoords(target, rect)
+                scroller.scrollTo(0, (rect.centerY() - scroller.height / 2).coerceAtLeast(0))
+            } else focusAfterRender(generation)
+        }
     }
 
     private fun sourceProviderActions(provider: SourceProvider) {
         AlertDialog.Builder(this).setTitle(provider.name)
-            .setItems(arrayOf(if (provider.enabled) "Turn off" else "Turn on", "Edit name and address", "Remove")) { _, index ->
+            .setItems(arrayOf("Edit name and address", "Remove")) { _, index ->
                 when (index) {
-                    0 -> {
+                    0 -> editSourceProvider(provider)
+                    1 -> confirm("Remove ${provider.name} from source providers?") {
                         try {
-                            val config = SourceProviders(store)
-                            config.save(config.load().map { if (it.id == provider.id) it.copy(enabled = !it.enabled) else it })
-                            sourceProviders()
-                        } catch (error: Exception) { toast(uiErrorMessage(error)) }
-                    }
-                    1 -> editSourceProvider(provider)
-                    2 -> confirm("Remove ${provider.name} from source providers?") {
-                        try {
-                            val config = SourceProviders(store); config.save(config.load().filterNot { it.id == provider.id }); sourceProviders()
+                            val config = SourceProviders(store); config.save(config.load().filterNot { it.id == provider.id }); sourceProvidersPage()
                         } catch (error: Exception) { toast(uiErrorMessage(error)) }
                     }
                 }
-            }.setNegativeButton("Back") { _, _ -> sourceProviders() }.show()
+            }.setNegativeButton("Cancel", null).show()
     }
 
     private fun editSourceProvider(provider: SourceProvider?) {
@@ -3707,7 +3855,7 @@ class MainActivity : Activity() {
         val status = text("", 14, muted)
         content.addView(name, margin(-1, -2)); content.addView(address, margin(-1, -2, top = 8)); content.addView(status, margin(-1, -2, top = 8))
         val dialog = AlertDialog.Builder(this).setTitle(if (provider == null) "Add source provider" else "Edit source provider")
-            .setView(content).setPositiveButton("Save", null).setNegativeButton("Cancel") { _, _ -> sourceProviders() }.create()
+            .setView(content).setPositiveButton("Save", null).setNegativeButton("Cancel", null).create()
         dialog.show(); dialog.submitOnEnter(name, address)
         dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
             try {
@@ -3716,7 +3864,7 @@ class MainActivity : Activity() {
                     else provider.copy(name = SourceProviders.name(name.text.toString()), address = SourceProviders.endpoint(address.text.toString()))
                 val existing = config.load()
                 config.save(if (provider == null) existing + updated else existing.map { if (it.id == provider.id) updated else it })
-                dialog.dismiss(); sourceProviders()
+                dialog.dismiss(); sourceProvidersPage()
             } catch (error: Exception) { status.text = uiErrorMessage(error) }
         }
     }
@@ -3781,7 +3929,7 @@ class MainActivity : Activity() {
                 val index = focusController.focusedIndex(); val scroll = scroller.scrollY
                 destination = "settings"; backStack.clear(); current = { settings() }; shell(); settings()
                 body.post { if (!isDestroyed && destination == "settings") focusController.restoreIndex(index, scroll) }
-                if (!wetrakr.connected()) startWeTrakr()
+                if (!wetrakr.signedIn()) startWeTrakr()
             }.setNegativeButton("Cancel", null).show()
     }
 

@@ -63,7 +63,8 @@ object InAppPlaybackSession {
     private val simklSelected get() = dev.pov.tv.data.Trackers.selected(secureStore) == dev.pov.tv.data.Trackers.SIMKL
     private val wetrakr: dev.pov.tv.data.Tracker get() = if (simklSelected) simklApi else weTrakrApi
     private val wetrakrOutbox: PlaybackStore get() = if (simklSelected) simklOutbox else weTrakrOutbox
-    private var sourceUrl = ""
+    var sourceUrl = ""
+        private set
     private var sourceKey = ""
     private var sourceHeaders = emptyMap<String, String>()
     private var playbackAccount: String? = null
@@ -286,7 +287,10 @@ object InAppPlaybackSession {
             .setTransferListener(sizeFromServer(playing))
             .setDefaultRequestProperties(sourceHeaders)
         val exo = ExoPlayer.Builder(application!!, renderers)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(application!!, http)))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(application!!,
+                // Easynews links get the saved login inside the player; it is never in the link or the intent.
+                EasynewsRoutingDataSource.Factory(http) { dev.pov.tv.data.Easynews.credentials(secureStore)?.let { (user, password) ->
+                    runCatching { dev.pov.tv.data.Easynews.auth(user, password) }.getOrNull() } })))
             .setLoadControl(ReadAheadPreferences(application!!).loadControl())
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
             .setHandleAudioBecomingNoisy(true)
