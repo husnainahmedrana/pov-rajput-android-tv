@@ -56,7 +56,7 @@ internal object PlayerOptionSheet {
                 background = GradientDrawable().apply { setColor(if (focused) Color.WHITE else 0x24FFFFFF); cornerRadius = dp(10).toFloat() }
                 setTextColor(if (focused) Color.BLACK else Color.WHITE)
             }
-            setOnClickListener { QuickFade.dismiss(dialog, content) }
+            setOnClickListener { dialog.dismiss() }
         }
         heading.addView(close, LinearLayout.LayoutParams(dp(96), dp(44)))
         content.addView(heading)
@@ -120,12 +120,12 @@ internal object PlayerOptionSheet {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
             attributes = attributes.apply { dimAmount = 0.35f; gravity = Gravity.BOTTOM }
-            // Full width from the first frame and a quick fade instead of the zoom-in, so the sheet never opens small and grows.
+            // Full width from the first frame and a soft fade in and out instead of the zoom-in, so the sheet never opens
+            // small and grows. (The player panels keep this softer fade; hold-OK menus use the quicker QuickFade.)
             setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT)
+            setWindowAnimations(android.R.style.Animation_Toast)
         }
-        QuickFade.attach(dialog, content)
         dialog.setOnShowListener {
-            QuickFade.fadeIn(content)
             (context as? Activity)?.window?.decorView?.systemUiVisibility?.let { flags ->
                 dialog.window?.decorView?.systemUiVisibility = flags
             }
