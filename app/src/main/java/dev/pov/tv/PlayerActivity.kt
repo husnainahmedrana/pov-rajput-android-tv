@@ -199,7 +199,9 @@ class PlayerActivity : Activity() {
         }
         view.findViewById<View>(R.id.pov_audio).setOnClickListener { showTracks(C.TRACK_TYPE_AUDIO) }
         speedButton = view.findViewById(R.id.pov_speed)
-        speedButton.setOnClickListener { showSpeed() }
+        // One press steps through the common speeds; holding OK opens the full list (with the slower ones).
+        speedButton.setOnClickListener { cycleSpeed() }
+        speedButton.setOnLongClickListener { showSpeed(); true }
         view.findViewById<Button>(R.id.pov_browse).apply { text = "Streams"; setOnClickListener { showStreams() } }
         // Stop ends the session (no mini player) and returns to the page the video was started from.
         view.findViewById<View>(R.id.pov_stop).setOnClickListener { InAppPlaybackSession.stop(); finish() }
@@ -499,19 +501,36 @@ class PlayerActivity : Activity() {
         val current = player?.playbackParameters?.speed ?: 1f
         showSheet("Playback speed",
             "Voices keep their normal pitch. Applies to this video only. Dolby or DTS sent to a receiver is decoded by the app while sped up.",
-            SPEEDS.map { speed -> PlayerSheetChoice(if (speed == 1f) "Normal · 1×" else speedLabel(speed), current == speed) {
-                val exo = player ?: return@PlayerSheetChoice
-                if (stopped) return@PlayerSheetChoice
-                InAppPlaybackSession.setPlaybackSpeed(speed)
+            SPEEDS.map { speed -> PlayerSheetChoice(if (speed == 1f) "Normal · 1×" else speedLabel(speed), current == speed) { applySpeed(speed) } })
+    }
+
+    /** 1× → 1.25× → 1.5× → 1.75× → 2× → 1×; from a slower speed (picked in the full list) the next step is 1×. */
+    private fun cycleSpeed() {
+        val current = player?.playbackParameters?.speed ?: 1f
+        val next = SPEED_CYCLE.firstOrNull { it > current + 0.01f } ?: 1f
+        applySpeed(next)
+        // The new speed flashes briefly in the middle of the screen.
+        if (!seekPreview.active) {
+            seekLabel.removeCallbacks(hideSpeedFlash)
+            seekLabel.text = if (next == 1f) "Normal · 1×" else speedLabel(next)
+            seekLabel.visibility = View.VISIBLE
+            seekLabel.postDelayed(hideSpeedFlash, 900)
+        }
+    }
+    private val hideSpeedFlash = Runnable { if (!seekPreview.active) seekLabel.visibility = View.GONE }
+
+    private fun applySpeed(speed: Float) {
+        val exo = player ?: return
+        if (stopped) return
+        InAppPlaybackSession.setPlaybackSpeed(speed)
+        updateControls()
+        // Passthrough is switched to in-app decoding first; if the audio clock still keeps 1x, say so.
+        view.postDelayed({
+            if (player === exo && !stopped && speed != 1f && exo.playbackParameters.speed != speed) {
                 updateControls()
-                // Passthrough is switched to in-app decoding first; if the audio clock still keeps 1x, say so.
-                view.postDelayed({
-                    if (player === exo && !stopped && speed != 1f && exo.playbackParameters.speed != speed) {
-                        updateControls()
-                        Toast.makeText(this, "This audio can't be played at a different speed", Toast.LENGTH_LONG).show()
-                    }
-                }, 2_000)
-            } })
+                Toast.makeText(this, "This audio can't be played at a different speed", Toast.LENGTH_LONG).show()
+            }
+        }, 2_000)
     }
 
     private fun speedLabel(speed: Float) =
@@ -996,6 +1015,7 @@ class PlayerActivity : Activity() {
         /** How long the seek preview stays after the key or finger is released, before the video jumps there. */
         private const val SEEK_LINGER_MS = 1_000L
         private const val CARD_FADE_MS = 200L
+        private val SPEED_CYCLE = listOf(1f, 1.25f, 1.5f, 1.75f, 2f)
         private const val STREAMS_SHOWN = 60
         /** A seek may land up to this far past its target, on a keyframe. */
         const val SEEK_SNAP_MS = 6_000L
