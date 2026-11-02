@@ -4636,10 +4636,15 @@ class MainActivity : Activity() {
 
     /** True when [view] is (inside) the last focusable item of a sideways row such as a Home shelf. */
     private fun atRowEnd(view: View?): Boolean {
+        // Only within the page, and only a sideways shelf: walking past the page found the app's outer layout and
+        // swallowed Right on pages such as Debrid services.
         var child = view ?: return false
         var parent = child.parent
-        while (parent is View && parent !is CullingLinearLayout) { child = parent; parent = parent.parent }
-        val row = parent as? CullingLinearLayout ?: return false
+        while (parent is View && parent !== body && !(parent is CullingLinearLayout && parent.orientation == LinearLayout.HORIZONTAL)) {
+            child = parent; parent = parent.parent
+        }
+        // The page itself is a vertical CullingLinearLayout: only a horizontal one is a shelf.
+        val row = (parent as? CullingLinearLayout)?.takeIf { it.orientation == LinearLayout.HORIZONTAL } ?: return false
         val last = (row.childCount - 1 downTo 0).firstOrNull { index -> row.getChildAt(index).let { it.isShown && (it.isFocusable || it.hasFocusable()) } }
         return last != null && row.indexOfChild(child) == last
     }
