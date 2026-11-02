@@ -22,7 +22,7 @@ This is **Rajput's Android TV edition**, forked from [MM-482/pov-android-tv](htt
 - **TMDB, Queued Up or Cinemeta catalogs** — Top 10 shelves follow a daily trending chart (TMDB Trending Today with your own free TMDB key, Queued Up's global trending without one), with Latest Releases from Queued Up, *Now Playing in Cinemas* (in your chosen country) and Popular rows. Movies and Shows double as **Discover**: sort by Popular, Top rated or Newest and filter by genre.
 - **Your own catalog add-ons and Home order** — add Stremio catalog add-ons such as AIOMetadata as Home rows, and reorder or hide every row after Top 10 in Settings → Home rows. *See all* pages through a row's whole catalog.
 - **Play that just works** — Play searches every enabled source provider, checks your debrid caches in parallel and starts the best playable link, resuming where you left off. Continue Watching resumes instantly from the last link (kept 24 hours).
-- **A player built for the remote** — one-second precision seeking that accelerates the longer you hold, an *Ends at* clock, a Stremio-style loading splash, Stop and Browse, one Audio & Subtitles menu with volume boost, playback speed (0.5×–2×, pitch kept) and FFmpeg software decoding for Dolby and DTS audio.
+- **A player built for the remote** — one-second precision seeking that accelerates the longer you hold, an *Ends at* clock, a Stremio-style loading splash, a **Streams** panel to switch links mid-movie, one Audio & Subtitles menu with volume boost, playback speed (0.5×–2×, pitch kept) and FFmpeg software decoding for Dolby and DTS audio.
 - **Sensible defaults** — bold subtitles on a transparent background, 3% above the bottom, English subtitles and audio.
 - **Your library as posters** — Offcloud and TorBox downloads appear as artwork cards matched from their filenames.
 - **Voice search** — speak a title; the words appear as you talk and results open when you stop.
@@ -78,16 +78,22 @@ No API key, token or account is included in the app. Every value you enter stays
 | --- | --- |
 | **Continue Watching** on Home | Resumes instantly from the last link, when it is less than 24 hours old |
 | **Play** anywhere else (details, feature, any shelf) | Searches fresh links, plays the first playable one and resumes your saved position |
-| Long-press a Continue Watching card | **Open Media** or **Remove from Continue Watching** |
+| **Streams** beside Play (details pages) | The full link list to pick by hand; never auto-plays, even with Auto-play on |
+| Hold OK on a poster, episode or Continue Watching card | **Play**, **Streams**, **More Info** / **Open Media**, **Mark as watched**, **Remove from Continue Watching** |
+
+Show and anime pages list episodes as a sideways row of wide cards: the header (episode title, synopsis) and the Play and Streams buttons follow the focused episode, and one press Down from the buttons lands on your next episode with the season tabs in view.
+
+Each link shows its badges (quality, size, ≈bitrate, cached or direct, HDR, codec, language), the release name and the name you gave its source. **Hide uncached links** (Settings → Playback) keeps only links that play at once.
 
 With **Auto-play first result** on (Settings → Playback), Play starts the best cached or direct link in your sort order; the list stays open behind it so another link is one Back away. Sources above your TV's decoder limit (for example 8K on a 4K TV) are labelled, moved last and never auto-played.
 
 ### Player
 
-- **Seeking** — tap Left/Right for one second. Hold to keep going: one-second steps for the first 10 seconds, then 5 s, 10 s, 20 s and at most 30 s steps. A small card above the seek bar shows the target time and offset, with a thumbnail of the scene from [Seekr](https://seekr.tv) when you've added your free Seekr key (Settings → Playback); the video jumps when you release.
+- **Seeking** — tap Left/Right for one second. Hold to keep going: one-second steps for the first 10 seconds, then 5 s, 10 s, 20 s and at most 30 s steps. A small card above the seek bar shows the target time and offset, with a thumbnail of the scene from [Seekr](https://seekr.tv) when you've added your free Seekr key (Settings → Playback); the video jumps as soon as you release (to the nearest keyframe, so loaded video plays at once) and the preview stays a moment.
 - **Ends at** — the local finish time sits in the top-right corner with the controls.
 - **Loading and buffering** — the title's logo pulses over its blurred artwork, like Stremio.
-- **Stop** ends playback and returns; **Browse** keeps the video playing in the mini player.
+- **Streams** opens the title's other links over the video; pick one and it continues from the same spot without leaving the player. After a failure, **Browse sources** opens the same panel.
+- **Back** first shows the controls, then leaves: to the mini player, or stopping the video (progress saved) when **Mini player** is off in Settings → Playback. **Stop** ends playback and returns.
 - **Audio, Subtitles and Boost** — choose tracks, subtitle style, size and position, and boost quiet audio.
 
 ### Search and voice
