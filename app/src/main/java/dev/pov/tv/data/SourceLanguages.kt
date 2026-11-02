@@ -27,7 +27,9 @@ object SourceLanguages {
         "nl" to listOf("dut", "nld", "🇳🇱"),
         "ta" to emptyList(), "te" to emptyList(), "ml" to emptyList(), "bn" to emptyList(),
     )
-    private val SUBTITLE_WORDS = mapOf("pt" to listOf("legendado", "legendas?"), "fr" to listOf("vostfr"), "es" to listOf("subtitulado"))
+    private val SUBTITLE_WORDS = mapOf("pt" to listOf("legendado", "legendas?"), "fr" to listOf("vostfr"), "es" to listOf("subtitulado"),
+        // "ESub" / "E-Subs" (Indian releases): English subtitles.
+        "en" to listOf("e[ ._-]?subs?"))
     private const val EDGE_BEFORE = "(?<![\\p{L}\\p{N}])"
     private const val EDGE_AFTER = "(?![\\p{L}\\p{N}])"
     // Providers such as Meteor print one line per kind: "🌐 🇮🇳" for audio and "💬 🇬🇧 🇮🇳" for subtitles.
@@ -38,6 +40,12 @@ object SourceLanguages {
     private val subtitleAfter = Regex("(?i)^[\\s._\\-\\])]{0,3}(?:sub(?:title)?s?|subbed|legendado)$EDGE_AFTER")
     private val multi = Regex("(?i)$EDGE_BEFORE(?:multi|dual)(?:[ ._-]?audio)?$EDGE_AFTER(?![ ._-]?sub)")
     private val vostfr = Regex("(?i)${EDGE_BEFORE}vostfr$EDGE_AFTER")
+    /**
+     * What may sit between two subtitle languages of one list, as in Torrentio's "Sub Rus Ukr Eng", "Sub (Rus Eng Ukr)"
+     * or Comet's "sub ita.eng": separators and short codes this scan doesn't know (Ukr). A longer word such as
+     * "Original" or "Multi" ends the list, so "Sub Rus Eng + Original Eng" still has English audio.
+     */
+    private val subtitleListGap = Regex("^(?:[\\s._,/+&()\\[\\]-]|(?<![\\p{L}])[A-Za-z]{2,3}(?![\\p{L}]))*$")
     private val subtitleWords = SUBTITLE_WORDS.mapValues { (_, words) -> Regex("(?i)$EDGE_BEFORE(?:${words.joinToString("|")})$EDGE_AFTER") }
 
     /** One alternation for every language, so each text is scanned once; the matching group names the language. */
@@ -70,14 +78,17 @@ object SourceLanguages {
         val audio = linkedSetOf<String>(); val subtitles = linkedSetOf<String>()
         for (segment in sample.split(segments)) {
             val kind = when { subtitleLine.containsMatchIn(segment) -> 1; audioLine.containsMatchIn(segment) -> 2; else -> 0 }
+            var listEnd = -1
             for (match in scan.regex.findAll(segment)) {
                 val code = scan.codes[scan.codes.indices.first { match.groups["l$it"] != null }]
                 val subtitle = when (kind) {
                     1 -> true
                     2 -> false
                     else -> subtitleBefore.containsMatchIn(segment.substring(maxOf(0, match.range.first - 12), match.range.first)) ||
-                        subtitleAfter.containsMatchIn(segment.substring(match.range.last + 1, minOf(segment.length, match.range.last + 13)))
+                        subtitleAfter.containsMatchIn(segment.substring(match.range.last + 1, minOf(segment.length, match.range.last + 13))) ||
+                        (listEnd >= 0 && subtitleListGap.matches(segment.substring(listEnd, match.range.first)))
                 }
+                listEnd = if (subtitle && kind == 0) match.range.last + 1 else -1
                 if (subtitle) subtitles += code else audio += code
             }
         }

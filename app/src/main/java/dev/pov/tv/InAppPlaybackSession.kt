@@ -289,7 +289,7 @@ object InAppPlaybackSession {
         val exo = ExoPlayer.Builder(application!!, renderers)
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(application!!,
                 // Easynews links get the saved login inside the player; it is never in the link or the intent.
-                EasynewsRoutingDataSource.Factory(http) { dev.pov.tv.data.Easynews.credentials(secureStore)?.let { (user, password) ->
+                EasynewsRoutingDataSource.Factory(http, { dev.pov.tv.data.Easynews.connections(secureStore) }) { dev.pov.tv.data.Easynews.credentials(secureStore)?.let { (user, password) ->
                     runCatching { dev.pov.tv.data.Easynews.auth(user, password) }.getOrNull() } })))
             .setLoadControl(ReadAheadPreferences(application!!).loadControl())
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)

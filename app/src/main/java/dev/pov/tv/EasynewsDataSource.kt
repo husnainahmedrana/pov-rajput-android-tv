@@ -20,7 +20,8 @@ import java.net.URI
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 internal class EasynewsRoutingDataSource(
     private val normal: DataSource,
-    private val login: () -> Map<String, String>?
+    private val login: () -> Map<String, String>?,
+    private val connections: () -> Int = { 1 }
 ) : DataSource {
     private var active: DataSource? = null
     private val listeners = mutableListOf<TransferListener>()
@@ -30,7 +31,13 @@ internal class EasynewsRoutingDataSource(
     }
     override fun open(dataSpec: DataSpec): Long {
         val headers = if (Easynews.isHost(dataSpec.uri.toString())) login() else null
-        val source = if (headers == null) normal else EasynewsHttpDataSource(headers).also { protected -> listeners.forEach(protected::addTransferListener) }
+        val count = connections()
+        val source = when {
+            headers == null -> normal
+            count > 1 -> EasynewsParallelDataSource(headers, count)
+            else -> EasynewsHttpDataSource(headers)
+        }
+        if (source !== normal) listeners.forEach(source::addTransferListener)
         active = source
         return source.open(dataSpec)
     }
@@ -39,8 +46,9 @@ internal class EasynewsRoutingDataSource(
     override fun getResponseHeaders(): Map<String, List<String>> = active?.responseHeaders.orEmpty()
     override fun close() { try { active?.close() } finally { active = null } }
 
-    class Factory(private val normal: DataSource.Factory, private val login: () -> Map<String, String>?) : DataSource.Factory {
-        override fun createDataSource(): DataSource = EasynewsRoutingDataSource(normal.createDataSource(), login)
+    class Factory(private val normal: DataSource.Factory, private val connections: () -> Int = { 1 },
+                  private val login: () -> Map<String, String>?) : DataSource.Factory {
+        override fun createDataSource(): DataSource = EasynewsRoutingDataSource(normal.createDataSource(), login, connections)
     }
 }
 

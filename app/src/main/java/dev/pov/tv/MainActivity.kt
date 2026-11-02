@@ -3362,6 +3362,7 @@ class MainActivity : Activity() {
         val actions = listOf<Pair<String, () -> Unit>>(
             (if (on) "Turn off (keep the login)" else "Turn on") to { Easynews.setEnabled(store, !on); refreshSettings() },
             "Download server · ${Easynews.serverLabel(store)}" to { easynewsServer() },
+            "Connections · ${Easynews.connections(store)}" to { easynewsConnections() },
             "Change login" to { connectEasynews() },
             "Disconnect" to { confirm("Disconnect Easynews on this device?") { Easynews.disconnect(store); Easynews.setEnabled(store, true); refreshSettings() } })
         AlertDialog.Builder(this).setTitle("Easynews · ${if (on) "On" else "Off"}").setItems(actions.map { it.first }.toTypedArray()) { _, index -> actions[index].second() }
@@ -3376,6 +3377,15 @@ class MainActivity : Activity() {
                 store.put(Easynews.SERVER, servers[index].first); dialog.dismiss()
                 toast("Easynews links now stream from ${servers[index].second}. Search again to use it."); refreshSettings()
             }.setNegativeButton("Cancel", null).show()
+    }
+
+    /** Parallel connections per Easynews video: each connection is capped, so more connections stream faster. */
+    private fun easynewsConnections() {
+        inputSetting("Easynews connections (1–${Easynews.MAX_CONNECTIONS})", "e.g. 4 or 8. 1 = a single connection", Easynews.connections(store).toString()) { value ->
+            val count = value.trim().toIntOrNull()
+            if (count == null || count !in 1..Easynews.MAX_CONNECTIONS) toast("Enter a whole number from 1 to ${Easynews.MAX_CONNECTIONS}")
+            else { store.put(Easynews.CONNECTIONS, count.toString()); toast("Easynews uses $count ${if (count == 1) "connection" else "connections"} from the next video"); refreshSettings() }
+        }
     }
 
     /** Easynews username and password, checked against the members site before they are saved. */

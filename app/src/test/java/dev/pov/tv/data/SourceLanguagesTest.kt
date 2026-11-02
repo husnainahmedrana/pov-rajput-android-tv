@@ -8,6 +8,29 @@ import org.junit.Test
 class SourceLanguagesTest {
     private fun source(title: String, height: Int = 1080, detail: String = "") = SourceItem(title, "fixture", detail = detail, qualityHeight = height)
 
+    @Test fun `subtitle lists in Torrentio and Comet release names are subtitles, not audio`() {
+        // Torrentio (Rutracker): every language after "Sub" is a subtitle, including after an unknown code (Ukr).
+        val rutracker = SourceLanguages.detect("Dune: Part Two [2024 UHD BDRemux 2160p] 4x Dub + Sub Rus Ukr Eng Multi 4 + Original Eng\n👤 395 💾 69 GB ⚙️ Rutracker\nMulti Audio / 🇬🇧 / 🇷🇺 / 🇺🇦")
+        assertEquals(setOf("ru", "en"), rutracker.subtitles)
+        assertTrue("Original Eng and the flag line keep English audio", "en" in rutracker.audio)
+        val bracketed = SourceLanguages.detect("Dune: Part Two [2024 WEB-DL 2160p] Dub + (Ukr) + Original (Eng) + Sub (Rus Eng Ukr)")
+        assertEquals(setOf("ru", "en"), bracketed.subtitles)
+        assertEquals(setOf("en"), bracketed.audio)
+        // Comet: "Sub Ita Eng" and "sub ita.eng" after the audio languages.
+        val comet = SourceLanguages.detect("📄 Dune - Parte Due (2024) 2160p H265 DV ITA TrueHD DA 7.1 ENG ITA AC3 5.1 Sub Ita Eng NUIta NUEng - Raffyone.mkv")
+        assertEquals(setOf("it", "en"), comet.audio)
+        assertEquals(setOf("it", "en"), comet.subtitles)
+        assertEquals(setOf("it", "en"), SourceLanguages.detect("Dune - Part Two (2024) AC3 5.1 ITA.ENG 2160p H265 HDR10 Dolby Vision sub ita.eng Sp33dy94-MIRCrew.mkv").subtitles)
+        // "ESub": English subtitles.
+        val esub = SourceLanguages.detect("📄 Dune- Part Two (2024) 2160p 4K UHD Blu-ray REMUX Dual Audio [Hindi + English] ESub ~ RemuxDoc.mkv")
+        assertEquals(setOf("hi", "en"), esub.audio)
+        assertEquals(setOf("en"), esub.subtitles)
+        // Meteor's 🌐 / 💬 lines keep working.
+        val meteor = SourceLanguages.detect("📄 Dune.Part.Two.2024.UHD.BluRay.2160p.REMUX-FraMeSToR.mkv\n🌐 🇬🇧\n💬 🇬🇧 🇫🇷 🇩🇪 🇮🇹")
+        assertEquals(setOf("en"), meteor.audio)
+        assertEquals(setOf("en", "fr", "de", "it"), meteor.subtitles)
+    }
+
     @Test fun `release names, native names and flags are read as audio languages`() {
         assertEquals(setOf("pt"), SourceLanguages.detect("Movie.2024.1080p.WEB-DL.DUAL.PT-BR.mkv").audio)
         assertEquals(setOf("pt", "en"), SourceLanguages.detect("Movie 2024 🇧🇷 / 🇬🇧").audio.toSet())

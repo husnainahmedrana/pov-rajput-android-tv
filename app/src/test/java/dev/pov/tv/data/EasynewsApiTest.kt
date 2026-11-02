@@ -33,6 +33,39 @@ class EasynewsApiTest {
         assertTrue(item.headers.isEmpty())
     }
 
+    @Test fun `Easynews languages and picture size feed the link-list ranking`() {
+        val tagged = JSONObject(payload.toString()).put("data", org.json.JSONArray().put(JSONObject(
+            """{"0":"a","10":"Some.Movie.2024.WEB-DL","11":".mkv","14":"2h 1m","width":"3840","height":"1600","alangs":["eng","ita"],"slangs":["ger"]}""")))
+        val item = api("{}").parse(tagged).single()
+        assertEquals(2160, item.qualityHeight)
+        assertTrue(item.detail, item.detail.contains("🌐 English, Italian") && item.detail.contains("💬 German"))
+        val found = SourceLanguages.detect("${item.title} · ${item.detail}", listOf("en", "it", "de"))
+        assertEquals(setOf("en", "it"), found.audio)
+        assertEquals(setOf("de"), found.subtitles)
+    }
+
+    @Test fun `only files named for the title and its year are kept`() {
+        val api = api("{}")
+        val verity = PlaybackIdentity("tt1", "movie", "Verity")
+        assertTrue(api.matches("Verity.2025.1080p.WEB-DL.x264.mkv", verity, 2025))
+        assertTrue(api.matches("verity (2026) 2160p.mkv", verity, 2025))
+        assertTrue(api.matches("Verity.1080p.WEB.mkv", verity, 2025))
+        assertFalse(api.matches("Verity.2010.720p.mkv", verity, 2025))
+        assertFalse(api.matches("The.Verity.Files.S01E02.mkv", verity, 2025))
+        assertFalse(api.matches("Colleen.Hoover.Verity.Audiobook.Reading.2023.mkv", verity, 2025))
+        assertFalse(api.matches("Verity.Bad.Night.2025.mkv", verity, 2025))
+        val dune = PlaybackIdentity("tt2", "movie", "Dune: Part Two")
+        assertTrue(api.matches("Dune.Part.Two.2024.2160p.WEB-DL.mkv", dune, 2024))
+        assertFalse(api.matches("Dune.2021.2160p.mkv", dune, 2024))
+        assertTrue(api.matches("The.Batman.2022.1080p.mkv", PlaybackIdentity("tt3", "movie", "The Batman"), 2022))
+        assertTrue(api.matches("Amelie.2001.1080p.mkv", PlaybackIdentity("tt4", "movie", "Amélie"), 2001))
+        val show = PlaybackIdentity("tt5", "series", "Severance", 2, 3)
+        assertTrue(api.matches("Severance.S02E03.1080p.mkv", show, null))
+        assertTrue(api.matches("Severance.2022.S02E03.2160p.mkv", show, null))
+        assertFalse(api.matches("Severance.S02E04.1080p.mkv", show, null))
+        assertFalse(api.matches("Corporate.Severance.S02E03.mkv", show, null))
+    }
+
     @Test fun `a chosen download server replaces the farm Easynews names`() {
         val chosen = EasynewsApi({ "user" to "secret" }, { _, _ -> "{}" }, server = { "iad" })
         assertEquals("https://members.easynews.com/dl/iad/443/abc123.mkv/Some.Movie.2024.2160p.WEB-DL.mkv", chosen.parse(payload).single().directUrl)
