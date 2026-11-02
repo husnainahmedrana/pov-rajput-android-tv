@@ -1917,7 +1917,7 @@ class MainActivity : Activity() {
             host.removeAllViews()
             host.addView(text("${result.anime.title} · ${group.title}", 17, ink, true), margin(-1, -2, top = 15, bottom = 9))
             // Flix: the same sideways row of wide episode cards as shows, with the header following the focused episode.
-            if (flix) host.addView(episodeStrip(result.media, group.episodes.map { choice ->
+            if (flix && DeviceLayout.tv) host.addView(episodeStrip(result.media, group.episodes.map { choice ->
                 Triple(choice.identity, EpisodeData(choice.identity.season, choice.identity.episode, choice.title, choice.released, choice.thumbnail),
                     "Episode ${choice.catalogEpisode}")
             }, null), margin(-1, -2))
@@ -1928,7 +1928,9 @@ class MainActivity : Activity() {
                     choice.absoluteEpisode?.let { add("Overall episode $it") }
                     if (choice.released.isNotBlank()) add(choice.released.take(10))
                 }.joinToString(" · ")
-                host.addView(episodeButton(identity, choice.title, choice.released, extra), margin(-1, 62, bottom = 7))
+                if (flix) host.addView(episodeRow(identity, EpisodeData(identity.season, identity.episode, choice.title, choice.released, choice.thumbnail),
+                    result.media, "Episode ${choice.catalogEpisode}", extra), margin(-1, -2, bottom = 8))
+                else host.addView(episodeButton(identity, choice.title, choice.released, extra), margin(-1, 62, bottom = 7))
             }
             focusAfterRender(generation)
         }
@@ -2374,7 +2376,11 @@ class MainActivity : Activity() {
             host.removeAllViews()
             if (flix) tabs.forEach { (value, tab) -> paintSeasonTab(tab, value == season, tab.hasFocus()) }
             else host.addView(text(label, 18, ink, true), margin(-1, -2, top = 16, bottom = 10))
-            if (flix) host.addView(episodeStrip(result, episodes.map { episode ->
+            // TV: the sideways row of wide cards. Phone: the vertical list (still, title, date, synopsis) suits scrolling.
+            if (flix && DeviceLayout.phone) episodes.forEach { episode ->
+                host.addView(episodeRow(PlaybackIdentity(result.imdbId, "series", result.title, episode.season, episode.episode), episode, result), margin(-1, -2, bottom = 8))
+            }
+            else if (flix) host.addView(episodeStrip(result, episodes.map { episode ->
                 Triple(PlaybackIdentity(result.imdbId, "series", result.title, episode.season, episode.episode), episode, "S${episode.season} · E${episode.episode}")
             }, episodeTarget), margin(-1, -2))
             else episodes.forEach { episode ->
@@ -2399,7 +2405,7 @@ class MainActivity : Activity() {
         if (flix) {
             // The episode row comes first, right under the buttons (no heading, so whole cards fit on the first screen);
             // the seasons sit in a row of tabs beneath it.
-            body.addView(host, margin(-1, -2, top = 14))
+            if (DeviceLayout.tv) body.addView(host, margin(-1, -2, top = 14))
             val row = horizontalRow()
             episodeTabs = row.parent as? View ?: row
             seasons.forEach { season ->
@@ -2413,6 +2419,8 @@ class MainActivity : Activity() {
                 tabs += season to tab
                 row.addView(tab, margin(-2, 36, right = 8))
             }
+            // On the phone the season tabs sit above the episode list.
+            if (DeviceLayout.phone) body.addView(host, margin(-1, -2, top = 8))
         } else { body.addView(selector, margin(370, 44, top = 15)); body.addView(host) }
         render(EpisodePresentation.selectedSeason(result.episodes, selectedSeasons[result.imdbId])!!)
     }
@@ -2552,7 +2560,7 @@ class MainActivity : Activity() {
         copy.addView(text(episode.title, 15, ink, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 4))
         // Every episode's synopsis is visible in the list, as in a TV guide.
         if (episode.overview.isNotBlank() && !future) copy.addView(text(episode.overview, 12, 0xFFD2D2D2.toInt()).apply {
-            maxLines = 3; ellipsize = TextUtils.TruncateAt.END; setLineSpacing(dp(2).toFloat(), 1f)
+            maxLines = if (DeviceLayout.phone) 2 else 3; ellipsize = TextUtils.TruncateAt.END; setLineSpacing(dp(2).toFloat(), 1f)
         }, margin(-1, -2, top = 5))
         row.addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
         row.setOnFocusChangeListener { view, focused ->
