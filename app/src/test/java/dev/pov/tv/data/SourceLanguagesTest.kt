@@ -8,6 +8,33 @@ import org.junit.Test
 class SourceLanguagesTest {
     private fun source(title: String, height: Int = 1080, detail: String = "") = SourceItem(title, "fixture", detail = detail, qualityHeight = height)
 
+    @Test fun `a long Torrentio flag line is the original audio and then subtitles`() {
+        // Torrentio, Resident Evil (2026): a PSA encode lists 27 flags; only English is audio.
+        val psa = SourceLanguages.detect("Resident.Evil.2026.2160p.HDR10Plus.DV.WEBRip.6CH.x265.HEVC-PSA\n👤 220 💾 2.19 GB ⚙️ EXT\n" +
+            "🇬🇧 / 🇯🇵 / 🇷🇺 / 🇮🇹 / 🇵🇹 / 🇪🇸 / 🇰🇷 / 🇨🇳 / 🇫🇷 / 🇳🇱 / 🇵🇱 / 🇨🇿 / 🇭🇺 / 🇧🇬 / 🇷🇸   / 🇭🇷 / 🇺🇦")
+        assertEquals(setOf("en"), psa.audio)
+        assertTrue("es" in psa.subtitles)
+        // A short list is real dubs.
+        assertEquals(setOf("en", "es"), SourceLanguages.detect("Resident Evil (2026) [Bluray 1080p][Esp]\n👤 412 💾 7.01 GB ⚙️ Wolfmax4k\n🇬🇧 / 🇪🇸").audio)
+        // AIOStreams / Comet: the same long list on an unlabelled 🌎 line.
+        val aio = SourceLanguages.detect("Resident.Evil.2026.2160p.WEBRip-PSA\n🌎 🇬🇧 / 🇯🇵 / 🇷🇺 / 🇮🇹 / 🇪🇸 / 🇫🇷")
+        assertEquals(setOf("en"), aio.audio)
+        assertTrue("es" in aio.subtitles)
+        // Meteor labels both lines, so a long 🌐 line stays audio.
+        val meteor = SourceLanguages.detect("📄 Movie.2160p.MULTi.mkv\n🌐 🇬🇧 🇪🇸 🇵🇹 🇫🇷 🇮🇹\n💬 🇬🇧 🇪🇸")
+        assertEquals(setOf("en", "es", "pt", "fr", "it"), meteor.audio)
+        // StremThru: 🎙️ audio with its own 💬 subtitles line, or one long 🌐 line when subtitles are unknown.
+        val labelled = SourceLanguages.detect("💿 WEBRip 🎞️ HEVC\n📦 2.19 GB 👤 220\n🎙️ 🇬🇧 🇯🇵 🇷🇺 🇮🇹 🇪🇸\n💬 🇫🇷 🇪🇸")
+        assertEquals(setOf("en", "ja", "ru", "it", "es"), labelled.audio)
+        assertEquals(setOf("fr", "es"), labelled.subtitles)
+        val unlabelled = SourceLanguages.detect("💿 WEBRip 🎞️ HEVC\n📦 2.19 GB 👤 220\n🌐 🇬🇧 🇯🇵 🇷🇺 🇮🇹 🇪🇸\n⚙️ PSA 🔗 EXT")
+        assertEquals(setOf("en"), unlabelled.audio)
+        val spanish = SourceLanguageOrder("es", "es")
+        val items = listOf(source("Resident.Evil.2026.2160p.HDR10Plus.DV.WEBRip.6CH.x265.HEVC-PSA", 2160,
+            "🇬🇧 / 🇯🇵 / 🇷🇺 / 🇮🇹 / 🇵🇹 / 🇪🇸 / 🇰🇷 / 🇨🇳 / 🇫🇷"), source("Resident Evil (2026) [4K 2160P][Esp]", 2160, "🇪🇸"))
+        assertEquals("Resident Evil (2026) [4K 2160P][Esp]", spanish.sorted(items, SourceSortOrder()).first().title)
+    }
+
     @Test fun `subtitle lists in Torrentio and Comet release names are subtitles, not audio`() {
         // Torrentio (Rutracker): every language after "Sub" is a subtitle, including after an unknown code (Ukr).
         val rutracker = SourceLanguages.detect("Dune: Part Two [2024 UHD BDRemux 2160p] 4x Dub + Sub Rus Ukr Eng Multi 4 + Original Eng\n👤 395 💾 69 GB ⚙️ Rutracker\nMulti Audio / 🇬🇧 / 🇷🇺 / 🇺🇦")

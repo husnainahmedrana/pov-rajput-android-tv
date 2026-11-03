@@ -26,3 +26,5 @@ Skip intro, recap and credits timestamps: TheIntroDB (https://theintrodb.org, co
 
 WeTrakr tracking service, API and official logo: WeTrakr and its developer, alberdev. Thank you for developing WeTrakr and providing API access for this integration. https://wetrakr.com/ | https://api.wetrakr.com/ | https://www.reddit.com/user/alberdev/
 Official logo paths and colors are represented as Android vector drawables. WeTrakr names, artwork, metadata and service remain the property of their respective owners. This independent app is not endorsed by WeTrakr.
+PenguPlay and its logo belong to their respective owner; the logo is shown only to say which add-on is streaming. This independent app is not endorsed by PenguPlay. https://pengu.uk/
+CNCVerse Bridge (by NivinCNC) and its logo belong to their respective owner; the logo is shown only to say which add-on is streaming. This independent app is not endorsed by CNCVerse. https://cncverse.dpdns.org/

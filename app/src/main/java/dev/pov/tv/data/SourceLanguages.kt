@@ -35,7 +35,8 @@ object SourceLanguages {
     // Providers such as Meteor print one line per kind: "🌐 🇮🇳" for audio and "💬 🇬🇧 🇮🇳" for subtitles.
     private val segments = Regex("\\n| · | \\| ")
     private val subtitleLine = Regex("(?i)^\\s*(?:💬|📝|sub(?:title)?s?\\s*:)")
-    private val audioLine = Regex("^\\s*(?:🌐|🌎|🌍|🗣|🔊)")
+    // StremThru labels audio 🎙️ when it also prints a 💬 subtitle line.
+    private val audioLine = Regex("^\\s*(?:🌐|🌎|🌍|🗣|🔊|🎙)")
     private val subtitleBefore = Regex("(?i)(?:sub(?:title)?s?|💬|📝)[\\s:._\\-\\[(]{0,3}$")
     private val subtitleAfter = Regex("(?i)^[\\s._\\-\\])]{0,3}(?:sub(?:title)?s?|subbed|legendado)$EDGE_AFTER")
     private val multi = Regex("(?i)$EDGE_BEFORE(?:multi|dual)(?:[ ._-]?audio)?$EDGE_AFTER(?![ ._-]?sub)")
@@ -72,18 +73,41 @@ object SourceLanguages {
         }
     }
 
+    /**
+     * Torrentio's flag line names every language in the file, subtitles too ("🇬🇧 / 🇯🇵 / 🇷🇺 / … 27 flags"), and
+     * AIOStreams and Comet repeat such lists on their 🌎 line. A list this long is the original audio (its first
+     * language) followed by subtitle tracks; short lists ("🇬🇧 / 🇪🇸") are dubs. Meteor's 🌐 line, which comes
+     * with its own 💬 subtitle line, is real audio however long.
+     */
+    private const val LONG_LANGUAGE_LIST = 5
+    /** Only flags and separators (Torrentio's unlabelled language line). */
+    private fun flagsOnly(segment: String): Boolean {
+        var index = 0
+        while (index < segment.length) {
+            val point = segment.codePointAt(index)
+            if (point !in 0x1F1E6..0x1F1FF && !Character.isWhitespace(point) && point != '/'.code && point != ','.code && point != '|'.code) return false
+            index += Character.charCount(point)
+        }
+        return true
+    }
+
     fun detect(text: String, extra: Collection<String> = emptyList()): Detected {
         val sample = text.take(4000)
         val scan = scanner(extra)
         val audio = linkedSetOf<String>(); val subtitles = linkedSetOf<String>()
+        val labelledSubtitles = sample.split(segments).any { subtitleLine.containsMatchIn(it) }
         for (segment in sample.split(segments)) {
             val kind = when { subtitleLine.containsMatchIn(segment) -> 1; audioLine.containsMatchIn(segment) -> 2; else -> 0 }
+            val matches = scan.regex.findAll(segment).toList()
+            val longList = matches.size >= LONG_LANGUAGE_LIST &&
+                ((kind == 0 && flagsOnly(segment)) || (kind == 2 && !labelledSubtitles))
             var listEnd = -1
-            for (match in scan.regex.findAll(segment)) {
+            for (match in matches) {
                 val code = scan.codes[scan.codes.indices.first { match.groups["l$it"] != null }]
-                val subtitle = when (kind) {
-                    1 -> true
-                    2 -> false
+                val subtitle = when {
+                    kind == 1 -> true
+                    longList -> match !== matches.first()
+                    kind == 2 -> false
                     else -> subtitleBefore.containsMatchIn(segment.substring(maxOf(0, match.range.first - 12), match.range.first)) ||
                         subtitleAfter.containsMatchIn(segment.substring(match.range.last + 1, minOf(segment.length, match.range.last + 13))) ||
                         (listEnd >= 0 && subtitleListGap.matches(segment.substring(listEnd, match.range.first)))

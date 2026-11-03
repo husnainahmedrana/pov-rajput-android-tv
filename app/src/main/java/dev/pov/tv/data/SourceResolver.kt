@@ -47,7 +47,7 @@ class SourceResolver internal constructor(
         val all = mutableListOf<SourceItem>()
         try {
             val tasks = providers.mapIndexed { index, provider -> executor.submit(java.util.concurrent.Callable {
-                try { parseStreams(publicJson("${endpoints[index]}/stream/${identity.type}/$id.json"), provider.name, identity) }
+                try { parseStreams(publicJson("${endpoints[index]}/stream/${identity.type}/$id.json"), provider.name, identity, AddonBadges.of(endpoints[index], provider.name)) }
                 catch (error: InterruptedException) { throw error }
                 catch (error: java.util.concurrent.CancellationException) { throw error }
                 catch (_: Exception) { null }
@@ -82,7 +82,7 @@ class SourceResolver internal constructor(
         return SearchResult(results, failures)
     }
 
-    private fun parseStreams(payload: JSONObject, provider: String, identity: PlaybackIdentity): List<SourceItem> {
+    private fun parseStreams(payload: JSONObject, provider: String, identity: PlaybackIdentity, addon: String? = null): List<SourceItem> {
         val streams = payload.optJSONArray("streams") ?: return emptyList()
         return (0 until minOf(streams.length(), 300)).mapNotNull { index ->
             val stream = streams.optJSONObject(index) ?: return@mapNotNull null
@@ -99,6 +99,7 @@ class SourceResolver internal constructor(
             val fileIndex = if (stream.has("fileIdx") && !stream.isNull("fileIdx")) stream.optInt("fileIdx", -1).takeIf { it >= 0 } else null
             SourceItem(title = title, provider = provider, infoHash = hash, fileIndex = fileIndex, directUrl = direct,
                 sizeBytes = SourceMetadata.sizeBytes(stream), qualityHeight = SourceMetadata.qualityHeight(stream), headers = headers,
+                addon = addon?.takeIf { direct.isNotBlank() },
                 detail = listOf(stream.optString("name"), description.lineSequence().drop(1).joinToString(" · "))
                     .filter { it.isNotBlank() }.joinToString(" · ").take(800))
         }
@@ -110,7 +111,8 @@ class SourceResolver internal constructor(
         return groups.values.map { copies ->
             val first = copies.first()
             first.copy(provider = copies.map { it.provider }.distinct().joinToString(" + "),
-                sizeBytes = copies.firstNotNullOfOrNull { it.sizeBytes }, qualityHeight = copies.firstNotNullOfOrNull { it.qualityHeight })
+                sizeBytes = copies.firstNotNullOfOrNull { it.sizeBytes }, qualityHeight = copies.firstNotNullOfOrNull { it.qualityHeight },
+                addon = copies.firstNotNullOfOrNull { it.addon })
         }
     }
 

@@ -64,6 +64,10 @@ class MainActivity : Activity() {
     private lateinit var shellRoot: FrameLayout
     private lateinit var heroBackdrop: FrameLayout
     private lateinit var backdropArt: ImageView
+    /** The link list's own layers: the phone's poster art and a dimming scrim over the artwork. */
+    private lateinit var sourcesArt: ImageView
+    private lateinit var sourcesScrim: View
+    private var sourcesPage = false
     private lateinit var scroller: ScrollView
     private val navigationViews = mutableMapOf<String, View>()
     private var destination = "home"
@@ -102,7 +106,8 @@ class MainActivity : Activity() {
         else if (flix) setRailExpanded(navigationViews.values.any { it.hasFocus() })
     }
     private data class RetainedPage(val children: List<View>, val padding: IntArray, val home: Boolean, val generation: Int,
-        val heroVisibility: Int, val heroHeight: Int, val heroArt: android.graphics.drawable.Drawable?, val heroAddress: String?, val revision: String)
+        val heroVisibility: Int, val heroHeight: Int, val heroArt: android.graphics.drawable.Drawable?, val heroAddress: String?, val revision: String,
+        val sources: Boolean = false)
     private data class NavigationSnapshot(val screen: () -> Unit, val focus: TvFocusSnapshot, val destination: String, val retained: RetainedPage?)
     private var pageSequence = 0
     private val pendingLoads = mutableMapOf<Int, Int>()
@@ -126,6 +131,8 @@ class MainActivity : Activity() {
     /** Release text and size of the link about to play; the chosen file's name is added once it is known. */
     private var playingSourceText = ""
     private var playingMedia: Pair<String, Long?>? = null
+    /** The add-on badge (PenguPlay) for the direct link about to play. */
+    private var playingAddon: String? = null
     private fun mediaFile(name: String, size: Long?) {
         playingMedia = listOf(name, playingSourceText).filter { it.isNotBlank() }.distinct().joinToString(" · ") to size?.takeIf { it > 0 }
     }
@@ -489,6 +496,10 @@ class MainActivity : Activity() {
         heroBackdrop = FrameLayout(this).apply { visibility = View.GONE }
         backdropArt = FixedSizeImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
         heroBackdrop.addView(backdropArt, FrameLayout.LayoutParams(-1, -1))
+        sourcesArt = FixedSizeImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; visibility = View.GONE }
+        heroBackdrop.addView(sourcesArt, FrameLayout.LayoutParams(-1, -1))
+        sourcesScrim = View(this).apply { visibility = View.GONE }
+        heroBackdrop.addView(sourcesScrim, FrameLayout.LayoutParams(-1, -1))
         if (!flix) {
             heroBackdrop.addView(View(this).apply { background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
                 intArrayOf(bg, withAlpha(bg, 180), Color.TRANSPARENT)) }, FrameLayout.LayoutParams(-1, -1))
@@ -508,7 +519,8 @@ class MainActivity : Activity() {
             // The feature copy stays pinned while rows slide beneath it.
             statusScrim?.alpha = (y / dp(40).toFloat()).coerceIn(0f, 1f)
             // On the phone the banner and its copy scroll away with the page.
-            if (flix && DeviceLayout.tv) featureHero()?.translationY = y.toFloat() else heroBackdrop.translationY = -y.toFloat()
+            // The link list's art stays put behind the list.
+            if (flix && DeviceLayout.tv) featureHero()?.translationY = y.toFloat() else if (!sourcesPage) heroBackdrop.translationY = -y.toFloat()
             body.invalidate()
         }
         val layout = theme.layout
@@ -663,7 +675,7 @@ class MainActivity : Activity() {
     }
     private fun retainPage() = RetainedPage(
         (0 until body.childCount).map(body::getChildAt), intArrayOf(body.paddingLeft, body.paddingTop, body.paddingRight, body.paddingBottom),
-        isHome, generation, heroBackdrop.visibility, heroBackdrop.layoutParams.height, backdropArt.drawable, backdropArt.tag as? String, pageRevision())
+        isHome, generation, heroBackdrop.visibility, heroBackdrop.layoutParams.height, backdropArt.drawable, backdropArt.tag as? String, pageRevision(), sourcesPage)
     private fun restorePage(cached: RetainedPage) {
         generation = cached.generation; resolvingGeneration = null; isHome = cached.home; flixScrollTarget = -1
         focusController.reset(); body.removeAllViews()
@@ -672,6 +684,7 @@ class MainActivity : Activity() {
         cached.children.forEach { (it.parent as? ViewGroup)?.removeView(it); body.addView(it) }
         heroBackdrop.animate().cancel(); heroBackdrop.alpha = 1f; heroBackdrop.scaleX = 1f; heroBackdrop.scaleY = 1f
         heroBackdrop.visibility = cached.heroVisibility; heroBackdrop.layoutParams.height = cached.heroHeight
+        if (cached.sources && flix) { sourcesPage = true; sourcesLayers() } else leaveSourcesBackdrop()
         placeBackdrop(home = cached.home)
         backdropArt.tag = cached.heroAddress; backdropArt.setImageDrawable(cached.heroArt)
         backdropArt.setTag(R.id.pov_backdrop_key, cached.heroAddress?.let { if (cached.home) "backdrop-corner:$it" else "backdrop:$it" })
@@ -711,7 +724,7 @@ class MainActivity : Activity() {
         bottomAligner?.let(body::removeOnLayoutChangeListener); bottomAligner = null
         for (index in 0 until body.childCount) body.getChildAt(index).animate().cancel()
         heroBackdrop.animate().cancel(); heroBackdrop.alpha = 1f; heroBackdrop.scaleX = 1f; heroBackdrop.scaleY = 1f
-        focusController.reset(); body.removeAllViews(); heroBackdrop.visibility = View.GONE
+        focusController.reset(); body.removeAllViews(); heroBackdrop.visibility = View.GONE; leaveSourcesBackdrop()
         body.animate().cancel(); body.alpha = 1f; body.translationY = 0f
         body.setPadding(0, systemTop + dp(when (theme.layout.navigation) { NavigationPlacement.LEFT_RAIL -> 63; NavigationPlacement.BOTTOM_BAR -> 16; else -> 15 }), 0, contentBottomPadding())
         scroller.scrollTo(0, 0); heroBackdrop.translationY = 0f
@@ -1399,7 +1412,8 @@ class MainActivity : Activity() {
         if (!flix) return
         val params = heroBackdrop.layoutParams as FrameLayout.LayoutParams
         if (DeviceLayout.phone) {
-            val height = resources.displayMetrics.widthPixels * 9 / 16
+            // The link list's art fills the phone; other pages use the banner.
+            val height = if (sourcesPage) -1 else resources.displayMetrics.widthPixels * 9 / 16
             if (params.width != -1 || params.height != height) {
                 params.width = -1; params.height = height; params.gravity = Gravity.TOP; heroBackdrop.layoutParams = params
             }
@@ -1714,10 +1728,10 @@ class MainActivity : Activity() {
             val latest = try { GitHubUpdates(this).latest() } catch (_: Exception) { null }
             if (latest != null) runOnUiThread {
                 if (resumed && !isDestroyed && !isFinishing && !InAppPlaybackSession.hasActive()) {
-                    AlertDialog.Builder(this).setTitle("Update available · ${latest.version.removeSuffix("-rajput")}")
-                        .setMessage("A new published release of POV Rajput is available.")
-                        .setPositiveButton("View update") { _, _ -> startActivity(Intent(this, UpdateActivity::class.java)) }
-                        .setNegativeButton("Later", null).show()
+                    SpacedChoiceDialog.show(this, "Update available · ${latest.version.removeSuffix("-rajput")}",
+                        "A new published release of POV Rajput is available.", "View update", "Later") {
+                        startActivity(Intent(this, UpdateActivity::class.java))
+                    }
                 }
             }
         }
@@ -2693,13 +2707,15 @@ class MainActivity : Activity() {
         val connected = DebridServices.connected(store)
         val order = connected.joinToString(" → ") { DebridServices.name(it) }
         // Without a debrid service, addons can still supply direct links; torrents are left out.
+        val artShown = flix && heroBackdrop.visibility == View.VISIBLE
         val id = page(identity.title + suffix, if (connected.isEmpty()) "Direct links only. Torrent sources need a debrid service." else "Cached source priority: $order.")
+        sourcesBackdrop(identity, keep = artShown)
         // The title's runtime (for each link's estimated bitrate) loads alongside the source search, which takes far
         // longer, so it is ready when the list appears however the sources were opened.
         val title = MediaItemData(identity.imdbId, identity.type, identity.title)
         val details = if (cachedDetails(title) != null) null else metadataWorker.submit(java.util.concurrent.Callable { runCatching { fetchDetails(title) }.getOrNull() })
         read(id, { resolver.search(identity).also { runCatching { details?.get(1_500, java.util.concurrent.TimeUnit.MILLISECONDS) } } }) { result ->
-            sourceResults(identity, result.items, result.unavailableProviders, autoplay = autoplayNext || (!manual && store.get(AUTOPLAY_FIRST) == "true"))
+            sourceResults(identity, result.items, result.unavailableProviders, autoplay = autoplayNext || (!manual && store.get(AUTOPLAY_FIRST) == "true"), animate = true)
         }
     }
 
@@ -2709,7 +2725,7 @@ class MainActivity : Activity() {
     private fun sourceRevision() = listOf(store.get(SourceProviders.KEY), store.get("sources.endpoint"), DebridServices.connected(store).joinToString(","),
         Easynews.active(store).toString(), Easynews.server(store)).joinToString("\u0000")
 
-    private fun sourceResults(identity: PlaybackIdentity, sources: List<SourceItem>, unavailable: List<String>, autoplay: Boolean = false) {
+    private fun sourceResults(identity: PlaybackIdentity, sources: List<SourceItem>, unavailable: List<String>, autoplay: Boolean = false, animate: Boolean = false) {
         val providerRevision = sourceRevision()
         current = {
             if (providerRevision != sourceRevision()) showSources(identity)
@@ -2720,18 +2736,38 @@ class MainActivity : Activity() {
         val checkOnPlay = connected.filter { it in LinkDebrids.CHECK_ON_PLAY }
         // Hide uncached links: only links known not to be cached go; Real-Debrid-style services can't tell, so theirs stay.
         val hideUncached = store.get(HIDE_UNCACHED) == "true" && checkOnPlay.isEmpty()
+        // Cam, telesync and other theatre copies are left out unless the viewer turned that off.
+        val hideLow = LowQualityReleases.hidden(store)
         val playable = (if (directOnly) sources.filter { it.directUrl.isNotEmpty() } else sources)
             .let { all -> if (hideUncached) all.filter(::playsAtOnce) else all }
+            .let { all -> if (hideLow) all.filterNot(LowQualityReleases::matches) else all }
+        val lowOnly = hideLow && playable.isEmpty() && sources.any(LowQualityReleases::matches)
         val suffix = if (identity.type == "series") "  ·  S${identity.season} E${identity.episode}" else ""
-        val id = page(identity.title + suffix, if (directOnly) "Direct links only. Torrent sources need a debrid service."
-            else "Cached source priority: ${connected.joinToString(" → ") { DebridServices.name(it) }}.")
+        val artShown = flix && heroBackdrop.visibility == View.VISIBLE
+        val id = page("")
+        // The title, with the link counts in the top-right corner: each service's logo and its cached links, then the total.
+        val counts = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL or Gravity.END }
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        header.addView(text(identity.title + suffix, if (DeviceLayout.phone) 24 else 29, ink, true).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END },
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val countedServices = connected.size + (if (Easynews.active(store)) 1 else 0)
+        // A phone has room for two logos beside the title; more go on their own line, still on the right.
+        val ownLine = DeviceLayout.phone && countedServices > 2
+        if (!ownLine) header.addView(counts, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(12) })
+        body.addView(header, margin(-1, -2, bottom = 5))
+        if (ownLine) body.addView(counts, margin(-1, -2, bottom = 6))
+        body.addView(text(if (directOnly) "Direct links only. Torrent sources need a debrid service."
+            else "Cached source priority: ${connected.joinToString(" → ") { DebridServices.name(it) }}.", 12, muted), margin(-1, -2, bottom = 18))
+        sourcesBackdrop(identity, keep = artShown)
         val sorting = SourceSortPreferences(this)
         body.addView(button("Sort · ${sorting.label}  ›") {
             SourceSortPreferences.show(this) { sourceResults(identity, sources, unavailable) }
         }, margin(-1, 42, bottom = 8))
         if (unavailable.isNotEmpty()) body.addView(text("Unavailable providers: ${unavailable.joinToString(", ")}. Other providers were searched.", 14, muted), margin(-1, -2, bottom = 8))
         if (sources.isEmpty()) body.addView(text("No sources were returned. Try again later or check the source provider in Settings.", 15, muted))
-        else if (playable.isEmpty() && hideUncached) {
+        else if (lowOnly) {
+            body.addView(text("Only cam or other low-quality releases were found. Turn off Hide cam & low-quality releases in Settings → Playback to see them.", 15, muted))
+        } else if (playable.isEmpty() && hideUncached) {
             body.addView(text("Only uncached links were found. Turn off Hide uncached links in Settings → Playback to see them.", 15, muted))
         } else if (playable.isEmpty()) {
             body.addView(text("Only torrent sources were found. Connect a debrid service to play them.", 15, muted))
@@ -2744,9 +2780,30 @@ class MainActivity : Activity() {
         val limit = DecoderLimits.maxHeight()
         fun tooTall(source: SourceItem) = (source.qualityHeight ?: 0) > limit
         val languages = sorting.languages
-        val ordered = playable.distinctBy(TvChoiceKeys::source).let { unique -> languages?.sorted(unique, sorting.order) ?: sorting.order.sorted(unique) }.let { all -> all.filterNot(::tooTall) + all.filter(::tooTall) }
+        val ordered = playable.distinctBy(TvChoiceKeys::source).let { unique -> languages?.sorted(unique, sorting.order) ?: sorting.order.sorted(unique) }.let(::cachedFirst).let { all -> all.filterNot(::tooTall) + all.filter(::tooTall) }
         // The player's Streams panel offers the same links in the same order.
         StreamChoices.publish(identity, ordered)
+        fun count(service: String, value: String, description: String) {
+            counts.addView(ImageView(this).apply {
+                setImageResource(PlaybackDebrid.logo(service)); adjustViewBounds = true; maxWidth = dp(72)
+                scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = description
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(20)).apply { leftMargin = dp(14) })
+            counts.addView(text(value, 16, ink, true), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(6) })
+        }
+        connected.forEach { service ->
+            val name = DebridServices.name(service)
+            // Real-Debrid-style services can't say in advance what is cached.
+            if (service in checkOnPlay) count(service, "?", "$name checks the cache when a link is played")
+            else ordered.count { service in it.cachedServices }.let { count(service, "$it", "$it links cached on $name") }
+        }
+        if (Easynews.active(store)) ordered.count { Easynews.isHost(it.directUrl) }.let { count(PlaybackDebrid.EASYNEWS, "$it", "$it Easynews links") }
+        // Add-ons with their own logo show their count when they returned links.
+        listOf(PlaybackDebrid.PENGUPLAY to "PenguPlay", PlaybackDebrid.CNCVERSE to "CNCVerse").forEach { (addon, name) ->
+            ordered.count { PlaybackDebrid.addon(it) == addon }
+                .takeIf { it > 0 }?.let { count(addon, "$it", "$it $name links") }
+        }
+        counts.addView(text("${ordered.size} ${if (ordered.size == 1) "link" else "links"}", 14, muted, true),
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(16) })
         ordered.forEach { source ->
             val cachedOn = source.cachedServices.map(DebridServices::name)
             val status = when {
@@ -2758,8 +2815,9 @@ class MainActivity : Activity() {
             }
             val limitNote = if (tooTall(source)) " · ABOVE THIS TV'S ${DecoderLimits.label(limit)} LIMIT" else ""
             // Only the badges, the release name and the source's own name: the scrapers' extra lines are left out.
-            choices.addChoice(TvChoiceRow(this, TvChoiceKeys.source(source), SourceBadges.name(source), source.provider,
-                limitNote.removePrefix(" · "), theme.palette, SourceBadges.forRow(source, languages, minutes, checkOnPlay)) {
+            choices.addChoice(TvChoiceRow(this, TvChoiceKeys.source(source), SourceBadges.name(source), SourceBadges.origin(source),
+                limitNote.removePrefix(" · "), theme.palette, SourceBadges.forRow(source, languages, minutes, checkOnPlay, logos = true),
+                logos = SourceBadges.cachedOn(source).map(PlaybackDebrid::logo), glass = flix) {
                 if (!source.cached && source.directUrl.isEmpty()) {
                     if (checkOnPlay.isNotEmpty()) resolveFirstCached(ordered.dropWhile { it !== source }.filterNot(::tooTall), identity, source)
                     else offerTransfer(source, identity)
@@ -2768,6 +2826,7 @@ class MainActivity : Activity() {
             })
         }
         focusAfterRender(id)
+        if (animate && flix) sourcesRiseIn(choices)
         // Only a fresh search auto-plays; returning to this list leaves the choice to the viewer.
         if (autoplay) {
             // Auto-play skips links over the viewer's size limit; links of unknown size stay eligible.
@@ -2781,6 +2840,53 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * The link list's art: on TV the title's backdrop (carried over from the details page), on the phone its poster,
+     * softened, filling the screen. [keep] skips the fade-in when artwork is already showing.
+     */
+    private fun sourcesBackdrop(identity: PlaybackIdentity, keep: Boolean) {
+        if (!flix) return
+        val base = MediaItemData(identity.imdbId, identity.type, identity.title)
+        val item = cachedDetails(base) ?: base
+        sourcesPage = true
+        if (keep) heroBackdrop.visibility = View.VISIBLE
+        placeBackdrop(home = false); heroBackdrop.visibility = View.VISIBLE
+        sourcesLayers()
+        if (DeviceLayout.phone) {
+            val poster = item.poster.ifBlank { if (identity.imdbId.matches(Regex("tt\\d+"))) "https://images.metahub.space/poster/medium/${identity.imdbId}/img" else "" }
+            if (poster.isNotBlank()) image(sourcesArt, thumbnail(poster, wide = false), feature = true)
+        // TV: the plain backdrop over the details version (which is shaded nearly black on the left, under the list).
+        } else image(sourcesArt, backdropFor(item), feature = true)
+    }
+    private fun sourcesLayers() {
+        sourcesScrim.setBackgroundColor(withAlpha(bg, if (DeviceLayout.phone) 120 else 105))
+        sourcesScrim.visibility = View.VISIBLE
+        sourcesArt.visibility = View.VISIBLE
+        if (DeviceLayout.phone) {
+            if (android.os.Build.VERSION.SDK_INT >= 31) sourcesArt.setRenderEffect(
+                android.graphics.RenderEffect.createBlurEffect(dp(6).toFloat(), dp(6).toFloat(), android.graphics.Shader.TileMode.CLAMP))
+        }
+    }
+    private fun leaveSourcesBackdrop() {
+        if (!sourcesPage) return
+        sourcesPage = false; sourcesArt.visibility = View.GONE; sourcesScrim.visibility = View.GONE
+    }
+    /** The link list opens like a details page: the header, then the first rows, rise into place one after another. */
+    private fun sourcesRiseIn(list: TvChoiceList) {
+        val lift = dp(22).toFloat()
+        val parts = (0 until body.childCount).map(body::getChildAt).filter { it !== list } + (0 until minOf(list.childCount, 10)).map(list::getChildAt)
+        parts.forEachIndexed { index, part ->
+            part.animate().cancel(); part.alpha = 0f; part.translationY = lift
+            part.animate().alpha(1f).translationY(0f).setStartDelay(index * 35L).setDuration(260).setInterpolator(EASE_OUT).start()
+        }
+    }
+
+    /**
+     * Links that play at once (cached or direct) lead, and the rest follow in the same sort order. Real-Debrid-style
+     * services can't tell in advance, so with only those connected nothing moves.
+     */
+    private fun cachedFirst(sorted: List<SourceItem>): List<SourceItem> = sorted.partition(::playsAtOnce).let { (ready, other) -> ready + other }
+
     /** Cached somewhere, or a direct link: plays at once. */
     private fun playsAtOnce(source: SourceItem) = source.cached || source.cachedServices.isNotEmpty() || source.directUrl.isNotEmpty()
 
@@ -2790,11 +2896,12 @@ class MainActivity : Activity() {
         val hideUncached = store.get(HIDE_UNCACHED) == "true" && connected.none { it in LinkDebrids.CHECK_ON_PLAY }
         val playable = (if (connected.isEmpty()) sources.filter { it.directUrl.isNotEmpty() } else sources)
             .let { all -> if (hideUncached) all.filter(::playsAtOnce) else all }
+            .let { all -> if (LowQualityReleases.hidden(store)) all.filterNot(LowQualityReleases::matches) else all }
         val sorting = SourceSortPreferences(this)
         val limit = DecoderLimits.maxHeight()
         fun tooTall(source: SourceItem) = (source.qualityHeight ?: 0) > limit
         return playable.distinctBy(TvChoiceKeys::source).let { unique -> sorting.languages?.sorted(unique, sorting.order) ?: sorting.order.sorted(unique) }
-            .let { all -> all.filterNot(::tooTall) + all.filter(::tooTall) }
+            .let(::cachedFirst).let { all -> all.filterNot(::tooTall) + all.filter(::tooTall) }
     }
 
     /**
@@ -2907,6 +3014,7 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     if (request == generation && !isFinishing && !isDestroyed) {
                         resolvingGeneration = null; body.removeView(progress)
+                        playingAddon = if (prepared is PreparedSource.Direct) PlaybackDebrid.addon(source) else null
                         when (prepared) {
                             is PreparedSource.Direct -> play(prepared.url, prepared.identity.title, prepared.identity,
                                 "media:${prepared.identity.imdbId}:${prepared.identity.season}:${prepared.identity.episode}",
@@ -3261,8 +3369,8 @@ class MainActivity : Activity() {
                 .putExtra("debrid_service", PlaybackDebrid.normalize(debridService)).putExtra("cached_playback", resumeImmediately)
                 .putExtra("playback_account", LastPlayedLinks(store).scope(PlaybackDebrid.normalize(debridService)))
                 .putExtra("media_name", playingMedia?.first.orEmpty()).putExtra("media_size", playingMedia?.second ?: 0L)
-                .putExtra("headers", org.json.JSONObject(headers).toString())
-            playingMedia = null; playingSourceText = ""; switchResumeMs = null
+                .putExtra("headers", org.json.JSONObject(headers).toString()).putExtra("source_addon", playingAddon)
+            playingMedia = null; playingSourceText = ""; switchResumeMs = null; playingAddon = null
             @Suppress("DEPRECATION")
             startActivityForResult(intent, PLAYBACK_REQUEST)
             identity?.let { searchStreamsInBackground(it) }
@@ -3633,6 +3741,8 @@ class MainActivity : Activity() {
                 store.get(AUTOPLAY_FIRST) == "true") { on -> store.put(AUTOPLAY_FIRST, on.toString()) }
             settingsToggle(playback, "Hide uncached links", "Show only links that play at once (cached or direct) in the link list and the player's Streams. Real-Debrid, AllDebrid and Debrid-Link can't tell in advance, so their links stay.",
                 store.get(HIDE_UNCACHED) == "true") { on -> store.put(HIDE_UNCACHED, on.toString()) }
+            settingsToggle(playback, "Hide cam & low-quality releases", "Leave out theatre recordings and early copies: CAM, HDCAM, TS/telesync, TC/telecine, screeners, workprints and HDRip. On by default.",
+                LowQualityReleases.hidden(store)) { on -> store.put(LowQualityReleases.KEY, on.toString()) }
             settingsToggle(playback, "Auto-play limit", "Auto-play skips links above your bitrate limit (file size over the title's runtime). When the runtime is unknown, the movie or episode size limit applies. Links of unknown size can still play, and you can still choose any link yourself.",
                 store.get(AUTOPLAY_LIMIT_ON) == "true") { on -> store.put(AUTOPLAY_LIMIT_ON, on.toString()); refreshSettings() }
             if (store.get(AUTOPLAY_LIMIT_ON) == "true") {

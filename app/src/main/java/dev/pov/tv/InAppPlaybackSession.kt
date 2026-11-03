@@ -74,6 +74,8 @@ object InAppPlaybackSession {
     private var externalSubtitlesChecked = false
     const val WYZIE_KEY = "subtitles.wyzie_key"
     var debridService: String? = null
+    /** The add-on whose own badge shows for this video (PenguPlay), when it has one. */
+    var sourceAddon: String? = null
         private set
     private var identity: PlaybackIdentity? = null
     var title: String = ""
@@ -213,6 +215,7 @@ object InAppPlaybackSession {
         playbackAccount = saved?.getString("playback_account") ?: intent.getStringExtra("playback_account")
         lastLinkSaved = false
         debridService = PlaybackDebrid.normalize(saved?.getString("debrid_service") ?: intent.getStringExtra("debrid_service"))
+        sourceAddon = saved?.getString("source_addon") ?: intent.getStringExtra("source_addon")
         title = intent.getStringExtra("title").orEmpty()
         if (saved == null) SubtitleSync.reset()
         subtitlesChecked = saved != null
@@ -495,7 +498,7 @@ object InAppPlaybackSession {
         targetView = null
         mediaSession?.release(); mediaSession = null
         exo?.release(); player = null
-        sourceUrl = ""; sourceKey = ""; sourceHeaders = emptyMap(); title = ""; mediaName = ""; mediaSize = null; identity = null; debridService = null; playbackAccount = null; lastLinkSaved = false
+        sourceUrl = ""; sourceKey = ""; sourceHeaders = emptyMap(); title = ""; mediaName = ""; mediaSize = null; identity = null; debridService = null; sourceAddon = null; playbackAccount = null; lastLinkSaved = false
         remotePercent = 0.0; error = null
         if (notify) notifyChanged()
     }
@@ -504,6 +507,7 @@ object InAppPlaybackSession {
         val exo = player ?: return
         out.putLong("position", exo.currentPosition.coerceAtLeast(0))
         out.putString("debrid_service", debridService)
+        out.putString("source_addon", sourceAddon)
         out.putString("playback_account", playbackAccount)
         out.putBoolean("playWhenReady", exo.playWhenReady && exo.playbackState != Player.STATE_ENDED)
         out.putDouble("remotePercent", remotePercent)
@@ -516,7 +520,7 @@ object InAppPlaybackSession {
             .putExtra("url", sourceUrl).putExtra("title", title).putExtra("key", sourceKey)
             .putExtra("headers", JSONObject(sourceHeaders).toString())
             .putExtra("media_name", mediaName).putExtra("media_size", mediaSize ?: 0L)
-            .putExtra("debrid_service", debridService).putExtra("playback_account", playbackAccount)
+            .putExtra("debrid_service", debridService).putExtra("playback_account", playbackAccount).putExtra("source_addon", sourceAddon)
             .putExtra("resume", exo.currentPosition).putExtra("resume_percent", remotePercent)
             .putExtra("playWhenReady", exo.playWhenReady)
             .also { value -> identity?.let { value.putExtra("identity", it.toJson().toString()) } }

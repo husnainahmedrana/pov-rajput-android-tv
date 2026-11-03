@@ -188,12 +188,12 @@ class UpdateActivity : Activity() {
         val selected = release ?: return
         if (busy) return
         if (!packageManager.canRequestPackageInstalls()) {
-            AlertDialog.Builder(this).setTitle("Allow app updates")
-                .setMessage("Allow POV Rajput to install apps on the next screen. Return here and select Install update. Android will ask you to confirm the installation.")
-                .setPositiveButton("Open settings") { _, _ ->
-                    try { startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))) }
-                    catch (_: android.content.ActivityNotFoundException) { status.text = "Open Android Settings → Security → Install unknown apps and allow POV Rajput, then return here." }
-                }.setNegativeButton("Later", null).show()
+            SpacedChoiceDialog.show(this, "Allow app updates",
+                "Allow POV Rajput to install apps on the next screen. Return here and select Install update. Android will ask you to confirm the installation.",
+                "Open settings", "Later") {
+                try { startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))) }
+                catch (_: android.content.ActivityNotFoundException) { status.text = "Open Android Settings → Security → Install unknown apps and allow POV Rajput, then return here." }
+            }
             return
         }
         status.text = "Verifying update before installation…"

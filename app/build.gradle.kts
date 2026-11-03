@@ -12,8 +12,8 @@ android {
         applicationId = "dev.pov.tv.rajput"
         minSdk = 26
         targetSdk = 35
-        versionCode = 48
-        versionName = "0.3.15-rajput"
+        versionCode = 49
+        versionName = "0.3.16-rajput"
         testInstrumentationRunner = providers.gradleProperty("povTestRunner")
             .orElse("dev.pov.tv.PlaybackAuditInstrumentation").get()
     }

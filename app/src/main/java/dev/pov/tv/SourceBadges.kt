@@ -11,6 +11,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import dev.pov.tv.data.DebridServices
+import dev.pov.tv.data.Easynews
 import dev.pov.tv.data.SourceItem
 import dev.pov.tv.data.SourceLanguageOrder
 import dev.pov.tv.data.SourceMetadata
@@ -23,8 +24,43 @@ internal data class SourceBadge(val label: String, val tone: SourceBadgeTone = S
 /** Release-name tags are provider claims, not a probe of the selected video's capabilities. */
 internal object SourceBadges {
     /** The release name of a link: providers often add lines of seeders, sizes and emoji around it; the longest line is the name. */
-    fun name(source: SourceItem): String =
-        source.title.lines().map(String::trim).filter(String::isNotBlank).maxByOrNull { it.length } ?: source.title
+    fun name(source: SourceItem): String {
+        val name = source.title.lines().map(String::trim).filter(String::isNotBlank).maxByOrNull { it.length } ?: source.title
+        return when (PlaybackDebrid.addon(source)) {
+            // CNCVerse file names carry the server in front and the size behind: "V-Cloud[FSL Server] Movie.2026.mkv[8.8 GB]".
+            PlaybackDebrid.CNCVERSE -> name.replace(CNC_SERVER, "").replace(CNC_SIZE, "").trim().ifBlank { name }
+            // PenguPlay adds machine text after "|^|", and some of its file names are only that text
+            // ("4KWEB-DLMKV~24.3Mbps….pad-MoviesDrives"): then its description names the title and the format.
+            PlaybackDebrid.PENGUPLAY -> name.substringBefore("|^|").trim().takeUnless { it.isBlank() || ".pad-" in it }
+                ?: penguName(source) ?: name
+            else -> name
+        }
+    }
+    private val CNC_SERVER = Regex("^[^\\s\\[\\]]+\\[[^\\]]*]\\s+")
+    private val CNC_SIZE = Regex("\\s*\\[[\\d.,]+\\s*[KMGT]i?B]\\s*$", RegexOption.IGNORE_CASE)
+    // "Source: 4KHDHub · R2" runs until the next line, which in the joined detail starts with an emoji (" · 💾 …").
+    private val SOURCE_LINE = Regex("Source:\\s*(.+?)(?=\\s·\\s[^\\p{L}\\p{N}\\s]|\\n|$)")
+    private val TITLE_LINE = Regex("🍿\\s*([^·\\n]+)")
+    private val FORMAT_LINE = Regex("🎞️?\\s*(.+?)(?=\\s·\\s[^\\p{L}\\p{N}\\s]|\\n|$)")
+    private fun penguName(source: SourceItem): String? {
+        val title = TITLE_LINE.find(source.detail)?.groupValues?.get(1)?.trim() ?: return null
+        // The format line without the bitrate (the size badge already shows it).
+        val format = FORMAT_LINE.find(source.detail)?.groupValues?.get(1).orEmpty().split('•').map(String::trim)
+            .filter { it.isNotBlank() && !it.startsWith("~") }.joinToString(" · ")
+        return if (format.isBlank()) title else "$title · $format"
+    }
+
+    /**
+     * The line under the release name: the add-on's name, or for PenguPlay and CNCVerse the site and server they
+     * found the link on ("4KHDHub · R2", "VegaMovies · V-Cloud FSL Server"), since their logo already names the add-on.
+     */
+    fun origin(source: SourceItem): String {
+        if (PlaybackDebrid.addon(source) == null) return source.provider
+        val found = SOURCE_LINE.find(source.detail)?.groupValues?.get(1) ?: return source.provider
+        return found.split('•', '·').map { part ->
+            part.trim().removeSuffix("Provider").replace('[', ' ').replace("]", "").replace(Regex("\\s+"), " ").trim()
+        }.filter(String::isNotBlank).joinToString(" · ").ifBlank { source.provider }
+    }
 
     /** Whether a link plays at once: cached (and where), a direct link, checked when played, or not cached. */
     fun status(source: SourceItem, checkOnPlay: List<String>): SourceBadge {
@@ -37,9 +73,23 @@ internal object SourceBadges {
         }
     }
 
-    /** The clean badge set for a link row: quality and size, then whether it plays at once, then the rest. */
-    fun forRow(source: SourceItem, languages: SourceLanguageOrder?, runtimeMinutes: Int?, checkOnPlay: List<String>): List<SourceBadge> =
-        from(source, languages, runtimeMinutes).toMutableList().apply { add(minOf(2, size), status(source, checkOnPlay)) }
+    /**
+     * The services a link plays from at once, in their own order: debrid caches, or for direct links Easynews or an
+     * add-on with its own logo (PenguPlay, CNCVerse).
+     */
+    fun cachedOn(source: SourceItem): List<String> =
+        if (source.directUrl.isNotEmpty()) listOfNotNull(PlaybackDebrid.EASYNEWS.takeIf { Easynews.isHost(source.directUrl) }
+            ?: PlaybackDebrid.addon(source))
+        else source.cachedServices.distinct()
+
+    /**
+     * The clean badge set for a link row: quality and size, then whether it plays at once, then the rest. With [logos]
+     * the row shows the logos of [cachedOn] instead, so the cached (or Easynews) badge is left out.
+     */
+    fun forRow(source: SourceItem, languages: SourceLanguageOrder?, runtimeMinutes: Int?, checkOnPlay: List<String>, logos: Boolean = false): List<SourceBadge> =
+        from(source, languages, runtimeMinutes).toMutableList().apply {
+            if (!logos || cachedOn(source).isEmpty()) add(minOf(2, size), status(source, checkOnPlay))
+        }
 
     /** [runtimeMinutes] (the title's runtime, when known) adds the estimated bitrate beside the size. */
     fun from(source: SourceItem, languages: SourceLanguageOrder? = null, runtimeMinutes: Int? = null): List<SourceBadge> = buildList {

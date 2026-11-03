@@ -61,6 +61,10 @@ internal class TvChoiceRow(
     palette: ThemePalette = ThemeSpec.FLIX.palette,
     badges: List<SourceBadge> = emptyList(),
     withPoster: Boolean = false,
+    /** Service logos (drawable ids) shown in the card's right side, such as where a link is cached. */
+    logos: List<Int> = emptyList(),
+    /** See-through cards, for lists over artwork. */
+    glass: Boolean = false,
     action: () -> Unit,
 ) : FrameLayout(context) {
     private fun px(value: Int) = (value * DeviceLayout.unit(resources)).roundToInt().coerceAtLeast(1)
@@ -103,13 +107,36 @@ internal class TvChoiceRow(
         if (eyebrow.isNotBlank()) column.addView(label(eyebrow, 10, 1, true), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = px(5) })
         column.addView(label(title, 14, 2, true), LinearLayout.LayoutParams(-1, -2))
         if (detail.isNotBlank()) column.addView(label(detail, 11, 1, false), LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(5) })
-        addView(column, LayoutParams(-1, if (badges.isNotEmpty()) LayoutParams.WRAP_CONTENT else -1))
+        if (logos.isEmpty()) addView(column, LayoutParams(-1, if (badges.isNotEmpty()) LayoutParams.WRAP_CONTENT else -1))
+        else {
+            // The text keeps the width the logos leave; the logos sit centred on the right.
+            val line = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; isFocusable = false }
+            line.addView(column, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            val marks = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; isFocusable = false
+                importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                setPadding(0, 0, px(14), 0)
+            }
+            logos.forEach { logo ->
+                marks.addView(android.widget.ImageView(context).apply {
+                    setImageResource(logo); adjustViewBounds = true; maxWidth = px(84); scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, px(24)).apply { leftMargin = px(8) })
+            }
+            line.addView(marks, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(line, LayoutParams(-1, if (badges.isNotEmpty()) LayoutParams.WRAP_CONTENT else -1))
+        }
         if (withPoster) addView(poster, LayoutParams(px(48), px(67), Gravity.START or Gravity.CENTER_VERTICAL).apply { leftMargin = px(10) })
         // Flix lifts the focused row with a light glass tint and a white outline instead of a solid accent fill.
         val flix = palette == ThemeSpec.FLIX.palette
         fun paint(focused: Boolean) {
             background = GradientDrawable().apply {
-                setColor(when { !focused -> palette.panel; flix -> 0xFF3A3A40.toInt(); else -> palette.accent })
+                setColor(when {
+                    !focused && glass -> (palette.panel and 0x00FFFFFF) or (0x99 shl 24)
+                    !focused -> palette.panel
+                    flix && glass -> 0xD93A3A40.toInt()
+                    flix -> 0xFF3A3A40.toInt()
+                    else -> palette.accent
+                })
                 cornerRadius = px(if (flix) 9 else 7).toFloat()
             }
             // Flix: a sharp 2px-wide white outline, with no glow or zoom that would soften the text.

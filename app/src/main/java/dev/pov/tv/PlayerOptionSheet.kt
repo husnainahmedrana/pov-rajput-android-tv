@@ -22,6 +22,8 @@ internal data class PlayerSheetChoice(
     /** A second, muted line and source badges (quality, size, HDR...) make a richer row, as in the source list. */
     val detail: String = "",
     val badges: List<SourceBadge> = emptyList(),
+    /** Service logos (drawable ids) on the row's right, as in the source list: where a link is cached, or its add-on. */
+    val logos: List<Int> = emptyList(),
     val action: () -> Unit,
 )
 
@@ -144,25 +146,39 @@ internal object PlayerOptionSheet {
      */
     private fun richRow(context: Context, dialog: Dialog, choice: PlayerSheetChoice, id: String): View {
         fun dp(value: Int) = (value * context.resources.displayMetrics.density).toInt()
+        // The text column; logos (when any) sit on the right, centred, as on the source list's cards.
+        val column = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
         return LinearLayout(context).apply {
-            tag = id; orientation = LinearLayout.VERTICAL
+            tag = id; orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
             isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true
             setPadding(dp(14), dp(10), dp(14), dp(10))
             contentDescription = (choice.badges.map { it.label } + listOf(choice.label, choice.detail)).filter(String::isNotBlank).joinToString(". ") +
                 if (choice.checked) ", playing" else ""
-            if (choice.badges.isNotEmpty()) addView(SourceBadgeStrip(context, choice.badges), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(7) })
-            addView(TextView(context).apply {
+            addView(column, LinearLayout.LayoutParams(0, -2, 1f))
+            if (choice.logos.isNotEmpty()) addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
+                choice.logos.forEach { logo ->
+                    addView(android.widget.ImageView(context).apply {
+                        setImageResource(logo); adjustViewBounds = true; maxWidth = dp(70)
+                        scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                    }, LinearLayout.LayoutParams(-2, dp(22)).apply { leftMargin = dp(8) })
+                }
+            }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
+            if (choice.badges.isNotEmpty()) column.addView(SourceBadgeStrip(context, choice.badges), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(7) })
+            column.addView(TextView(context).apply {
                 text = if (choice.checked) "✓  ${choice.label}" else choice.label
                 textSize = 14f; setTextColor(Color.WHITE); maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
                 typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
             }, LinearLayout.LayoutParams(-1, -2))
-            if (choice.detail.isNotBlank()) addView(TextView(context).apply {
+            if (choice.detail.isNotBlank()) column.addView(TextView(context).apply {
                 text = choice.detail; textSize = 12f; setTextColor(0xFFC4C4C8.toInt()); maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(3), 0, 0)
             }, LinearLayout.LayoutParams(-1, -2))
             fun style(focused: Boolean) {
                 background = GradientDrawable().apply {
-                    setColor(if (focused) 0xFF3A3A40.toInt() else if (choice.checked) 0x33FFFFFF else 0x14FFFFFF)
+                    // The source list's see-through cards: a dark glass fill, lighter when focused.
+                    setColor(if (focused) 0xD93A3A40.toInt() else if (choice.checked) 0xB33A3A40.toInt()
+                        else (ThemeSpec.FLIX.palette.panel and 0x00FFFFFF) or (0x99 shl 24))
                     cornerRadius = dp(10).toFloat()
                     if (focused) setStroke(dp(2), Color.WHITE) else if (choice.checked) setStroke(dp(1), 0x80FFFFFF.toInt())
                 }

@@ -461,7 +461,7 @@ class PlayerActivity : Activity() {
         updateEndTime()
         if (player?.playbackState == Player.STATE_READY) cachedLinkAttempt = false
         view.findViewById<TextView>(R.id.pov_playback_title).text = InAppPlaybackSession.title.ifBlank { "Now playing" }
-        PlaybackDebrid.bind(view, InAppPlaybackSession.debridService, InAppPlaybackSession.sourceUrl)
+        PlaybackDebrid.bind(view, InAppPlaybackSession.debridService, InAppPlaybackSession.sourceUrl, InAppPlaybackSession.sourceAddon)
         view.findViewById<PlayerBadgeRow>(R.id.pov_media_badges)?.show(PlayerMediaBadges.from(PlayerMediaFacts.from(
             InAppPlaybackSession.mediaName, InAppPlaybackSession.mediaSize, player?.videoFormat, player?.audioFormat)))
         speedButton.text = "Speed · ${speedLabel(player?.playbackParameters?.speed ?: 1f)}"
@@ -686,8 +686,9 @@ class PlayerActivity : Activity() {
                     val name = SourceBadges.name(source)
                     val current = playing.isNotBlank() && name.isNotBlank() && playing.contains(name.take(40))
                     // Only the badges, the release name and the source's own name, as in the source list.
-                    PlayerSheetChoice(name.ifBlank { source.title }, checked = current, detail = source.provider,
-                        badges = SourceBadges.forRow(source, languages, minutes, checkOnPlay)) { pickStream(media, source) }
+                    PlayerSheetChoice(name.ifBlank { source.title }, checked = current, detail = SourceBadges.origin(source),
+                        badges = SourceBadges.forRow(source, languages, minutes, checkOnPlay, logos = true),
+                        logos = SourceBadges.cachedOn(source).map(PlaybackDebrid::logo)) { pickStream(media, source) }
                 }
                 showSheet("Streams", "${links.size} links · pick one to continue from the same spot.", choices)
             }

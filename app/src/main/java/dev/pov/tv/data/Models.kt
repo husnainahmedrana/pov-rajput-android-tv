@@ -64,7 +64,9 @@ data class SourceItem(
     val sizeBytes: Long? = null,
     val qualityHeight: Int? = null,
     /** Request headers the addon requires (Stremio `behaviorHints.proxyHeaders.request`). */
-    val headers: Map<String, String> = emptyMap()
+    val headers: Map<String, String> = emptyMap(),
+    /** The add-on's own logo for this link (AddonBadges: PenguPlay, CNCVerse), known from the add-on's address. */
+    val addon: String? = null,
 )
 
 /** A selected source either streams directly or offers stable TorBox file identities. */
