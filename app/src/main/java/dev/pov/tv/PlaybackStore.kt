@@ -42,6 +42,9 @@ class PlaybackStore(context: Context, private val pendingKey: String = "pending"
     }
     fun continueWatching(): List<Recent> = recent().filter { it.position < it.duration * 0.95 && !isHidden(it.key, it.identity) }
 
+    /** Changes whenever the local Continue Watching row would look different (to the minute, like its "m left" captions). */
+    fun continueRevision(): String = continueWatching().joinToString("|") { "${it.key}@${it.position / 60_000}/${it.duration / 60_000}" }
+
     /** Hides a local row and the same remote episode row, preserving resume/history data. */
     fun hide(key: String = "", identity: PlaybackIdentity?) = synchronized(lock) {
         val hidden = preferences.getStringSet("hiddenContinue", emptySet()).orEmpty().toMutableSet()

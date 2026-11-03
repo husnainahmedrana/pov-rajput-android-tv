@@ -118,6 +118,18 @@ Offcloud cached sources resolve directly without adding a dashboard entry. TorBo
 
 Choose your tracking service in **Settings → Tracking**. Press Connect, scan the QR code or approve the code at **wetrakr.com/activate** or **simkl.com/pin**, and it supplies Home's Continue Watching (shown instantly from your last visit, then refreshed), watchlists, liked lists and Up Next (Simkl has no list API yet, so its personal and liked lists aren't shown). **Use WeTrakr/Simkl** (off keeps you signed in), **Scrobbling** and **Liked lists on Home** are switches in Settings. Tokens are stored with Android Keystore encryption; library reads are cached and server retry limits are respected. API references: [api.wetrakr.com](https://api.wetrakr.com/), [api.simkl.org](https://api.simkl.org/).
 
+## POV account and backup
+
+**Settings → Account** (also offered once on first start): create a free account with your email and a password, and your setup is backed up whenever you leave the app: debrid services, stream and catalog add-ons, TMDB / Easynews / Seekr / Wyzie keys, WeTrakr and Simkl logins, Home rows, preferences and local watch progress. Sign in on any TV or phone and it all comes back. On a TV, **Use phone** shows a QR code so you can type on your phone instead.
+
+- Debrid keys, add-ons and logins are encrypted **on your device** with your password before they are sent. The server cannot open them, and neither can the developer.
+- Save the **recovery key** shown when you sign up. If you forget your password, reset it with a code sent to your email: with the recovery key everything comes back; without it your settings come back and you link your debrid services and add-ons again.
+- The server is open source in [`server/backup`](server/backup), with how it works and how to run your own copy. Point the app at your own server in **Settings → Account → Backup server**.
+
+## Feedback
+
+Found a bug or have an idea? Use **[bug.rajput.cc](https://bug.rajput.cc)** or **[feature.rajput.cc](https://feature.rajput.cc)**, also in the app under **Settings → About**. No account is needed and your email is optional (only for a reply). A bug report opened from the app fills in the app version, device and Android version, shown on the form so you can change or clear it.
+
 ## Updates
 
 **Settings → Updates → Check for updates** downloads published stable releases from this repository, verifying the checksum, package, version and signing certificate. Accounts and settings are kept. **Check on startup** is a switch and defaults to off.
@@ -125,6 +137,7 @@ Choose your tracking service in **Settings → Tracking**. Press Connect, scan t
 ## Privacy
 
 - API keys (Offcloud, TorBox, TMDB), your Easynews login (sent only to easynews.com), WeTrakr tokens and source-provider addresses are entered on your device and encrypted with Android Keystore. The app ships POV Rajput's public WeTrakr and Simkl Client IDs (no client secrets); requests made with your sign-in count against your own WeTrakr or Simkl quota.
+- With a POV account, backups go to backup.rajput.cc (or your own server). Credentials are end-to-end encrypted; settings and local watch progress are encrypted with a key the server holds, and your email is kept to send codes. See [server/backup](server/backup).
 - Nothing personal is included in the repository or release APKs.
 - The microphone is used only while the voice-search screen is open.
 

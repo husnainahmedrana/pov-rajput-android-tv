@@ -58,6 +58,10 @@ class NavigationIconView(context: Context, private val key: String, color: Int) 
                 canvas.drawCircle(12f, 12f, 9f, ink)
                 canvas.drawPath(Path().apply { moveTo(7.6f, 12.4f); lineTo(10.6f, 15.4f); lineTo(16.4f, 9.2f) }, ink)
             }
+            "account" -> {
+                canvas.drawCircle(12f, 8f, 4f, ink)
+                canvas.drawArc(4f, 14f, 20f, 30f, 180f, 180f, false, ink)
+            }
             else -> canvas.drawCircle(12f, 12f, 8f, ink)
         }
         canvas.restoreToCount(saved)

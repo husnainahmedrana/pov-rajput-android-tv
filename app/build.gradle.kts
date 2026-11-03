@@ -12,14 +12,16 @@ android {
         applicationId = "dev.pov.tv.rajput"
         minSdk = 26
         targetSdk = 35
-        versionCode = 47
-        versionName = "0.3.14-rajput"
+        versionCode = 48
+        versionName = "0.3.15-rajput"
         testInstrumentationRunner = providers.gradleProperty("povTestRunner")
             .orElse("dev.pov.tv.PlaybackAuditInstrumentation").get()
     }
     buildFeatures { buildConfig = true }
     // Optional Seekr key for local preview builds only (-PpovSeekrKey=...). Never committed; releases ship without one.
     defaultConfig.buildConfigField("String", "SEEKR_KEY", "\"${providers.gradleProperty("povSeekrKey").orNull.orEmpty()}\"")
+    // Account backup server (server/backup in this repo). Forks set their own: -PpovBackupServer=https://backup.example.com
+    defaultConfig.buildConfigField("String", "BACKUP_SERVER", "\"${providers.gradleProperty("povBackupServer").orElse("https://backup.rajput.cc").get()}\"")
     // One codebase, two APKs: the TV app keeps its package (existing installs update in place),
     // the phone app is a separate install with its own release asset and update manifest.
     flavorDimensions += "device"

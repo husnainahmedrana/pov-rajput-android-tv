@@ -1,0 +1,19 @@
+// Copy to wrangler.jsonc (git-ignored) and fill in your own D1 database id:
+//   npx wrangler d1 create pov-backup
+{
+  "name": "pov-backup",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "routes": [{ "pattern": "backup.example.com", "custom_domain": true }],
+  "d1_databases": [{ "binding": "DB", "database_name": "pov-backup", "database_id": "YOUR-D1-DATABASE-ID" }],
+  // Free Workers rate limiting, per client IP.
+  "ratelimits": [
+    { "name": "LIMITER", "namespace_id": "4101", "simple": { "limit": 30, "period": 60 } },
+    { "name": "POLL_LIMITER", "namespace_id": "4102", "simple": { "limit": 60, "period": 60 } }
+  ],
+  // Daily clean-up: expired codes and links, and accounts unused for 180 days.
+  "triggers": { "crons": ["17 3 * * *"] },
+  "vars": { "MAIL_FROM": "POV Rajput <no-reply@example.com>" }
+  // Secret (not in this file): npx wrangler secret put RESEND_API_KEY
+}

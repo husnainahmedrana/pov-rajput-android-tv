@@ -34,6 +34,11 @@ class SecureStore(context: Context) {
         }
     }
 
+    /** Every stored value that can be read, for the account backup. Unreadable values are left out, never replaced. */
+    fun entries(): Map<String, String> = preferences.all.keys.sorted().mapNotNull { key ->
+        try { key to get(key) } catch (_: Exception) { null }
+    }.toMap()
+
     fun put(key: String, value: String) = putAll(mapOf(key to value))
 
     /** Persist rotating OAuth tokens in one transaction before making another request. */

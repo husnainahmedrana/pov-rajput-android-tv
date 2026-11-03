@@ -49,6 +49,9 @@ class MainActivity : Activity() {
     @Volatile private var watchedLoading = false
     /** Re-reads the Continue Watching row on Home in place; set while that row exists. */
     private var refreshContinue: (() -> Unit)? = null
+    /** The local (no tracker) Continue Watching row on Home, and the pageRevision() that Home was built at. */
+    private var localContinueRow: LinearLayout? = null
+    private var homeRevision = ""
     /** The player was opened from here, so returning to this screen refreshes Continue Watching. */
     private var playerShown = false
     private var watchedCheckedAt = 0L
@@ -174,6 +177,37 @@ class MainActivity : Activity() {
         if (!publicPreview) refreshWatched()
         shell(); if (sourcePreview) sourceChoiceAudit() else home(); if (!publicPreview) { retrySync(); checkStartupUpdate() }
         window.decorView.viewTreeObserver.addOnGlobalFocusChangeListener(contentFocusChanged)
+        // A restore reopens the app; say what happened once it is back.
+        store.get(ACCOUNT_NOTICE).takeIf { it.isNotBlank() }?.let { notice -> store.remove(ACCOUNT_NOTICE); body.postDelayed({ toast(notice) }, 1_800) }
+    }
+
+    private val cloud by lazy { CloudAccount(this, store) }
+    private val accountDialogs by lazy { AccountDialogs(this, cloud, worker, { if (destination == "settings") refreshSettings() }, ::restartAfterRestore) }
+
+    /** Restored values are read by many screens and singletons: start the app afresh so every one of them sees them. */
+    private fun restartAfterRestore(message: String) {
+        store.put(ACCOUNT_NOTICE, message)
+        InAppPlaybackSession.stop()
+        val launch = packageManager.getLaunchIntentForPackage(packageName)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            ?: Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        startActivity(launch)
+        finishAffinity()
+        Runtime.getRuntime().exit(0)
+    }
+
+    /** Offered once, after Home first appears, to anyone without an account. */
+    private fun offerAccount() {
+        if (publicPreview || isDestroyed || cloud.signedIn || cloud.welcomeDone) return
+        if (!isHome || window.decorView.hasWindowFocus().not()) { body.postDelayed({ offerAccount() }, 3_000); return }
+        accountDialogs.welcome()
+    }
+
+    /** Automatic backup when the app goes to the background; nothing is sent when nothing changed. */
+    private fun backupInBackground() {
+        if (publicPreview || !::store.isInitialized) return
+        val account = cloud
+        if (!account.signedIn || !account.autoBackup) return
+        Thread({ try { account.backup() } catch (_: Exception) { /* Tried again next time the app goes to the background. */ } }, "pov-backup").start()
     }
 
     override fun onResume() {
@@ -214,6 +248,7 @@ class MainActivity : Activity() {
     }
     override fun onStop() {
         miniPlayer?.let(InAppPlaybackSession::detachPlayerView)
+        backupInBackground()
         super.onStop()
     }
     override fun onDestroy() {
@@ -320,6 +355,7 @@ class MainActivity : Activity() {
         val wait = 1_200 - (android.os.SystemClock.uptimeMillis() - splashShownAt)
         if (wait > 0) { overlay.postDelayed({ dismissSplash() }, wait); return }
         splash = null
+        body.postDelayed({ offerAccount() }, 1_500)
         @Suppress("UNCHECKED_CAST") (overlay.tag as? List<android.animation.Animator>)?.forEach { it.cancel() }
         // Exit: the logo pushes forward as the splash dissolves into Home.
         (overlay as? ViewGroup)?.let { group -> (0 until group.childCount).map(group::getChildAt).forEach {
@@ -654,7 +690,9 @@ class MainActivity : Activity() {
 
     private fun Int?.orZero() = this ?: 0
     private fun pageRevision() = java.security.MessageDigest.getInstance("SHA-256").digest(
-        listOf(theme.id, wetrakr.accountRevision(), wetrakr.connected().toString(), store.get("offcloud.key"), store.get("torbox.token"), store.get("wetrakr.home_liked_opt_in"), store.get("sources.endpoint"), store.get(SourceProviders.KEY), store.get(TMDB_KEY), store.get(TMDB_REGION), store.get(RESUME_CARDS), store.get(CatalogAddons.KEY), homeRows.revision).joinToString("\u0000").toByteArray()
+        listOf(theme.id, wetrakr.accountRevision(), wetrakr.connected().toString(), store.get("offcloud.key"), store.get("torbox.token"), store.get("wetrakr.home_liked_opt_in"), store.get("sources.endpoint"), store.get(SourceProviders.KEY), store.get(TMDB_KEY), store.get(TMDB_REGION), store.get(RESUME_CARDS), store.get(CatalogAddons.KEY), homeRows.revision,
+            // Without a tracker, Home and title pages show local progress, so a kept copy is stale once something was watched.
+            if (publicPreview || wetrakr.connected()) "" else history.continueRevision()).joinToString("\u0000").toByteArray()
     ).joinToString("") { "%02x".format(it.toInt() and 255) }
     private fun focusAfterRender(id: Int) {
         body.post {
@@ -688,7 +726,7 @@ class MainActivity : Activity() {
         val kept = retainedHome; retainedHome = null
         if (kept != null && kept.revision == pageRevision() && android.os.SystemClock.elapsedRealtime() - retainedHomeAt < HOME_KEEP_MS) {
             // Coming back through the menu shows the same Home at once, from the top.
-            restorePage(kept)
+            restorePage(kept); homeRevision = kept.revision
             scroller.scrollTo(0, 0)
             if (flix) {
                 featureHero()?.let { hero -> hero.translationY = 0f; hero.findViewWithTag<View>("feature-actions")?.alpha = 1f }
@@ -699,6 +737,7 @@ class MainActivity : Activity() {
             return
         }
         val id = page(""); isHome = true; body.setPadding(0, 0, 0, contentBottomPadding())
+        localContinueRow = null; homeRevision = pageRevision()
         val remoteHome = !publicPreview && wetrakr.connected()
         val recent = if (publicPreview || remoteHome) emptyList() else history.continueWatching()
         // Something in progress: the feature trims so the first screen ends on a complete row.
@@ -1686,7 +1725,7 @@ class MainActivity : Activity() {
 
     private fun resumeRow(recent: List<PlaybackStore.Recent>) {
         section("Continue Watching")
-        val row = horizontalRow()
+        val row = horizontalRow(); localContinueRow = row
         refreshContinue = { if (row.isAttachedToWindow && !row.hasFocus()) { row.removeAllViews(); fillResumeRow(row, history.continueWatching()) } }
         fillResumeRow(row, recent)
     }
@@ -2246,6 +2285,13 @@ class MainActivity : Activity() {
     private companion object {
         private const val QR_DP = 110; const val WARM_BACKDROPS = 6; const val HIDE_UNCACHED = "sources.hide_uncached"; const val BACKDROP_FADE_MS = 220; const val VOICE_REQUEST = 701; const val PLAYBACK_REQUEST = 702; const val MIC_REQUEST = 703; const val FLIX_ROW_LINE = 236; const val FEATURE_INTERVAL_MS = 5_000L; const val AUTOPLAY_FIRST = "sources.autoplay_first"; const val AUTOPLAY_MAX_GB = "sources.autoplay_max_gb"; const val AUTOPLAY_MAX_GB_EPISODE = "sources.autoplay_max_gb_episode"; const val AUTOPLAY_MAX_MBPS = "sources.autoplay_max_mbps"; const val AUTOPLAY_LIMIT_ON = "sources.autoplay_limit_on"; const val BACKDROP_WIDTH = 1280; const val CONTINUE_CACHE = "wetrakr.continue_cache"
         const val TMDB_KEY = "tmdb.key"; const val TMDB_REGION = "tmdb.region"
+        /** Shown once after a restore restarts the app. Never part of a backup (account.* is excluded). */
+        const val ACCOUNT_NOTICE = "account.notice"
+        /** The app's website. Until the site itself exists it forwards to the GitHub page. */
+        const val WEBSITE = "https://pov.rajput.cc"
+        /** Where people reach the developer: forms served by server/backup. */
+        const val BUG_PAGE = "https://bug.rajput.cc"
+        const val FEATURE_PAGE = "https://feature.rajput.cc"
         const val SETTINGS_SECTION = "settings.section"
         const val HOME_KEEP_MS = 15 * 60_000L
         const val HOME_BACKDROP_SCALE = 0.72f
@@ -3531,6 +3577,28 @@ class MainActivity : Activity() {
         settingsTarget = content
         try {
             when (section) {
+                "account" -> {
+            val card = settingsGroup("POV account & backup", "account")
+            if (!cloud.signedIn) {
+                settingsRow(card, "Create account", "", "Back up your debrid services, add-ons, Home rows and watch progress, encrypted on this device. " +
+                    "Sign in on any TV or phone and everything comes back.") { accountDialogs.createAccount() }
+                settingsRow(card, "Sign in", "", "Bring back your setup from your POV account.") { accountDialogs.signIn() }
+                settingsRow(card, "Backup server", java.net.URI(cloud.server).host.orEmpty(),
+                    "Where backups are kept. Change it only if you run your own copy of the backup server.") { accountDialogs.backupServer() }
+            } else {
+                settingsRow(card, "Signed in", cloud.email, "Debrid keys, add-ons and logins are encrypted with your password before they leave this device.", status = true) {}
+                settingsToggle(card, "Automatic backup", "Backs up when you leave the app, whenever something changed.", cloud.autoBackup) { on ->
+                    cloud.autoBackup = on; if (on) accountDialogs.backupNow()
+                }
+                val last = cloud.lastBackup
+                settingsRow(card, "Back up now", if (last > 0) "Last: ${android.text.format.DateUtils.getRelativeTimeSpanString(last, System.currentTimeMillis(), 60_000)}" else "Never") {
+                    accountDialogs.backupNow()
+                }
+                settingsRow(card, "Change password") { accountDialogs.changePassword() }
+                settingsRow(card, "Sign out", "", "This device keeps its settings and stops backing up.") { accountDialogs.signOut() }
+                settingsRow(card, "Delete account", danger = true) { accountDialogs.deleteAccount() }
+            }
+                }
                 "home" -> {
             val home = settingsGroup("Home & appearance", "home")
             val tmdbKey = store.get(TMDB_KEY)
@@ -3716,6 +3784,18 @@ class MainActivity : Activity() {
             about.addView(text("POV Rajput fork by Rajput · Android TV port by Mark Mateo · based on the POV Kodi add-on by kodifitzwell (github.com/kodifitzwell/repo). Licensed under GNU GPL v3. WeTrakr tracking and API by alberdev (wetrakr.com). Catalogs: TMDB, Queued Up (queued-up.app), Cinemeta, Kitsu and your own catalog add-ons. Subtitles found online: OpenSubtitles, and Wyzie Subs with your key. Skip intro, recap and credits times: TheIntroDB (theintrodb.org) and, for anime, AniSkip (aniskip.com) with Kitsu ID mappings. Seek previews: Seekr (seekr.tv) with your key; support it at buymeacoffee.com/seekrtvdev. This product uses the TMDB API but is not endorsed or certified by TMDB. Playback: AndroidX Media3, with FFmpeg audio decoding via Jellyfin's Media3 FFmpeg decoder.", 12, muted).apply {
                 setLineSpacing(dp(2).toFloat(), 1f); setPadding(dp(14), dp(12), dp(14), dp(12))
             }, margin(-1, -2))
+            // Only the app version and device are added to the bug link, shown on the form before sending.
+            val appDetails = "POV Rajput ${packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()} · ${if (DeviceLayout.tv) "TV" else "Phone"} · " +
+                "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android ${android.os.Build.VERSION.RELEASE}"
+            settingsRow(about, "Report a bug", BUG_PAGE.removePrefix("https://"), "Something not working? Tell us what happened. No account needed.") {
+                openWebPage("Report a bug", android.net.Uri.parse(BUG_PAGE).buildUpon().appendQueryParameter("app", appDetails).build().toString(), BUG_PAGE)
+            }
+            settingsRow(about, "Request a feature", FEATURE_PAGE.removePrefix("https://"), "Have an idea that would make POV better? Send it here.") {
+                openWebPage("Request a feature", FEATURE_PAGE, FEATURE_PAGE)
+            }
+            settingsRow(about, "Website", WEBSITE.removePrefix("https://"), "Downloads, install guide and help for POV Rajput.") {
+                openWebPage("POV Rajput website", WEBSITE, WEBSITE)
+            }
             settingsRow(about, "Open-source notices") {
                 AlertDialog.Builder(this).setTitle("Open-source notices").setMessage(assets.open("NOTICE.txt").bufferedReader().use { it.readText() }).setPositiveButton("Close", null).show()
             }
@@ -3742,7 +3822,7 @@ class MainActivity : Activity() {
     }
 
     // Short names fit seven cards across the TV; each section's own headings keep the full names.
-    private val settingsSections = listOf("home" to "Home", "playback" to "Playback", "captions" to "Subtitles",
+    private val settingsSections = listOf("account" to "Account", "home" to "Home", "playback" to "Playback", "captions" to "Subtitles",
         "sources" to "Sources", "tracking" to "Tracking", "updates" to "Updates", "about" to "About")
     /** The Settings section shown under the cards, remembered between visits. */
     private var settingsSection: String
@@ -3757,6 +3837,7 @@ class MainActivity : Activity() {
     private var refreshingSettings = false
 
     private fun settingsSummary(id: String): String = when (id) {
+        "account" -> if (cloud.signedIn) cloud.email else "Back up your setup"
         "home" -> if (store.get(TMDB_KEY).isBlank()) "Cinemeta catalogs" else "TMDB connected"
         "playback" -> listOfNotNull(if (store.get(AUTOPLAY_FIRST) == "true") "Auto-play on" else "Auto-play off",
             if (SkipButtonPreferences(this).enabled) "skip buttons" else null).joinToString(" · ")
@@ -3768,74 +3849,91 @@ class MainActivity : Activity() {
         }
         "tracking" -> "${wetrakr.name} · ${when { !wetrakr.signedIn() -> "not connected"; !wetrakr.enabled() -> "off"; else -> "connected" }}"
         "updates" -> "Version ${packageManager.getPackageInfo(packageName, 0).versionName.orEmpty().removeSuffix("-rajput")}"
-        else -> "Credits and notices"
+        else -> "${WEBSITE.removePrefix("https://")} · credits"
     }
 
     private fun settingsIcon(id: String): String? = when (id) {
-        "home" -> "home"; "playback" -> "nowplaying"; "captions" -> "series"; "sources" -> "library"; "tracking" -> "wetrakr"
+        "account" -> "account"; "home" -> "home"; "playback" -> "nowplaying"; "captions" -> "series"; "sources" -> "library"; "tracking" -> "wetrakr"
         "updates" -> "settings"; else -> null
     }
 
     /**
-     * A sideways row of cards, one per section: moving onto a card (TV) or tapping it (phone) shows just that
-     * section below. Down goes into its settings; Up from the first one comes back to the cards.
+     * The Settings tab bar: one rounded bar of section names. On the TV a white highlight glides from tab to tab
+     * (the player controls' [SlidingFocusPill]) and moving onto a tab shows that section below; on a phone it
+     * scrolls sideways and a tap chooses. While focus is down in the settings, the shown section keeps a soft pill.
      */
     private fun settingsCards(selected: String) {
-        // TV: the seven cards share the page width, lined up with the settings below. Phone: a sideways scroll.
-        val strip = LinearLayout(this).apply { clipToPadding = false; clipChildren = false; setPadding(0, dp(4), 0, dp(6)) }
-        val row: android.view.ViewGroup = if (DeviceLayout.tv) strip else android.widget.HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false; clipToPadding = false; clipChildren = false; overScrollMode = View.OVER_SCROLL_NEVER
-            addView(strip)
+        // The tabs' own row carries the gliding highlight as its background; the rounded bar sits on a wrapper.
+        val strip = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; clipToPadding = false; clipChildren = false }
+        val bar = FrameLayout(this).apply {
+            setPadding(dp(5), dp(5), dp(5), dp(5)); background = rounded(withAlpha(Color.WHITE, 20), 30)
+            addView(strip, FrameLayout.LayoutParams(-2, -2))
         }
-        body.addView(row, margin(-1, -2, bottom = 4))
+        val row: android.view.ViewGroup = if (DeviceLayout.tv) FrameLayout(this).apply {
+            clipToPadding = false; clipChildren = false
+            addView(bar, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL))
+        } else android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false; clipToPadding = false; clipChildren = false; overScrollMode = View.OVER_SCROLL_NEVER
+            addView(bar)
+        }
+        body.addView(row, margin(-1, -2, top = 2, bottom = 10))
         settingsCardsAt = android.os.SystemClock.elapsedRealtime()
-        val cards = LinkedHashMap<String, Pair<LinearLayout, TextView>>()
-        fun style(id: String, card: LinearLayout, title: TextView, focused: Boolean) {
-            val chosen = id == settingsSection
-            card.background = rounded(withAlpha(Color.WHITE, when { focused -> 40; chosen -> 30; else -> 12 }), 12)
-            card.foreground = if (focused) FocusRingDrawable(if (flix) Color.WHITE else accent, dp(12).toFloat(), true, dp(1).toFloat())
-                else if (chosen) FocusRingDrawable(withAlpha(Color.WHITE, 90), dp(12).toFloat(), true, dp(1).toFloat()) else null
-            title.setTextColor(if (chosen || focused) ink else muted)
+        val tabs = LinkedHashMap<String, TextView>()
+        val glide = SlidingFocusPill(strip, fadeText = false)
+        // The shown section's soft pill, only while the highlight is elsewhere (it would cover the glide).
+        fun mark() {
+            val inBar = strip.hasFocus()
+            tabs.forEach { (id, tab) ->
+                val chosen = id == settingsSection
+                tab.background = if (chosen && !inBar) rounded(withAlpha(Color.WHITE, 46), 24) else null
+                if (!tab.isFocused) tab.setTextColor(if (chosen) ink else muted)
+            }
         }
         fun choose(id: String) {
             if (id == settingsSection) return
             settingsSection = id
-            cards.forEach { (key, views) -> style(key, views.first, views.second, views.first.hasFocus()) }
+            mark()
             settingsSectionContent(id)
         }
         settingsChoose = ::choose
         settingsSections.forEach { (id, label) ->
-            val card = column().apply {
-                setPadding(dp(12), dp(10), dp(12), dp(10)); isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true
+            val tab = text(label, 15, muted, true).apply {
+                gravity = Gravity.CENTER; maxLines = 1; setPadding(dp(18), dp(9), dp(18), dp(9))
+                isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true
                 tag = "settings-section:$id"; contentDescription = label
             }
-            val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-            settingsIcon(id)?.let { top.addView(NavigationIconView(this, it, ink), margin(16, 16, right = 7)) }
-            val title = text(label, 13, muted, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
-            top.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
-            card.addView(top, margin(-1, -2))
-            card.addView(text(settingsSummary(id), 11, muted).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 5))
-            cards[id] = card to title
-            style(id, card, title, false)
-            card.setOnClickListener { choose(id) }
-            card.setOnFocusChangeListener { _, focused ->
-                style(id, card, title, focused)
-                // Moving along the cards switches section; focus set by the page itself as it opens does not.
+            tabs[id] = tab
+            tab.setOnClickListener { choose(id) }
+            tab.setOnFocusChangeListener { _, focused ->
+                glide.focusChanged(tab, focused)
+                tab.setTextColor(if (focused) Color.BLACK else if (id == settingsSection) ink else muted)
+                strip.post { if (!isDestroyed) mark() }
+                // Moving along the tabs switches section; focus set by the page itself as it opens does not.
                 if (focused && DeviceLayout.tv && android.os.SystemClock.elapsedRealtime() - settingsCardsAt > 500) {
-                    card.postDelayed({ if (card.hasFocus() && !isDestroyed) choose(id) }, 180)
+                    tab.postDelayed({ if (tab.hasFocus() && !isDestroyed) choose(id) }, 180)
                 }
             }
-            val last = id == settingsSections.last().first
-            strip.addView(card.pressable(12), (if (DeviceLayout.tv) LinearLayout.LayoutParams(0, -2, 1f) else LinearLayout.LayoutParams(dp(140), -2))
-                .apply { rightMargin = if (last) 0 else dp(if (DeviceLayout.tv) 8 else 10) })
+            strip.addView(tab, LinearLayout.LayoutParams(-2, -2))
         }
-        val chosenCard = cards[selected]?.first
-        if (row is android.widget.HorizontalScrollView) row.post { chosenCard?.let { row.scrollTo((it.left - dp(24)).coerceAtLeast(0), 0) } }
-        // Opening Settings puts focus on the chosen section's card (a refresh or Back restores the row that was focused).
+        mark()
+        val chosenTab = tabs[selected]
+        if (row is android.widget.HorizontalScrollView) row.post { chosenTab?.let { row.scrollTo((it.left - dp(24)).coerceAtLeast(0), 0) } }
+        // Opening Settings puts focus on the chosen section's tab (a refresh or Back restores the row that was focused).
         if (!refreshingSettings && pendingFocus == null && DeviceLayout.tv) {
             val opened = generation
-            body.postDelayed({ if (opened == generation && !isDestroyed && destination == "settings") chosenCard?.requestFocus() }, 60)
+            body.postDelayed({ if (opened == generation && !isDestroyed && destination == "settings") chosenTab?.requestFocus() }, 60)
         }
+    }
+
+    /** Phone: opens [address] in the browser. TV: a QR code of it to scan, with [shown] written underneath. */
+    private fun openWebPage(title: String, address: String, shown: String) {
+        if (DeviceLayout.phone) { runCatching { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(address))) }; return }
+        val code = ImageView(this).apply { setImageBitmap(qrBitmap(address, dp(200))); background = rounded(Color.WHITE, 8); setPadding(dp(8), dp(8), dp(8), dp(8)) }
+        val box = column().apply { gravity = Gravity.CENTER_HORIZONTAL; setPadding(dp(20), dp(12), dp(20), dp(8)) }
+        box.addView(code, LinearLayout.LayoutParams(dp(200), dp(200)))
+        box.addView(text(shown.removePrefix("https://"), 16, ink, true).apply { gravity = Gravity.CENTER }, margin(-2, -2, top = 12))
+        box.addView(text("Scan with your phone's camera.", 12, muted).apply { gravity = Gravity.CENTER }, margin(-2, -2, top = 4))
+        AlertDialog.Builder(this).setTitle(title).setView(box).setPositiveButton("Close", null).show()
     }
 
     /** A titled card that holds one group of settings rows. */
@@ -4275,7 +4373,21 @@ class MainActivity : Activity() {
      */
     private fun scheduleContinueRefresh() {
         if (publicPreview || !::body.isInitialized) return
+        if (!wetrakr.connected()) { body.post { refreshLocalContinue() }; return }
         listOf(2_500L, 9_000L).forEach { delay -> body.postDelayed({ if (!isDestroyed) refreshContinue?.invoke() }, delay) }
+    }
+
+    /**
+     * Local progress (no tracker): the row on screen is refilled in place; otherwise Home is rebuilt, so a first
+     * Continue Watching row appears, or an emptied one goes, without restarting the app.
+     */
+    private fun refreshLocalContinue() {
+        if (isDestroyed || !isHome || publicPreview || wetrakr.connected() || homeRevision == pageRevision()) return
+        val row = localContinueRow
+        if (row != null && row.isAttachedToWindow && history.continueWatching().isNotEmpty()) {
+            if (row.hasFocus()) return
+            refreshContinue?.invoke(); homeRevision = pageRevision()
+        } else home()
     }
 
     /** A manual mark shows its badge straight away; the next service check confirms it. */
