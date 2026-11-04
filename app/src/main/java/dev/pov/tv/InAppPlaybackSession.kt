@@ -73,6 +73,7 @@ object InAppPlaybackSession {
     private var subtitlesChecked = false
     private var externalSubtitlesChecked = false
     const val WYZIE_KEY = "subtitles.wyzie_key"
+    const val SUBDL_KEY = "subtitles.subdl_key"
     var debridService: String? = null
     /** The add-on whose own badge shows for this video (PenguPlay), when it has one. */
     var sourceAddon: String? = null
@@ -106,6 +107,8 @@ object InAppPlaybackSession {
     private const val MAX_QUIET_RETRIES = 3
     private const val SOURCE_RETRY_DELAY_MS = 1_000L
     private const val MAX_SOURCE_RETRIES = 2
+    private const val AIO_SOURCE_RETRIES = 6
+    private const val AIO_RETRY_DELAY_MS = 2_000L
     private val surfaceAttachment = SurfaceReadyAttachment<ExoPlayer, PlayerView>(
         currentSession = { player?.takeUnless { releasing } },
         isReady = { view ->
@@ -169,6 +172,8 @@ object InAppPlaybackSession {
     private var quietRetries = 0
     /** Quiet retries after a source error in the foreground; reset once the video is playing again. */
     private var sourceRetries = 0
+    /** The playing link comes from AIOStreams (its add-on tag), which gets longer waits and more quiet retries. */
+    private val aioStreams get() = sourceAddon?.startsWith(dev.pov.tv.data.AddonBadges.AIOSTREAMS) == true
     /** Set when parallel Easynews downloads keep failing for the current video; cleared when another video starts. */
     @Volatile private var easynewsSingle = false
     private fun isNetworkFailure(failure: PlaybackException) =
@@ -235,6 +240,8 @@ object InAppPlaybackSession {
         lastSyncAction = ""
         lastSyncAt = 0L
         val gainProcessor = volumeBoost.createAudioProcessor()
+        // Volume boost by default (Settings → Audio & Subtitles); the player's Volume boost still changes it per video.
+        VolumeBoostPreferences(application!!).defaultDb.takeIf { it > 0 }?.let { volumeBoost.setGain(it) }
         val renderers = object : DefaultRenderersFactory(application!!) {
             init {
                 setEnableDecoderFallback(true)
@@ -295,8 +302,9 @@ object InAppPlaybackSession {
         // cross-protocol redirects by default, while Stremio and VLC follow them.
         val playing = sourceUrl
         // Debrid and Usenet-backed links can take well over the default 8 s to send their first bytes.
+        // AIOStreams (Usenet especially) fetches a seek's new spot from the news server first: it gets twice as long.
         val http = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15_000).setReadTimeoutMs(30_000)
+            .setConnectTimeoutMs(15_000).setReadTimeoutMs(if (aioStreams) 60_000 else 30_000)
             .setTransferListener(sizeFromServer(playing))
             .setDefaultRequestProperties(sourceHeaders)
         val exo = ExoPlayer.Builder(application!!, renderers)
@@ -398,8 +406,13 @@ object InAppPlaybackSession {
                 // A stream that stops for a source reason (a dropped connection, a read glitch such as the MKV reader's
                 // intermittent "Source error") usually plays on a second try, as a manual Retry showed: retry the same
                 // link at the same spot quietly before showing an error. A refused link (403/404) won't recover.
-                val sourceFailure = (failure as? androidx.media3.exoplayer.ExoPlaybackException)?.type == androidx.media3.exoplayer.ExoPlaybackException.TYPE_SOURCE
-                if (sourceFailure && error == null && sourceRetries < MAX_SOURCE_RETRIES &&
+                // AIOStreams links get more tries, also for an "unexpected" failure: after a seek its reply can come
+                // back short while it is still fetching from Usenet, which a second request usually gets past.
+                val failureType = (failure as? androidx.media3.exoplayer.ExoPlaybackException)?.type
+                val sourceFailure = failureType == androidx.media3.exoplayer.ExoPlaybackException.TYPE_SOURCE ||
+                    (aioStreams && failureType == androidx.media3.exoplayer.ExoPlaybackException.TYPE_UNEXPECTED)
+                val maxRetries = if (aioStreams) AIO_SOURCE_RETRIES else MAX_SOURCE_RETRIES
+                if (sourceFailure && error == null && sourceRetries < maxRetries &&
                     failure.errorCode !in setOf(PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS, PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
                         PlaybackException.ERROR_CODE_IO_NO_PERMISSION)) {
                     sourceRetries++
@@ -408,13 +421,16 @@ object InAppPlaybackSession {
                         easynewsSingle = true
                         android.util.Log.w("PovPlayer", "Easynews keeps failing over parallel connections; retrying this video over one")
                     }
-                    android.util.Log.w("PovPlayer", "Source error ${failure.errorCodeName}; quiet retry $sourceRetries of $MAX_SOURCE_RETRIES", failure)
+                    android.util.Log.w("PovPlayer", "Source error ${failure.errorCodeName}; quiet retry $sourceRetries of $maxRetries", failure)
                     handler.postDelayed({
                         if (isCurrent(exo) && exo.playerError != null && error == null) { exo.prepare(); exo.play() }
-                    }, SOURCE_RETRY_DELAY_MS)
+                    }, if (aioStreams) AIO_RETRY_DELAY_MS else SOURCE_RETRY_DELAY_MS)
                     notifyChanged()
                     return
                 }
+                // The full reason, so a link that keeps failing can be diagnosed from the log.
+                android.util.Log.e("PovPlayer", "Playback failed: ${failure.errorCodeName} (${failure.cause?.javaClass?.simpleName}: ${failure.cause?.message})" +
+                    if (aioStreams) " · AIOStreams link" else "", failure)
                 if (error !is VideoCompatibilityException) error = failure
                 saveLocal(); sync("pause")
                 exo.pause()
@@ -626,13 +642,18 @@ object InAppPlaybackSession {
             (0 until group.length).filter(group::isTrackSupported).map { group.getTrackFormat(it) }
         }.filter { it.selectionFlags and C.SELECTION_FLAG_FORCED == 0 && it.label?.contains("forced", true) != true }
             .map { dev.pov.tv.data.ExternalSubtitles.iso3(it.language.orEmpty()) }.toSet()
-        val candidates = AudioPreferences(app).withFallback(wanted).toList()
-        if (candidates.any { dev.pov.tv.data.ExternalSubtitles.iso3(it) in embedded }) return
-        val playing = sourceUrl; val fileName = mediaName; val key = secureStore.get(WYZIE_KEY)
+        // The chosen language built in: nothing to find. The English fallback must not stop the search: a video with
+        // English built in but no Spanish still gets Spanish from OpenSubtitles / Wyzie first, and falls back to English
+        // (built in, or online when it isn't) only when no Spanish is found anywhere.
+        if (dev.pov.tv.data.ExternalSubtitles.iso3(wanted) in embedded) return
+        val fallbacks = SubtitlePreferences(app).withFallback(wanted).toList()
+        val candidates = fallbacks.takeWhile { dev.pov.tv.data.ExternalSubtitles.iso3(it) !in embedded }
+        val playing = sourceUrl; val fileName = mediaName; val key = secureStore.get(WYZIE_KEY); val subdlKey = secureStore.get(SUBDL_KEY)
+        val subtitleCache = java.io.File(app.cacheDir, "subtitles")
         Thread {
-            val finder = dev.pov.tv.data.ExternalSubtitles()
+            val finder = dev.pov.tv.data.ExternalSubtitles(cacheDir = subtitleCache)
             val found = candidates.firstNotNullOfOrNull { language ->
-                runCatching { finder.find(media, language, fileName, key) }.getOrNull()?.takeIf { it.isNotEmpty() }
+                runCatching { finder.find(media, language, fileName, key, subdlKey = subdlKey) }.getOrNull()?.takeIf { it.isNotEmpty() }
             }.orEmpty()
             handler.post {
                 if (found.isEmpty() || !isCurrent(exo) || sourceUrl != playing) return@post

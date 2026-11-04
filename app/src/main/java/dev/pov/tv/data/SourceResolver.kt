@@ -47,7 +47,7 @@ class SourceResolver internal constructor(
         val all = mutableListOf<SourceItem>()
         try {
             val tasks = providers.mapIndexed { index, provider -> executor.submit(java.util.concurrent.Callable {
-                try { parseStreams(publicJson("${endpoints[index]}/stream/${identity.type}/$id.json"), provider.name, identity, AddonBadges.of(endpoints[index], provider.name)) }
+                try { parseStreams(publicJson("${endpoints[index]}/stream/${identity.type}/$id.json"), provider.name, identity, AddonBadges.of(endpoints[index], provider.name), provider.newsProvider) }
                 catch (error: InterruptedException) { throw error }
                 catch (error: java.util.concurrent.CancellationException) { throw error }
                 catch (_: Exception) { null }
@@ -82,10 +82,16 @@ class SourceResolver internal constructor(
         return SearchResult(results, failures)
     }
 
-    private fun parseStreams(payload: JSONObject, provider: String, identity: PlaybackIdentity, addon: String? = null): List<SourceItem> {
+    private fun parseStreams(payload: JSONObject, provider: String, identity: PlaybackIdentity, addon: String? = null, newsProvider: String = ""): List<SourceItem> {
         val streams = payload.optJSONArray("streams") ?: return emptyList()
         return (0 until minOf(streams.length(), 300)).mapNotNull { index ->
             val stream = streams.optJSONObject(index) ?: return@mapNotNull null
+            // AIOStreams' stream data (sent when the instance has PROVIDE_STREAM_DATA on): its statistics, notices and
+            // errors are not links. Its nzbUrl holds the viewer's indexer key, so it is never read.
+            val data = stream.optJSONObject("streamData")
+            if (data?.optString("type") in setOf("statistic", "info", "error")) return@mapNotNull null
+            val aio = data != null || stream.optJSONObject("behaviorHints")?.optString("bingeGroup").orEmpty().startsWith("com.aiostreams")
+            val linkAddon = addon ?: AddonBadges.AIOSTREAMS.takeIf { aio }
             val hash = stream.optString("infoHash").lowercase(Locale.ROOT).takeIf(HASH::matches).orEmpty()
             val direct = stream.optString("url").takeIf(::isWebLink).orEmpty()
             // Stremio sends these through its local proxy; the player sends them itself.
@@ -99,13 +105,24 @@ class SourceResolver internal constructor(
             val fileIndex = if (stream.has("fileIdx") && !stream.isNull("fileIdx")) stream.optInt("fileIdx", -1).takeIf { it >= 0 } else null
             SourceItem(title = title, provider = provider, infoHash = hash, fileIndex = fileIndex, directUrl = direct,
                 sizeBytes = SourceMetadata.sizeBytes(stream), qualityHeight = SourceMetadata.qualityHeight(stream), headers = headers,
-                addon = addon?.takeIf { direct.isNotBlank() },
+                addon = linkAddon?.takeIf { direct.isNotBlank() },
+                usenet = linkAddon == AddonBadges.AIOSTREAMS && (data?.optString("type")?.let { it == "usenet" || it == "stremio-usenet" }
+                    ?: USENET_TITLE.containsMatchIn("${stream.optString("name")} $description")),
+                indexer = if (linkAddon == AddonBadges.AIOSTREAMS) data?.optString("indexer").orEmpty().take(40) else "",
+                servedBy = data?.optJSONObject("service")?.optString("id")?.takeIf { it in DebridServices.IDS },
+                newsProvider = if (linkAddon == AddonBadges.AIOSTREAMS) newsProvider else "",
+                inLibrary = data?.optBoolean("library") == true,
                 detail = listOf(stream.optString("name"), description.lineSequence().drop(1).joinToString(" · "))
                     .filter { it.isNotBlank() }.joinToString(" · ").take(800))
         }
     }
 
-    private fun deduplicate(items: List<SourceItem>): List<SourceItem> {
+    // A public AIOStreams instance sends no stream data; its formatted titles usually say "usenet" or show 📰.
+    private val USENET_TITLE = Regex("(?i)(?<![a-z])usenet(?![a-z])|📰")
+
+    private fun deduplicate(items: List<SourceItem>): List<SourceItem> = LibraryCopies.merge(mergeCopies(items))
+
+    private fun mergeCopies(items: List<SourceItem>): List<SourceItem> {
         // Never compare filenames or strip signed URL query parameters. A file index distinguishes torrent files.
         val groups = items.groupBy { if (it.directUrl.isNotBlank()) Triple("", null, it.directUrl) else Triple(it.infoHash, it.fileIndex, "") }
         return groups.values.map { copies ->
@@ -422,5 +439,18 @@ internal object EpisodeFilename {
             if (end >= start && end - start <= 100) for (episode in start..end) found += season to episode
         }
         return found
+    }
+}
+
+/**
+ * AIOStreams can list a file in the viewer's library twice: as an indexer result and as the library copy, with a
+ * slightly different name and play address. Same add-on, both in the library and the same size to the byte: one file,
+ * so only one stays, the copy that names its indexer.
+ */
+internal object LibraryCopies {
+    fun merge(items: List<SourceItem>): List<SourceItem> {
+        fun key(item: SourceItem) = item.sizeBytes?.takeIf { item.inLibrary && item.addon == AddonBadges.AIOSTREAMS && it > 0 }?.let { "${item.provider}|$it" }
+        val keep = items.filter { key(it) != null }.groupBy(::key).mapValues { (_, copies) -> copies.firstOrNull { it.indexer.isNotBlank() } ?: copies.first() }
+        return items.filter { item -> key(item)?.let { keep[it] === item } ?: true }
     }
 }

@@ -67,6 +67,16 @@ data class SourceItem(
     val headers: Map<String, String> = emptyMap(),
     /** The add-on's own logo for this link (AddonBadges: PenguPlay, CNCVerse), known from the add-on's address. */
     val addon: String? = null,
+    /** AIOStreams: the link streams from Usenet (else debrid or direct), from its stream data or title. */
+    val usenet: Boolean = false,
+    /** AIOStreams: the Usenet indexer the NZB came from (NZBgeek, NzbNest…). */
+    val indexer: String = "",
+    /** AIOStreams: the debrid service that serves a debrid link (DebridServices id). */
+    val servedBy: String? = null,
+    /** The news provider the viewer set for this add-on (Easynews, Newshosting), for its logo on Usenet links. */
+    val newsProvider: String = "",
+    /** Already in the viewer's library (AIOStreams says so in its stream data): plays at once, nothing new is added. */
+    val inLibrary: Boolean = false,
 )
 
 /** A selected source either streams directly or offers stable TorBox file identities. */

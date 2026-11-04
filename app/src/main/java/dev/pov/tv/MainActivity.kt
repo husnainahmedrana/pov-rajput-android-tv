@@ -56,7 +56,9 @@ class MainActivity : Activity() {
     private var playerShown = false
     private var watchedCheckedAt = 0L
     private lateinit var resolver: SourceResolver
-    private val catalog = CatalogApi()
+    /** Search and details: the chosen add-on (e.g. a self-hosted AIOMetadata) when set, else Cinemeta. */
+    private var metadataSource: MetadataSource? = null
+    private val catalog = CatalogApi(source = { metadataSource }, publicJson = Net::publicJson)
     private lateinit var history: PlaybackStore
     private lateinit var body: LinearLayout
     private lateinit var themePreferences: ThemePreferences
@@ -166,7 +168,7 @@ class MainActivity : Activity() {
         publicPreview = debug && (intent.getBooleanExtra("public_preview", false) || sourcePreview)
         if (DeviceLayout.tv) window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         else { window.statusBarColor = 0xFF141414.toInt(); window.navigationBarColor = PHONE_BAR_COLOR }
-        store = SecureStore(this); torbox = TorBoxApi(store); weTrakrApi = WeTrakrApi(store); simklApi = SimklApi(store)
+        store = SecureStore(this); metadataSource = MetadataSource.fromJson(store.get(MetadataSource.KEY))?.takeIf { store.get(METADATA_ON) != "false" }; torbox = TorBoxApi(store); weTrakrApi = WeTrakrApi(store); simklApi = SimklApi(store)
         weTrakrOutbox = PlaybackStore(this, Trackers.outboxKey(Trackers.WETRAKR)); simklOutbox = PlaybackStore(this, Trackers.outboxKey(Trackers.SIMKL))
         simklChosen = Trackers.selected(store) == Trackers.SIMKL
         resolver = SourceResolver(store, torbox); history = PlaybackStore(this)
@@ -270,10 +272,11 @@ class MainActivity : Activity() {
     }
     @Deprecated("Android TV Back handling") override fun onBackPressed() {
         if (DeviceLayout.phone && backStack.isEmpty() && destination != "home") { openDestination(destinations().first { it.key == "home" }); return }
-        // Flix: content → menu → exit; other top-level pages return straight to Home.
+        // Flix: content → menu → exit; other top-level pages (Settings, Movies…) return to Home's content, so the
+        // rows are right there instead of one or more presses away in the menu.
         if (flix && DeviceLayout.tv && backStack.isEmpty()) {
             val inMenu = navigationViews.values.any { it.hasFocus() }
-            if (destination != "home") { openHomeMenu(); return }
+            if (destination != "home") { openHomeContent(); return }
             if (!inMenu && openMenu()) return
         }
         if (backStack.isNotEmpty()) {
@@ -703,7 +706,7 @@ class MainActivity : Activity() {
 
     private fun Int?.orZero() = this ?: 0
     private fun pageRevision() = java.security.MessageDigest.getInstance("SHA-256").digest(
-        listOf(theme.id, wetrakr.accountRevision(), wetrakr.connected().toString(), store.get("offcloud.key"), store.get("torbox.token"), store.get("wetrakr.home_liked_opt_in"), store.get("sources.endpoint"), store.get(SourceProviders.KEY), store.get(TMDB_KEY), store.get(TMDB_REGION), store.get(RESUME_CARDS), store.get(CatalogAddons.KEY), homeRows.revision,
+        listOf(theme.id, wetrakr.accountRevision(), wetrakr.connected().toString(), store.get("offcloud.key"), store.get("torbox.token"), store.get("wetrakr.home_liked_opt_in"), store.get("sources.endpoint"), store.get(SourceProviders.KEY), store.get(TMDB_KEY), store.get(TMDB_REGION), store.get(TVDB_KEY), store.get(TVDB_SHOWS), store.get(RESUME_CARDS), store.get(CatalogAddons.KEY), homeRows.revision,
             // Without a tracker, Home and title pages show local progress, so a kept copy is stale once something was watched.
             if (publicPreview || wetrakr.connected()) "" else history.continueRevision()).joinToString("\u0000").toByteArray()
     ).joinToString("") { "%02x".format(it.toInt() and 255) }
@@ -1211,12 +1214,15 @@ class MainActivity : Activity() {
 
     private var homeMenuFocus = false
     private var menuHoldUntil = 0L
-    private fun openHomeMenu() {
+
+    /** Home with focus on its content (the feature's Play, as at launch), the menu closed. */
+    private fun openHomeContent() {
         if (retainedHome == null) retainHome()
-        homeMenuFocus = true; destination = "home"; backStack.clear(); current = { home() }
-        home(); refreshNavigation(); openMenu()
-        // Swapping pages lets Android restore "default focus" to the first control it finds; the menu keeps it briefly.
-        menuHoldUntil = android.os.SystemClock.uptimeMillis() + 1_200
+        homeMenuFocus = false; destination = "home"; backStack.clear(); current = { home() }
+        // Back pressed from the open menu: close it, so focus lands on the rows instead of staying in the menu.
+        if (navigationViews.values.any { it.hasFocus() }) { setRailExpanded(false, animate = false); currentFocus?.clearFocus() }
+        wantsContentFocus = true
+        home(); refreshNavigation()
     }
 
     /** Android refuses focus to zero-width views, so the hidden menu opens before taking focus. */
@@ -2299,6 +2305,18 @@ class MainActivity : Activity() {
     private companion object {
         private const val QR_DP = 110; const val WARM_BACKDROPS = 6; const val HIDE_UNCACHED = "sources.hide_uncached"; const val BACKDROP_FADE_MS = 220; const val VOICE_REQUEST = 701; const val PLAYBACK_REQUEST = 702; const val MIC_REQUEST = 703; const val FLIX_ROW_LINE = 236; const val FEATURE_INTERVAL_MS = 5_000L; const val AUTOPLAY_FIRST = "sources.autoplay_first"; const val AUTOPLAY_MAX_GB = "sources.autoplay_max_gb"; const val AUTOPLAY_MAX_GB_EPISODE = "sources.autoplay_max_gb_episode"; const val AUTOPLAY_MAX_MBPS = "sources.autoplay_max_mbps"; const val AUTOPLAY_LIMIT_ON = "sources.autoplay_limit_on"; const val BACKDROP_WIDTH = 1280; const val CONTINUE_CACHE = "wetrakr.continue_cache"
         const val TMDB_KEY = "tmdb.key"; const val TMDB_REGION = "tmdb.region"
+        const val TVDB_KEY = "tvdb.key"; const val TVDB_SHOWS = "tvdb.shows"
+        /** "false" keeps the search-and-details add-on saved but switched off. */
+        const val METADATA_ON = "metadata.source.on"
+        const val CAST_CARD_WIDTH = 112; const val CAST_PHOTO = 92
+        /** Room kept for the cast row while it loads, so the details don't move when it arrives. */
+        const val CAST_ROW_HEIGHT = 202
+        /** AIOStreams library files loaded per step (its catalog page size). */
+        const val AIO_LIBRARY_PAGE = 100
+        const val CAST_CARD_WIDTH_PHONE = 80; const val CAST_PHOTO_PHONE = 62; const val CAST_ROW_HEIGHT_PHONE = 158
+        const val LIBRARY_FIRST = "sources.library_first"
+        /** An actor's rows show their 20 most popular titles of each kind; See all shows every one, newest first. */
+        const val PERSON_ROW_TITLES = 20
         /** Shown once after a restore restarts the app. Never part of a backup (account.* is excluded). */
         const val ACCOUNT_NOTICE = "account.notice"
         /** The app's website. Until the site itself exists it forwards to the GitHub page. */
@@ -2358,7 +2376,11 @@ class MainActivity : Activity() {
         current = { detailsFor(item, episode) }
         fun render(id: Int, result: MediaItemData) {
             body.removeAllViews(); hero(result, false, if (flix && result.type == "series") 3 else 0); mediaActions(result, episode)
-            if (result.type == "series") { seasonPicker(result); if (flix) body.post { if (id == generation) riseIn() } }
+            // Shows: on TV the cast sits under the episode row and season tabs; the phone's episodes are a long
+            // vertical list, so there the cast comes first.
+            if (result.type == "series" && DeviceLayout.phone) { castRow(id, result); seasonPicker(result) }
+            else { if (result.type == "series") seasonPicker(result); castRow(id, result) }
+            if (result.type == "series") { if (flix) body.post { if (id == generation) riseIn() } }
             else if (flix && DeviceLayout.tv) alignToBottom(id, reveal = ::riseIn)
             else if (flix) body.post { if (id == generation) riseIn() }
         }
@@ -2379,9 +2401,29 @@ class MainActivity : Activity() {
     private fun cachedDetails(item: MediaItemData): MediaItemData? = synchronized(detailsCache) {
         detailsCache.get(detailsKey(item))?.takeIf { android.os.SystemClock.elapsedRealtime() - it.at < DETAILS_KEEP_MS }?.result
     }
-    private fun fetchDetails(item: MediaItemData): MediaItemData = catalog.details(item).also { result ->
+    private fun fetchDetails(item: MediaItemData): MediaItemData = withTvdb(catalog.details(item)).also { result ->
         synchronized(detailsCache) { detailsCache.put(detailsKey(item), CachedDetails(result, android.os.SystemClock.elapsedRealtime())) }
     }
+
+    /**
+     * With the viewer's TVDB key (and Use TVDB for shows on), a show's seasons and episodes come from TVDB, usually
+     * more complete than Cinemeta's. A still or synopsis TVDB lacks is kept from Cinemeta; a show TVDB doesn't know,
+     * or any TVDB error, leaves Cinemeta's list as it was. Call on a worker.
+     */
+    private fun withTvdb(result: MediaItemData): MediaItemData {
+        if (result.type != "series" || publicPreview) return result
+        val key = store.get(TVDB_KEY)
+        if (key.isBlank() || store.get(TVDB_SHOWS) == "false") return result
+        val episodes = runCatching { TvdbApi(this, key).episodes(result.imdbId) }.getOrNull() ?: return result
+        val known = result.episodes.associateBy { it.season to it.episode }
+        return result.copy(episodes = episodes.map { episode ->
+            val old = known[episode.season to episode.episode]
+            episode.copy(thumbnail = episode.thumbnail.ifBlank { old?.thumbnail.orEmpty() },
+                overview = episode.overview.ifBlank { old?.overview.orEmpty() },
+                title = if (episode.title == "Episode ${episode.episode}" && old != null) old.title else episode.title)
+        })
+    }
+    private fun forgetDetails() = synchronized(detailsCache) { detailsCache.evictAll() }
 
     /** Downloads and shades a details backdrop ahead of time, so the page opens with its picture ready. */
     private fun preloadBackdrop(address: String) {
@@ -2467,6 +2509,143 @@ class MainActivity : Activity() {
                 }
             }, margin(190, 44, right = 8))
             if (result.type == "movie" || episode != null) actions.addView(button(if (flix) "✓  Watched" else "Mark watched") { confirm("Mark ${result.title}${episode?.let { " S${it.season} E${it.episode}" }.orEmpty()} as watched?") { load(generation, { tracker.markWatched(episode ?: identity) }) { hideContinue(identityKey(episode ?: identity)); markedWatched(episode ?: identity); toast("${tracker.name} history updated") } } }, margin(150, 44))
+        }
+        if (DeviceLayout.phone) fitActionsToPhone(actions)
+    }
+
+    /**
+     * Phone: the details buttons fit the screen instead of running off its edge. Play and Streams share the first
+     * row; the rest (watchlist, watched, playlists) share the rows below, three to a row.
+     */
+    private fun fitActionsToPhone(actions: LinearLayout) {
+        val scroll = actions.parent as? View ?: return
+        val host = scroll.parent as? LinearLayout ?: return
+        val index = host.indexOfChild(scroll)
+        val buttons = (0 until actions.childCount).map(actions::getChildAt)
+        actions.removeAllViews()
+        val (main, rest) = buttons.partition { view -> (view as? TextView)?.text?.let { it.startsWith("▶") || it.contains("Streams") } == true }
+        val box = column()
+        fun line(views: List<View>) {
+            if (views.isEmpty()) return
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            views.forEachIndexed { position, view ->
+                (view as? TextView)?.apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; gravity = Gravity.CENTER }
+                row.addView(view, LinearLayout.LayoutParams(0, dp(44), 1f).apply { if (position < views.lastIndex) rightMargin = dp(8) })
+            }
+            box.addView(row, margin(-1, -2, bottom = 8))
+        }
+        line(main); rest.chunked(3).forEach(::line)
+        host.removeView(scroll); host.addView(box, index, margin(-1, -2))
+    }
+
+    private val castCache = LruCache<String, List<TmdbCatalog.CastMember>>(60)
+
+    /**
+     * Up to 7 actors under a title's details, from TMDB (needs the viewer's TMDB key; hidden without one). Loaded after
+     * the page shows so it never slows it down. Its room is kept from the start, so it shows on the first screen under
+     * the buttons and the details don't move when it arrives; with no cast the room closes.
+     */
+    private fun castRow(id: Int, result: MediaItemData) {
+        val key = if (publicPreview) "" else store.get(TMDB_KEY)
+        if (key.isBlank() || !result.imdbId.startsWith("tt")) return
+        val slot = column().apply { minimumHeight = dp(if (DeviceLayout.phone) CAST_ROW_HEIGHT_PHONE else CAST_ROW_HEIGHT) }
+        body.addView(slot, margin(-1, -2))
+        fun show(cast: List<TmdbCatalog.CastMember>) {
+            if (id != generation || !slot.isAttachedToWindow) return
+            if (cast.isEmpty()) { slot.visibility = View.GONE; return }
+            slot.addView(text("Cast", theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 10, bottom = 4))
+            val row = horizontalRow(slot)
+            // The phone shows smaller cards, four and a half at a time, so the row clearly scrolls for more.
+            cast.forEach { member -> row.addView(castCard(member), margin(if (DeviceLayout.phone) CAST_CARD_WIDTH_PHONE else CAST_CARD_WIDTH, -2, right = if (DeviceLayout.phone) 8 else 12)) }
+        }
+        val cacheKey = detailsKey(result)
+        castCache.get(cacheKey)?.let { show(it); return }
+        val region = tmdbRegion()
+        worker.execute {
+            val cast = runCatching { TmdbCatalog(this, key, region).cast(result.imdbId, result.type) }.getOrNull()
+            runOnUiThread { if (isFinishing || isDestroyed) return@runOnUiThread; if (cast != null) castCache.put(cacheKey, cast); show(cast.orEmpty()) }
+        }
+    }
+
+    private fun oval(color: Int) = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
+
+    /** A round portrait with the actor's name and part; focused, a white ring. Opens the actor's page. */
+    private fun castCard(member: TmdbCatalog.CastMember): View {
+        val size = dp(if (DeviceLayout.phone) CAST_PHOTO_PHONE else CAST_PHOTO)
+        val card = LinearLayout(this).apply {
+            // Room above the portrait: the focused one grows a little with its white ring, and the row clips at its top.
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(0, dp(10), 0, dp(4))
+            // The grown ring reaches into that padding: draw it there instead of cutting it at the padding's edge.
+            clipToPadding = false; clipChildren = false
+            isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true; tag = "cast:${member.personId}"
+            contentDescription = if (member.character.isBlank()) member.name else "${member.name} as ${member.character}"
+        }
+        val ring = FrameLayout(this).apply { setPadding(dp(3), dp(3), dp(3), dp(3)) }
+        val photo = FixedSizeImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP; background = oval(panel)
+            outlineProvider = android.view.ViewOutlineProvider.BACKGROUND; clipToOutline = true
+        }
+        ring.addView(photo, FrameLayout.LayoutParams(size, size))
+        if (member.photo.isNotBlank()) image(photo, member.photo)
+        else ring.addView(text(member.name.split(' ').filter(String::isNotBlank).take(2).joinToString("") { it.take(1).uppercase() }, 26, muted, true)
+            .apply { gravity = Gravity.CENTER }, FrameLayout.LayoutParams(size, size).apply { gravity = Gravity.CENTER })
+        card.addView(ring, LinearLayout.LayoutParams(-2, -2))
+        val name = text(member.name, 12, ink, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+        card.addView(name, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+        if (member.character.isNotBlank()) card.addView(text(member.character, 11, muted).apply {
+            gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(3) })
+        card.setOnFocusChangeListener { _, focused ->
+            ring.background = if (focused) oval(Color.WHITE) else null
+            ring.animate().scaleX(if (focused) 1.06f else 1f).scaleY(if (focused) 1.06f else 1f).setDuration(120).start()
+        }
+        card.setOnClickListener { navigate { personPage(member) } }
+        return card
+    }
+
+    /** An actor's page: their portrait and name, then a row of their films and a row of their shows. */
+    private fun personPage(member: TmdbCatalog.CastMember) {
+        current = { personPage(member) }
+        val id = page("")
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val size = dp(if (DeviceLayout.phone) 72 else 96)
+        val photo = FixedSizeImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP; background = oval(panel)
+            outlineProvider = android.view.ViewOutlineProvider.BACKGROUND; clipToOutline = true
+        }
+        header.addView(photo, LinearLayout.LayoutParams(size, size))
+        if (member.photo.isNotBlank()) image(photo, member.photo)
+        val names = column()
+        names.addView(text(member.name, if (DeviceLayout.phone) 22 else 28, ink, true))
+        names.addView(text("Movies and shows", 13, muted), margin(-1, -2, top = 6))
+        header.addView(names, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(18) })
+        body.addView(header, margin(-1, -2, bottom = 8))
+        val key = if (publicPreview) "" else store.get(TMDB_KEY)
+        load(id, { filmography(key, member.personId, PERSON_ROW_TITLES) }) { result ->
+            if (result.movies.isEmpty() && result.shows.isEmpty()) body.addView(text("TMDB lists no films or shows for ${member.name}.", 14, muted), margin(-1, -2, top = 12))
+            // The rows show the most popular; See all loads the actor's whole list.
+            mediaRow("Movies", result.movies) { navigate { personGrid(member, "movie") } }
+            mediaRow("Shows", result.shows) { navigate { personGrid(member, "series") } }
+            focusAfterRender(id)
+        }
+    }
+
+    private val filmographyCache = LruCache<String, TmdbCatalog.Filmography>(12)
+    /** Call on a worker. Kept per actor so Back and See all don't fetch again. */
+    private fun filmography(key: String, personId: Long, limit: Int, byRelease: Boolean = false): TmdbCatalog.Filmography {
+        val cacheKey = "$personId:$limit:$byRelease"
+        filmographyCache.get(cacheKey)?.let { return it }
+        return TmdbCatalog(this, key, tmdbRegion()).filmography(personId, limit, byRelease).also { filmographyCache.put(cacheKey, it) }
+    }
+
+    /** All of an actor's films (or shows), newest release first. */
+    private fun personGrid(member: TmdbCatalog.CastMember, type: String) {
+        current = { personGrid(member, type) }
+        val id = page("${member.name} · ${if (type == "movie") "Movies" else "Shows"}")
+        val key = if (publicPreview) "" else store.get(TMDB_KEY)
+        load(id, { filmography(key, member.personId, Int.MAX_VALUE, byRelease = true) }) { result ->
+            mediaGrid(if (type == "movie") result.movies else result.shows)
+            focusAfterRender(id)
         }
     }
 
@@ -2756,13 +2935,16 @@ class MainActivity : Activity() {
         if (!ownLine) header.addView(counts, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(12) })
         body.addView(header, margin(-1, -2, bottom = 5))
         if (ownLine) body.addView(counts, margin(-1, -2, bottom = 6))
-        body.addView(text(if (directOnly) "Direct links only. Torrent sources need a debrid service."
+        // Compact list: the service logos up top already say where links are cached, so the priority line goes.
+        val compactList = LinkListPreferences.compact(this)
+        if (directOnly || !compactList) body.addView(text(if (directOnly) "Direct links only. Torrent sources need a debrid service."
             else "Cached source priority: ${connected.joinToString(" → ") { DebridServices.name(it) }}.", 12, muted), margin(-1, -2, bottom = 18))
+        else body.addView(View(this), margin(-1, 6))
         sourcesBackdrop(identity, keep = artShown)
         val sorting = SourceSortPreferences(this)
         body.addView(button("Sort · ${sorting.label}  ›") {
             SourceSortPreferences.show(this) { sourceResults(identity, sources, unavailable) }
-        }, margin(-1, 42, bottom = 8))
+        }, margin(-1, if (compactList) 36 else 42, bottom = if (compactList) 6 else 8))
         if (unavailable.isNotEmpty()) body.addView(text("Unavailable providers: ${unavailable.joinToString(", ")}. Other providers were searched.", 14, muted), margin(-1, -2, bottom = 8))
         if (sources.isEmpty()) body.addView(text("No sources were returned. Try again later or check the source provider in Settings.", 15, muted))
         else if (lowOnly) {
@@ -2798,7 +2980,7 @@ class MainActivity : Activity() {
         }
         if (Easynews.active(store)) ordered.count { Easynews.isHost(it.directUrl) }.let { count(PlaybackDebrid.EASYNEWS, "$it", "$it Easynews links") }
         // Add-ons with their own logo show their count when they returned links.
-        listOf(PlaybackDebrid.PENGUPLAY to "PenguPlay", PlaybackDebrid.CNCVERSE to "CNCVerse").forEach { (addon, name) ->
+        listOf(PlaybackDebrid.AIOSTREAMS to "AIOStreams", PlaybackDebrid.PENGUPLAY to "PenguPlay", PlaybackDebrid.CNCVERSE to "CNCVerse", PlaybackDebrid.PLAVIO to "PlavioHD").forEach { (addon, name) ->
             ordered.count { PlaybackDebrid.addon(it) == addon }
                 .takeIf { it > 0 }?.let { count(addon, "$it", "$it $name links") }
         }
@@ -2885,7 +3067,11 @@ class MainActivity : Activity() {
      * Links that play at once (cached or direct) lead, and the rest follow in the same sort order. Real-Debrid-style
      * services can't tell in advance, so with only those connected nothing moves.
      */
-    private fun cachedFirst(sorted: List<SourceItem>): List<SourceItem> = sorted.partition(::playsAtOnce).let { (ready, other) -> ready + other }
+    private fun cachedFirst(sorted: List<SourceItem>): List<SourceItem> {
+        val ready = sorted.partition(::playsAtOnce).let { (ready, other) -> ready + other }
+        // With Library links first on, links already in the viewer's library lead, still in sort order.
+        return if (store.get(LIBRARY_FIRST) == "false") ready else ready.partition { it.inLibrary }.let { (library, rest) -> library + rest }
+    }
 
     /** Cached somewhere, or a direct link: plays at once. */
     private fun playsAtOnce(source: SourceItem) = source.cached || source.cachedServices.isNotEmpty() || source.directUrl.isNotEmpty()
@@ -3014,7 +3200,7 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     if (request == generation && !isFinishing && !isDestroyed) {
                         resolvingGeneration = null; body.removeView(progress)
-                        playingAddon = if (prepared is PreparedSource.Direct) PlaybackDebrid.addon(source) else null
+                        playingAddon = if (prepared is PreparedSource.Direct) PlaybackDebrid.tag(source) else null
                         when (prepared) {
                             is PreparedSource.Direct -> play(prepared.url, prepared.identity.title, prepared.identity,
                                 "media:${prepared.identity.imdbId}:${prepared.identity.season}:${prepared.identity.episode}",
@@ -3106,19 +3292,74 @@ class MainActivity : Activity() {
             "media:${identity.imdbId}:${identity.season}:${identity.episode}")
     }
 
+    /**
+     * The Library: each connected debrid cloud, and each AIOStreams library among the source providers (found from
+     * their manifests). With only one of them, it opens straight away.
+     */
     private fun selectedCloud() {
         val services = DebridServices.connected(store).filter { it in DebridServices.TRANSFERS }
-        if (services.size == 1) {
-            if (services.first() == "offcloud") offcloudCloud() else cloud("torrents")
-            return
-        }
         current = { selectedCloud() }; destination = "library"; refreshNavigation()
-        page("Cloud library", "Choose a connected service to browse its downloads.")
-        if (services.isEmpty()) body.addView(button("Connect a debrid service in Settings") { navigate { debridServicesPage() } }, margin(-1, 44))
-        services.forEach { service ->
-            body.addView(button("${DebridServices.name(service)} cloud  ›") {
-                navigate { if (service == "offcloud") offcloudCloud() else cloud("torrents") }
-            }, margin(-1, 44, bottom = 8))
+        val id = page("Library", "Your debrid clouds and AIOStreams libraries.")
+        val providers = runCatching { SourceProviders(store).load() }.getOrDefault(emptyList())
+        read(id, { AioLibrary().sources(providers) }) { libraries ->
+            if (services.size + libraries.size == 1) {
+                // Only one place to browse: open it in place of this page.
+                when {
+                    libraries.isNotEmpty() -> aioLibraryPage(libraries.first())
+                    services.first() == "offcloud" -> offcloudCloud()
+                    else -> cloud("torrents")
+                }
+                return@read
+            }
+            if (services.isEmpty() && libraries.isEmpty()) body.addView(button("Connect a debrid service in Settings") { navigate { debridServicesPage() } }, margin(-1, 44))
+            services.forEach { service ->
+                body.addView(button("${DebridServices.name(service)} cloud  ›") {
+                    navigate { if (service == "offcloud") offcloudCloud() else cloud("torrents") }
+                }, margin(-1, 44, bottom = 8))
+            }
+            libraries.forEach { library ->
+                body.addView(button("${library.provider} · AIOStreams library  ›") { navigate { aioLibraryPage(library) } }, margin(-1, 44, bottom = 8))
+            }
+            focusAfterRender(id)
+        }
+    }
+
+    /** An AIOStreams library: the files streamed through it (Usenet and others), with posters found from the names. */
+    private fun aioLibraryPage(library: AioLibrary.Source, shown: Int = AIO_LIBRARY_PAGE) {
+        current = { aioLibraryPage(library, shown) }; destination = "library"; refreshNavigation()
+        val id = page("${library.provider} library", "Files in your AIOStreams library, newest first. Select one to play it.")
+        val api = AioLibrary()
+        read(id, {
+            // Pages of AIOStreams' size until [shown] files are loaded, or the library ends.
+            val all = mutableListOf<AioLibrary.Entry>()
+            while (all.size < shown) {
+                val next = api.entries(library, all.size)
+                all += next.filterNot { entry -> all.any { it.id == entry.id } }
+                if (next.isEmpty() || next.size < AIO_LIBRARY_PAGE / 2) break
+            }
+            all
+        }) { entries ->
+            if (entries.isEmpty()) body.addView(text("Nothing in this library yet. Files you stream through AIOStreams appear here.", 15, muted))
+            val open: (AioLibrary.Entry) -> Unit = { entry ->
+                val request = generation
+                toast("Opening ${entry.name.take(60)}…")
+                worker.execute {
+                    val link = runCatching { api.link(library, entry) }.getOrNull()
+                    runOnUiThread {
+                        if (request != generation || isDestroyed) return@runOnUiThread
+                        if (link == null) toast("AIOStreams has no playable link for this file right now.")
+                        else { playingAddon = AddonBadges.AIOSTREAMS; play(link.url, entry.name, null, "", headers = link.headers) }
+                    }
+                }
+            }
+            if (flix) libraryGrid(entries.map { entry -> LibraryEntry("aiolib:${entry.id}", entry.name, "AIOStreams library") { open(entry) } })
+            else {
+                val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
+                entries.forEach { entry -> choices.addChoice(cloudRow("aiolib:${entry.id}", entry.name, "AIOStreams library") { open(entry) }) }
+            }
+            if (entries.size >= shown) body.addView(button("Show more") { aioLibraryPage(library, shown + AIO_LIBRARY_PAGE) }.apply { gravity = Gravity.CENTER },
+                margin(200, 44, top = 12))
+            focusAfterRender(id)
         }
     }
 
@@ -3717,6 +3958,18 @@ class MainActivity : Activity() {
                     load(generation, { TmdbCatalog(this, key, tmdbRegion()).validate() }) { store.put(TMDB_KEY, key); toast("TMDB connected. Home now uses TMDB catalogs."); refreshSettings() }
                 }
             }
+            val tvdbKey = store.get(TVDB_KEY)
+            settingsRow(home, "TVDB", if (tvdbKey.isBlank()) "Not set" else "Connected",
+                "Your own TVDB key gives shows TVDB's seasons and episodes: usually more complete, with specials, stills and synopses.",
+                status = tvdbKey.isNotBlank()) {
+                inputSetting("TVDB API key", "TVDB API key (thetvdb.com → Account → API Keys)", "", secret = true) { key ->
+                    load(generation, { TvdbApi(this, key).validate() }) { store.put(TVDB_KEY, key); forgetDetails(); toast("TVDB connected. Show pages now use TVDB episodes."); refreshSettings() }
+                }
+            }
+            if (tvdbKey.isNotBlank()) settingsToggle(home, "Use TVDB for shows", "Seasons, episode titles, stills and synopses from TVDB. Off uses Cinemeta's episode lists again.",
+                store.get(TVDB_SHOWS) != "false", contentLabel = "Use TVDB for shows") { on -> store.put(TVDB_SHOWS, on.toString()); forgetDetails() }
+            settingsRow(home, "Search and details", metadataSource?.name ?: MetadataSource.fromJson(store.get(MetadataSource.KEY))?.let { "Cinemeta · ${it.name} off" } ?: "Cinemeta",
+                "Use one of your catalog add-ons, such as a self-hosted AIOMetadata, for search and title details (descriptions, episodes). Cinemeta stays the fallback.") { chooseMetadataSource() }
             settingsRow(home, "Cinema country", countryName(tmdbRegion()), "Used for Now Playing in Cinemas.") {
                 val countries = java.util.Locale.getISOCountries().map { it to countryName(it) }.sortedBy { it.second }
                 AlertDialog.Builder(this).setTitle("Now Playing in Cinemas · country")
@@ -3730,88 +3983,67 @@ class MainActivity : Activity() {
             if (tmdbKey.isNotBlank()) settingsRow(home, "Remove TMDB key", danger = true) {
                 confirm("Remove your TMDB key? Home will use Cinemeta catalogs.") { store.remove(TMDB_KEY); refreshSettings() }
             }
+            if (tvdbKey.isNotBlank()) settingsRow(home, "Remove TVDB key", danger = true) {
+                confirm("Remove your TVDB key? Shows will use Cinemeta's episode lists.") { store.remove(TVDB_KEY); forgetDetails(); refreshSettings() }
+            }
                 }
                 "playback" -> {
             val playback = settingsGroup("Playback", "nowplaying")
-            settingsRow(playback, "Source sorting", SourceSortPreferences(this).label,
-                "Links in your audio language first (then multi-audio), then quality, then file size. Auto-play follows this order.") {
-                SourceSortPreferences.show(this) { refreshSettings() }
-            }
-            settingsToggle(playback, "Auto-play first result", "Play starts the first cached or direct link in your sort order. The full list stays open behind it, so you can pick another link if it fails.",
-                store.get(AUTOPLAY_FIRST) == "true") { on -> store.put(AUTOPLAY_FIRST, on.toString()) }
-            settingsToggle(playback, "Hide uncached links", "Show only links that play at once (cached or direct) in the link list and the player's Streams. Real-Debrid, AllDebrid and Debrid-Link can't tell in advance, so their links stay.",
-                store.get(HIDE_UNCACHED) == "true") { on -> store.put(HIDE_UNCACHED, on.toString()) }
-            settingsToggle(playback, "Hide cam & low-quality releases", "Leave out theatre recordings and early copies: CAM, HDCAM, TS/telesync, TC/telecine, screeners, workprints and HDRip. On by default.",
-                LowQualityReleases.hidden(store)) { on -> store.put(LowQualityReleases.KEY, on.toString()) }
-            settingsToggle(playback, "Auto-play limit", "Auto-play skips links above your bitrate limit (file size over the title's runtime). When the runtime is unknown, the movie or episode size limit applies. Links of unknown size can still play, and you can still choose any link yourself.",
-                store.get(AUTOPLAY_LIMIT_ON) == "true") { on -> store.put(AUTOPLAY_LIMIT_ON, on.toString()); refreshSettings() }
-            if (store.get(AUTOPLAY_LIMIT_ON) == "true") {
-                settingsRow(playback, "Highest bitrate", "${autoplayMaxMbps()} Mbps", "For movies and episodes. Pick it from your internet speed, e.g. 25 Mbps on a 40 Mbps connection.") {
-                    inputSetting("Highest bitrate for Auto-play (Mbps)", "A whole number of Mbps, e.g. 25", autoplayMaxMbps().toString()) { value ->
-                        val mbps = value.trim().toIntOrNull()
-                        if (mbps == null || mbps !in 1..500) toast("Enter a whole number of Mbps, such as 25")
-                        else { store.put(AUTOPLAY_MAX_MBPS, mbps.toString()); toast("Auto-play limited to $mbps Mbps"); refreshSettings() }
-                    }
-                }
-                listOf(false to "Movie", true to "Episode").forEach { (episode, kind) ->
-                    settingsRow(playback, "$kind size fallback", "${autoplayLimitGb(episode)} GB", "Used when the ${kind.lowercase()}'s runtime is unknown.") {
-                        inputSetting("Largest $kind file (GB)", "A whole number of GB, e.g. ${if (episode) 5 else 20}", autoplayLimitGb(episode).toString()) { value ->
-                            val gb = value.trim().toIntOrNull()
-                            if (gb == null || gb !in 1..1000) toast("Enter a whole number of GB, such as ${if (episode) 5 else 20}")
-                            else { store.put(if (episode) AUTOPLAY_MAX_GB_EPISODE else AUTOPLAY_MAX_GB, gb.toString()); toast("$kind size fallback set to $gb GB"); refreshSettings() }
-                        }
-                    }
-                }
-            }
-            val readAhead = ReadAheadPreferences(this)
-            settingsRow(playback, "Read-ahead", readAhead.mode.label,
-                "How far ahead the player downloads, to ride out slow connections. Applies to the next video.") {
-                AlertDialog.Builder(this).setTitle("Read-ahead")
-                    .setSingleChoiceItems(ReadAhead.entries.map { it.label }.toTypedArray(), readAhead.mode.ordinal) { dialog, index ->
-                        readAhead.mode = ReadAhead.entries[index]; dialog.dismiss(); refreshSettings()
-                    }.setNegativeButton("Cancel", null).show()
-            }
-            val videoPreferences = VideoCompatibilityPreferences(this)
-            settingsRow(playback, "Dolby Vision", videoPreferences.mode.label,
-                "Applies to the next video. Uses a verified Profile 7/8 HDR10 or HLG base picture when supported. Profile 5 needs compatible Dolby Vision decoding.") {
-                AlertDialog.Builder(this).setTitle("Dolby Vision compatibility")
-                    .setSingleChoiceItems(DolbyVisionMode.entries.map { it.label }.toTypedArray(), videoPreferences.mode.ordinal) { dialog, index ->
-                        videoPreferences.mode = DolbyVisionMode.entries[index]; dialog.dismiss(); refreshSettings()
-                    }.setNegativeButton("Cancel", null).show()
-            }
-
-            settingsToggle(playback, "Mini player", "Leaving the player keeps the video going in a small window while you browse. Turn it off to stop the video instead when you leave (your progress is saved).",
-                MiniPlayerPreferences(this).enabled) { on -> MiniPlayerPreferences(this).enabled = on }
-            settingsToggle(playback, "Skip buttons", "Skip intro, Skip recap and Skip credits buttons, and Next episode when an episode's credits start. " +
-                "Times come from TheIntroDB, and AniSkip for anime; titles they don't know show no button.",
-                SkipButtonPreferences(this).enabled) { on -> SkipButtonPreferences(this).enabled = on }
-            settingsToggle(playback, "Auto-play next episode", "When an episode's credits start, Next Episode counts down from 10 and then plays the next episode " +
-                "(in the last 12 seconds when the credits aren't known). Press OK on it to start at once, or rewind to cancel.",
-                SkipButtonPreferences(this).autoNext) { on -> SkipButtonPreferences(this).autoNext = on }
-            settingsToggle(playback, "Seek previews (Seekr)", "Shows a thumbnail of the scene above the seek bar while you seek. Previews come from Seekr, which has them ready for many movies and shows. Needs your Seekr API key below.",
-                SeekrPreferences(this).enabled) { on -> SeekrPreferences(this).enabled = on }
-            seekrInfo(playback)
-            val seekr = store.get(SeekrPreferences.KEY)
-            val seekrBuilt = BuildConfig.SEEKR_KEY.isNotBlank()
-            settingsRow(playback, "Seekr API key", if (seekr.isNotBlank()) "Connected" else if (seekrBuilt) "Built in" else "Not set",
-                "Put your API key from seekr.tv here to get thumbnail previews while seeking. Sign up at seekr.tv, copy your key (it starts with sk_live_) and paste it here. Titles Seekr doesn't have simply show no preview.",
-                status = seekr.isNotBlank() || seekrBuilt) {
-                inputSetting("Seekr API key", "Paste your key from seekr.tv (sk_live_...)", "", secret = true) { key ->
-                    store.put(SeekrPreferences.KEY, key.trim()); refreshSettings()
-                    // Ask Seekr whether it accepts the key, so a typo is caught here rather than as missing previews later.
-                    Thread {
-                        val ok = runCatching { kotlinx.coroutines.runBlocking { tv.seekr.previews.android.Seekr.create(key.trim()).validateKey() } }.getOrNull()
-                        runOnUiThread { toast(when (ok) { true -> "Seekr key saved · ✓ Seekr accepts the key"; false -> "Seekr key saved, but Seekr doesn't accept it. Check the key."; null -> "Seekr key saved (couldn't reach Seekr to check it)" }) }
-                    }.start()
-                }
-            }
-            if (seekr.isNotBlank()) settingsRow(playback, "Remove Seekr key", danger = true) {
-                confirm("Remove your Seekr key?") { store.remove(SeekrPreferences.KEY); refreshSettings() }
-            }
+            // Playback opens three short pages instead of one long list of switches.
+            settingsRow(playback, "Links & sorting", SourceSortPreferences(this).label,
+                "Sort order, badge style, compact list, and hiding uncached, cam and low-quality links.") { navigate { playbackPage("links") } }
+            val autoplayOn = store.get(AUTOPLAY_FIRST) == "true"
+            settingsRow(playback, "Auto-play", if (!autoplayOn) "Off" else if (store.get(AUTOPLAY_LIMIT_ON) == "true") "On · up to ${autoplayMaxMbps()} Mbps" else "On",
+                "Auto-play the first link, its bitrate and size limits, and auto-play next episode.") { navigate { playbackPage("autoplay") } }
+            settingsRow(playback, "Player", if (MiniPlayerPreferences(this).enabled) "Mini player on" else "Mini player off",
+                "Mini player, skip buttons, seek previews, read-ahead and Dolby Vision.") { navigate { playbackPage("player") } }
                 }
                 "captions" -> {
-            val captions = settingsGroup("Subtitles & audio", "series")
+            // Two cards: audio, then subtitles, each with its own English fallback.
+            val sound = settingsGroup("Audio", "nowplaying")
+            settingsRow(sound, "Audio language", AudioPreferences(this).languageLabel, "Chosen automatically when available, and links in this language are listed and auto-played first. You can pick another track in the player.") { audioLanguage() }
+            settingsToggle(sound, "English audio fallback", "If a video has no audio in your language, English is chosen instead, and English links are listed before other languages.",
+                AudioPreferences(this).englishFallback) { on ->
+                AudioPreferences(this).englishFallback = on; InAppPlaybackSession.refreshAudioLanguage()
+            }
+            val boost = VolumeBoostPreferences(this)
+            settingsRow(sound, "Volume boost by default", boost.label, "Every video starts with this boost. You can still change it for one video in the player's Audio & Subtitles menu.") {
+                AlertDialog.Builder(this).setTitle("Volume boost by default")
+                    .setSingleChoiceItems(SessionVolumeBoost.STEPS.map { if (it == 0) "Off · normal audio" else "+$it dB" }.toTypedArray(),
+                        SessionVolumeBoost.STEPS.indexOf(boost.defaultDb).coerceAtLeast(0)) { dialog, index ->
+                        VolumeBoostPreferences(this).defaultDb = SessionVolumeBoost.STEPS[index]; dialog.dismiss(); refreshSettings()
+                    }.setNegativeButton("Cancel", null).show()
+            }
+            val captions = settingsGroup("Subtitles", "series")
             val subtitlePreferences = SubtitlePreferences(this)
+            settingsRow(captions, "Subtitle language", subtitlePreferences.languageLabel, "Chosen automatically when available. You can pick another track in the player.") { subtitleLanguage() }
+            settingsToggle(captions, "English subtitle fallback", "If a video has no subtitles in your language, English subtitles are chosen instead.",
+                SubtitlePreferences(this).englishFallback) { on ->
+                SubtitlePreferences(this).englishFallback = on; InAppPlaybackSession.refreshSubtitleLanguage()
+            }
+            settingsToggle(captions, "Find missing subtitles", "When a video has no subtitles in your language, the best matches from OpenSubtitles are added and the first one is turned on. Others are in the player's Subtitles list.",
+                subtitlePreferences.autoFetch) { on -> SubtitlePreferences(this).autoFetch = on }
+            val wyzie = store.get(InAppPlaybackSession.WYZIE_KEY)
+            settingsRow(captions, "Wyzie Subs", if (wyzie.isBlank()) "Not set" else "Connected",
+                "Optional: your own free Wyzie key (store.wyzie.io) adds more subtitle sources to Find missing subtitles.", status = wyzie.isNotBlank()) {
+                inputSetting("Wyzie Subs API key", "Paste your free Wyzie key", "", secret = true) { key ->
+                    store.put(InAppPlaybackSession.WYZIE_KEY, key.trim()); toast("Wyzie Subs added"); refreshSettings()
+                }
+            }
+            if (wyzie.isNotBlank()) settingsRow(captions, "Remove Wyzie key", danger = true) {
+                confirm("Remove your Wyzie Subs key?") { store.remove(InAppPlaybackSession.WYZIE_KEY); refreshSettings() }
+            }
+            val subdl = store.get(InAppPlaybackSession.SUBDL_KEY)
+            settingsRow(captions, "SubDL", if (subdl.isBlank()) "Not set" else "Connected",
+                "Optional: your own free SubDL key (subdl.com → Account → API) adds the large SubDL library (strong for Spanish, Arabic, Persian, Turkish…) to Find missing subtitles.",
+                status = subdl.isNotBlank()) {
+                inputSetting("SubDL API key", "Paste your free SubDL key", "", secret = true) { key ->
+                    store.put(InAppPlaybackSession.SUBDL_KEY, key.trim()); toast("SubDL added"); refreshSettings()
+                }
+            }
+            if (subdl.isNotBlank()) settingsRow(captions, "Remove SubDL key", danger = true) {
+                confirm("Remove your SubDL key?") { store.remove(InAppPlaybackSession.SUBDL_KEY); refreshSettings() }
+            }
             settingsRow(captions, "Subtitle style", "${subtitlePreferences.sizeLabel} · text and size") {
                 val preferences = SubtitlePreferences(this)
                 AlertDialog.Builder(this).setTitle("Subtitle style")
@@ -3831,25 +4063,6 @@ class MainActivity : Activity() {
                 SubtitlePositionPicker.show(this, liveVideo = false,
                     changed = { InAppPlaybackSession.refreshSubtitleStyle() }, dismissed = { refreshSettings() })
             }
-            settingsRow(captions, "Subtitle language", subtitlePreferences.languageLabel, "Chosen automatically when available. You can pick another track in the player.") { subtitleLanguage() }
-            settingsToggle(captions, "Find missing subtitles", "When a video has no subtitles in your language, the best matches from OpenSubtitles are added and the first one is turned on. Others are in the player's Subtitles list.",
-                subtitlePreferences.autoFetch) { on -> SubtitlePreferences(this).autoFetch = on }
-            val wyzie = store.get(InAppPlaybackSession.WYZIE_KEY)
-            settingsRow(captions, "Wyzie Subs", if (wyzie.isBlank()) "Not set" else "Connected",
-                "Optional: your own free Wyzie key (store.wyzie.io) adds more subtitle sources to Find missing subtitles.", status = wyzie.isNotBlank()) {
-                inputSetting("Wyzie Subs API key", "Paste your free Wyzie key", "", secret = true) { key ->
-                    store.put(InAppPlaybackSession.WYZIE_KEY, key.trim()); toast("Wyzie Subs added"); refreshSettings()
-                }
-            }
-            if (wyzie.isNotBlank()) settingsRow(captions, "Remove Wyzie key", danger = true) {
-                confirm("Remove your Wyzie Subs key?") { store.remove(InAppPlaybackSession.WYZIE_KEY); refreshSettings() }
-            }
-            settingsToggle(captions, "English fallback", "If a video has no audio or subtitles in your language, English is chosen instead. English links are also listed before other languages.",
-                AudioPreferences(this).englishFallback) { on ->
-                AudioPreferences(this).englishFallback = on
-                InAppPlaybackSession.refreshAudioLanguage(); InAppPlaybackSession.refreshSubtitleLanguage()
-            }
-            settingsRow(captions, "Audio language", AudioPreferences(this).languageLabel, "Chosen automatically when available, and links in this language are listed and auto-played first. You can pick another track in the player.") { audioLanguage() }
                 }
                 "sources" -> {
             val sources = settingsGroup("Sources", "library")
@@ -3891,7 +4104,7 @@ class MainActivity : Activity() {
                 }
                 "about" -> {
             val about = settingsGroup("About", null)
-            about.addView(text("POV Rajput fork by Rajput · Android TV port by Mark Mateo · based on the POV Kodi add-on by kodifitzwell (github.com/kodifitzwell/repo). Licensed under GNU GPL v3. WeTrakr tracking and API by alberdev (wetrakr.com). Catalogs: TMDB, Queued Up (queued-up.app), Cinemeta, Kitsu and your own catalog add-ons. Subtitles found online: OpenSubtitles, and Wyzie Subs with your key. Skip intro, recap and credits times: TheIntroDB (theintrodb.org) and, for anime, AniSkip (aniskip.com) with Kitsu ID mappings. Seek previews: Seekr (seekr.tv) with your key; support it at buymeacoffee.com/seekrtvdev. This product uses the TMDB API but is not endorsed or certified by TMDB. Playback: AndroidX Media3, with FFmpeg audio decoding via Jellyfin's Media3 FFmpeg decoder.", 12, muted).apply {
+            about.addView(text("POV Rajput fork by Rajput · Android TV port by Mark Mateo · based on the POV Kodi add-on by kodifitzwell (github.com/kodifitzwell/repo). Licensed under GNU GPL v3. WeTrakr tracking and API by alberdev (wetrakr.com). Catalogs: TMDB, Queued Up (queued-up.app), Cinemeta, Kitsu and your own catalog add-ons. Subtitles found online: OpenSubtitles, and Wyzie Subs with your key. Skip intro, recap and credits times: TheIntroDB (theintrodb.org) and, for anime, AniSkip (aniskip.com) with Kitsu ID mappings. Seek previews: Seekr (seekr.tv) with your key; support it at buymeacoffee.com/seekrtvdev. This product uses the TMDB API but is not endorsed or certified by TMDB. With your TVDB key, show metadata is provided by TheTVDB (thetvdb.com); please consider adding missing information or subscribing. Playback: AndroidX Media3, with FFmpeg audio decoding via Jellyfin's Media3 FFmpeg decoder.", 12, muted).apply {
                 setLineSpacing(dp(2).toFloat(), 1f); setPadding(dp(14), dp(12), dp(14), dp(12))
             }, margin(-1, -2))
             // Only the app version and device are added to the bug link, shown on the form before sending.
@@ -3932,7 +4145,7 @@ class MainActivity : Activity() {
     }
 
     // Short names fit seven cards across the TV; each section's own headings keep the full names.
-    private val settingsSections = listOf("account" to "Account", "home" to "Home", "playback" to "Playback", "captions" to "Subtitles",
+    private val settingsSections = listOf("account" to "Account", "home" to "Home", "playback" to "Playback", "captions" to "Audio & Subtitles",
         "sources" to "Sources", "tracking" to "Tracking", "updates" to "Updates", "about" to "About")
     /** The Settings section shown under the cards, remembered between visits. */
     private var settingsSection: String
@@ -4047,13 +4260,16 @@ class MainActivity : Activity() {
     }
 
     /** A titled card that holds one group of settings rows. */
-    private fun settingsGroup(title: String, icon: String?): LinearLayout {
-        val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        if (icon != null) header.addView(NavigationIconView(this, icon, muted), margin(16, 16, right = 8))
-        header.addView(text(title.uppercase(), 11, muted, true).apply { letterSpacing = 0.12f })
+    /** A settings card; [heading] off leaves out its small title (a page whose own title already names it). */
+    private fun settingsGroup(title: String, icon: String?, heading: Boolean = true): LinearLayout {
         val parent = settingsTarget ?: body
         val first = if (settingsTarget != null) parent.childCount == 0 else body.childCount <= 2
-        parent.addView(header, margin(-1, -2, top = if (first) 6 else 22, bottom = 8))
+        if (heading) {
+            val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            if (icon != null) header.addView(NavigationIconView(this, icon, muted), margin(16, 16, right = 8))
+            header.addView(text(title.uppercase(), 11, muted, true).apply { letterSpacing = 0.12f })
+            parent.addView(header, margin(-1, -2, top = if (first) 6 else 22, bottom = 8))
+        } else parent.addView(View(this), margin(-1, 6))
         val card = column().apply { background = rounded(if (flix) withAlpha(Color.WHITE, 13) else panel, 12); setPadding(dp(4), dp(4), dp(4), dp(4)) }
         parent.addView(card, margin(-1, -2))
         return card
@@ -4093,6 +4309,111 @@ class MainActivity : Activity() {
             action()
         }
         card.addView(row.pressable(9), margin(-1, -2))
+    }
+
+    /** A Playback settings page: links and sorting, auto-play, or the player. Back returns to Playback. */
+    private fun playbackPage(section: String) {
+        current = { playbackPage(section) }
+        destination = "settings"; refreshNavigation()
+        val (title, subtitle) = when (section) {
+            "links" -> "Links & sorting" to "How links are ordered, and which are left out."
+            "autoplay" -> "Auto-play" to "What Play starts on its own, and the next episode."
+            else -> "Player" to "The player's extras: mini player, skip buttons, seek previews and picture."
+        }
+        page(title, subtitle)
+        // The page title already names the card.
+        val playback = settingsGroup(title, "nowplaying", heading = false)
+        when (section) {
+            "links" -> {
+            settingsRow(playback, "Link sorting", SourceSortPreferences(this).label,
+                "Choose what comes first (language, quality or size) and each one's direction. Auto-play follows this order.") {
+                SourceSortPreferences.show(this) { refreshSettings() }
+            }
+            val badgeStyle = BadgeStyle.current(this)
+            settingsRow(playback, "Badge style", badgeStyle.label, "How the quality, HDR, audio and source tags on links look. ${badgeStyle.description}") { chooseBadgeStyle() }
+            settingsToggle(playback, "Compact link list", "One-line link names (the selected link shows its full name), the source at the end of the badges, and smaller badges, so about twice as many links fit. On by default.",
+                LinkListPreferences.compact(this)) { on -> LinkListPreferences.setCompact(this, on) }
+            settingsToggle(playback, "Library links first", "Links already in your library (AIOStreams marks them) come before everything else, still in your sort order, with an In library badge. On by default.",
+                store.get(LIBRARY_FIRST) != "false") { on -> store.put(LIBRARY_FIRST, on.toString()) }
+            settingsToggle(playback, "Hide uncached links", "Show only links that play at once (cached or direct) in the link list and the player's Streams. Real-Debrid, AllDebrid and Debrid-Link can't tell in advance, so their links stay.",
+                store.get(HIDE_UNCACHED) == "true") { on -> store.put(HIDE_UNCACHED, on.toString()) }
+            settingsToggle(playback, "Hide cam & low-quality releases", "Leave out theatre recordings and early copies: CAM, HDCAM, TS/telesync, TC/telecine, screeners, workprints and HDRip. On by default.",
+                LowQualityReleases.hidden(store)) { on -> store.put(LowQualityReleases.KEY, on.toString()) }
+            }
+            "autoplay" -> {
+            settingsToggle(playback, "Auto-play first result", "Play starts the first cached or direct link in your sort order. The full list stays open behind it, so you can pick another link if it fails.",
+                store.get(AUTOPLAY_FIRST) == "true") { on -> store.put(AUTOPLAY_FIRST, on.toString()) }
+            settingsToggle(playback, "Auto-play limit", "Auto-play skips links above your bitrate limit (file size over the title's runtime). When the runtime is unknown, the movie or episode size limit applies. Links of unknown size can still play, and you can still choose any link yourself.",
+                store.get(AUTOPLAY_LIMIT_ON) == "true") { on -> store.put(AUTOPLAY_LIMIT_ON, on.toString()); refreshSettings() }
+            if (store.get(AUTOPLAY_LIMIT_ON) == "true") {
+                settingsRow(playback, "Highest bitrate", "${autoplayMaxMbps()} Mbps", "For movies and episodes. Pick it from your internet speed, e.g. 25 Mbps on a 40 Mbps connection.") {
+                    inputSetting("Highest bitrate for Auto-play (Mbps)", "A whole number of Mbps, e.g. 25", autoplayMaxMbps().toString()) { value ->
+                        val mbps = value.trim().toIntOrNull()
+                        if (mbps == null || mbps !in 1..500) toast("Enter a whole number of Mbps, such as 25")
+                        else { store.put(AUTOPLAY_MAX_MBPS, mbps.toString()); toast("Auto-play limited to $mbps Mbps"); refreshSettings() }
+                    }
+                }
+                listOf(false to "Movie", true to "Episode").forEach { (episode, kind) ->
+                    settingsRow(playback, "$kind size fallback", "${autoplayLimitGb(episode)} GB", "Used when the ${kind.lowercase()}'s runtime is unknown.") {
+                        inputSetting("Largest $kind file (GB)", "A whole number of GB, e.g. ${if (episode) 5 else 20}", autoplayLimitGb(episode).toString()) { value ->
+                            val gb = value.trim().toIntOrNull()
+                            if (gb == null || gb !in 1..1000) toast("Enter a whole number of GB, such as ${if (episode) 5 else 20}")
+                            else { store.put(if (episode) AUTOPLAY_MAX_GB_EPISODE else AUTOPLAY_MAX_GB, gb.toString()); toast("$kind size fallback set to $gb GB"); refreshSettings() }
+                        }
+                    }
+                }
+            }
+            settingsToggle(playback, "Auto-play next episode", "When an episode's credits start, Next Episode counts down from 10 and then plays the next episode " +
+                "(in the last 12 seconds when the credits aren't known). Press OK on it to start at once, or rewind to cancel.",
+                SkipButtonPreferences(this).autoNext) { on -> SkipButtonPreferences(this).autoNext = on }
+            }
+            else -> {
+            val readAhead = ReadAheadPreferences(this)
+            settingsRow(playback, "Read-ahead", readAhead.mode.label,
+                "How far ahead the player downloads, to ride out slow connections. Applies to the next video.") {
+                AlertDialog.Builder(this).setTitle("Read-ahead")
+                    .setSingleChoiceItems(ReadAhead.entries.map { it.label }.toTypedArray(), readAhead.mode.ordinal) { dialog, index ->
+                        readAhead.mode = ReadAhead.entries[index]; dialog.dismiss(); refreshSettings()
+                    }.setNegativeButton("Cancel", null).show()
+            }
+            val videoPreferences = VideoCompatibilityPreferences(this)
+            settingsRow(playback, "Dolby Vision", videoPreferences.mode.label,
+                "Applies to the next video. Uses a verified Profile 7/8 HDR10 or HLG base picture when supported. Profile 5 needs compatible Dolby Vision decoding.") {
+                AlertDialog.Builder(this).setTitle("Dolby Vision compatibility")
+                    .setSingleChoiceItems(DolbyVisionMode.entries.map { it.label }.toTypedArray(), videoPreferences.mode.ordinal) { dialog, index ->
+                        videoPreferences.mode = DolbyVisionMode.entries[index]; dialog.dismiss(); refreshSettings()
+                    }.setNegativeButton("Cancel", null).show()
+            }
+
+            settingsToggle(playback, "Mini player", "Leaving the player keeps the video going in a small window while you browse. Turn it off to stop the video instead when you leave (your progress is saved).",
+                MiniPlayerPreferences(this).enabled) { on -> MiniPlayerPreferences(this).enabled = on }
+            settingsToggle(playback, "Skip buttons", "Skip intro, Skip recap and Skip credits buttons, and Next episode when an episode's credits start. " +
+                "Times come from TheIntroDB, and AniSkip for anime; titles they don't know show no button.",
+                SkipButtonPreferences(this).enabled) { on -> SkipButtonPreferences(this).enabled = on }
+            settingsToggle(playback, "Seek previews (Seekr)", "Shows a thumbnail of the scene above the seek bar while you seek. Previews come from Seekr, which has them ready for many movies and shows. Needs your Seekr API key below.",
+                SeekrPreferences(this).enabled) { on -> SeekrPreferences(this).enabled = on }
+            seekrInfo(playback)
+            val seekr = store.get(SeekrPreferences.KEY)
+            val seekrBuilt = BuildConfig.SEEKR_KEY.isNotBlank()
+            settingsRow(playback, "Seekr API key", if (seekr.isNotBlank()) "Connected" else if (seekrBuilt) "Built in" else "Not set",
+                "Put your API key from seekr.tv here to get thumbnail previews while seeking. Sign up at seekr.tv, copy your key (it starts with sk_live_) and paste it here. Titles Seekr doesn't have simply show no preview.",
+                status = seekr.isNotBlank() || seekrBuilt) {
+                inputSetting("Seekr API key", "Paste your key from seekr.tv (sk_live_...)", "", secret = true) { key ->
+                    store.put(SeekrPreferences.KEY, key.trim()); refreshSettings()
+                    // Ask Seekr whether it accepts the key, so a typo is caught here rather than as missing previews later.
+                    Thread {
+                        val ok = runCatching { kotlinx.coroutines.runBlocking { tv.seekr.previews.android.Seekr.create(key.trim()).validateKey() } }.getOrNull()
+                        runOnUiThread { toast(when (ok) { true -> "Seekr key saved · ✓ Seekr accepts the key"; false -> "Seekr key saved, but Seekr doesn't accept it. Check the key."; null -> "Seekr key saved (couldn't reach Seekr to check it)" }) }
+                    }.start()
+                }
+            }
+            if (seekr.isNotBlank()) settingsRow(playback, "Remove Seekr key", danger = true) {
+                confirm("Remove your Seekr key?") { store.remove(SeekrPreferences.KEY); refreshSettings() }
+            }
+            }
+        }
+        body.addView(View(this), margin(-1, 24))
+        focusAfterRender(generation)
     }
 
     private fun settingsToggle(card: LinearLayout, label: String, description: String, initial: Boolean,
@@ -4238,17 +4559,108 @@ class MainActivity : Activity() {
         if (focusTag != null) keepPlace(generation, focusTag, keepScroll) else focusAfterRender(generation)
     }
 
+    /**
+     * Search and details: Cinemeta, the saved add-on (on or off), the viewer's catalog add-ons as quick picks, a pasted
+     * link, or removing the saved add-on. Choosing Cinemeta only switches the add-on off, so it comes back in one press.
+     */
+    private fun chooseMetadataSource() {
+        val saved = MetadataSource.fromJson(store.get(MetadataSource.KEY))
+        val on = saved != null && store.get(METADATA_ON) != "false"
+        val others = catalogAddons.load().filter { it.address != saved?.address }
+        data class Choice(val label: String, val action: () -> Unit)
+        fun use(name: String?, address: String) = load(generation, {
+            val base = SourceProviders.endpoint(address)
+            val manifest = Net.json("$base/manifest.json")
+            MetadataSource.inspect(name ?: manifest.optString("name").take(50).ifBlank { "Add-on" }, base, manifest)
+        }) { source ->
+            if (source == null) { toast("That add-on offers no search or title details."); return@load }
+            store.put(MetadataSource.KEY, source.toJson()); store.put(METADATA_ON, "true"); metadataSource = source; forgetDetails()
+            toast("Search ${if (source.searches.isEmpty()) "stays on Cinemeta" else "from ${source.name}"}${if (source.details) ", title details from ${source.name}" else ""}")
+            refreshSettings()
+        }
+        val choices = buildList {
+            add(Choice("Cinemeta (default)") {
+                store.put(METADATA_ON, "false"); metadataSource = null; forgetDetails()
+                toast(if (saved != null) "Search and details from Cinemeta. ${saved.name} is kept: pick it to turn it back on." else "Search and details from Cinemeta")
+                refreshSettings()
+            })
+            if (saved != null) add(Choice(saved.name) {
+                store.put(METADATA_ON, "true"); metadataSource = saved; forgetDetails(); toast("Search and details from ${saved.name}"); refreshSettings()
+            })
+            others.forEach { addon -> add(Choice(addon.name) { use(addon.name, addon.address) }) }
+            add(Choice("Paste an add-on link…") {
+                inputSetting("Search and details add-on", "Add-on manifest link", saved?.address?.let { "$it/manifest.json" }.orEmpty()) { link -> use(null, link) }
+            })
+            if (saved != null) add(Choice("Remove ${saved.name}") {
+                confirm("Remove ${saved.name} from search and details? Cinemeta is used instead.") {
+                    store.remove(MetadataSource.KEY); store.remove(METADATA_ON); metadataSource = null; forgetDetails(); refreshSettings()
+                }
+            })
+        }
+        AlertDialog.Builder(this).setTitle("Search and details")
+            .setSingleChoiceItems(choices.map { it.label }.toTypedArray(), if (on) 1 else 0) { dialog, index ->
+                dialog.dismiss(); choices[index].action()
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    /**
+     * Aurora, Sunset or Elite badges on the links page and the player's Streams panel. A wide window with each style's
+     * name, a short line and a sample of its badges, so all three fit without scrolling.
+     */
+    private fun chooseBadgeStyle() {
+        val current = BadgeStyle.current(this)
+        val list = column().apply { setPadding(dp(18), dp(6), dp(18), dp(6)) }
+        val sample = SourceItem("Sample.2160p.BluRay.REMUX.DV.HDR10+.HEVC.TrueHD.7.1.Atmos.mkv", "sample",
+            sizeBytes = 40_000_000_000L, qualityHeight = 2160)
+        val dialog = AlertDialog.Builder(this).setTitle("Badge style").setView(list).setNegativeButton("Cancel", null).create()
+        BadgeStyle.entries.forEach { style ->
+            val row = column().apply {
+                setPadding(dp(14), dp(7), dp(14), dp(7)); isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true
+                tag = "badge-style:${style.id}"; contentDescription = "${style.label}. ${style.description}"
+                background = rounded(if (style == current) withAlpha(Color.WHITE, 26) else Color.TRANSPARENT, 10)
+            }
+            row.addView(text(if (style == current) "${style.label}  ✓" else style.label, 16, ink, true))
+            row.addView(text(style.description, 12, muted).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 2))
+            row.addView(SourceBadgeStrip(this, SourceBadges.from(sample, runtimeMinutes = 140).take(4), style), margin(-1, -2, top = 6))
+            row.setOnFocusChangeListener { view, focused ->
+                view.background = rounded(when { focused -> withAlpha(Color.WHITE, 46); style == current -> withAlpha(Color.WHITE, 26); else -> Color.TRANSPARENT }, 10)
+            }
+            row.setOnClickListener { BadgeStyle.save(this, style); dialog.dismiss(); refreshSettings() }
+            list.addView(row, margin(-1, -2, bottom = 4))
+        }
+        dialog.show()
+        dialog.window?.setLayout(minOf(dp(760), resources.displayMetrics.widthPixels - dp(40)), ViewGroup.LayoutParams.WRAP_CONTENT)
+        list.post { list.findViewWithTag<View>("badge-style:${current.id}")?.requestFocus() }
+    }
+
     private fun sourceProviderActions(provider: SourceProvider) {
         AlertDialog.Builder(this).setTitle(provider.name)
-            .setItems(arrayOf("Edit name and address", "Remove")) { _, index ->
+            .setItems(arrayOf("Edit name and address", "Usenet news provider", "Remove")) { _, index ->
                 when (index) {
                     0 -> editSourceProvider(provider)
-                    1 -> confirm("Remove ${provider.name} from source providers?") {
+                    1 -> chooseNewsProvider(provider)
+                    2 -> confirm("Remove ${provider.name} from source providers?") {
                         try {
                             val config = SourceProviders(store); config.save(config.load().filterNot { it.id == provider.id }); sourceProvidersPage()
                         } catch (error: Exception) { toast(uiErrorMessage(error)) }
                     }
                 }
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    /**
+     * The Usenet news provider an AIOStreams add-on downloads through: AIOStreams doesn't say which, so the viewer
+     * picks it here and its Usenet links show that provider's logo.
+     */
+    private fun chooseNewsProvider(provider: SourceProvider) {
+        val choices = AddonBadges.NEWS_PROVIDERS
+        AlertDialog.Builder(this).setTitle("${provider.name} · Usenet news provider")
+            .setSingleChoiceItems(choices.map { it.second }.toTypedArray(), choices.indexOfFirst { it.first == provider.newsProvider }.coerceAtLeast(0)) { dialog, index ->
+                try {
+                    val config = SourceProviders(store)
+                    config.save(config.load().map { if (it.id == provider.id) it.copy(newsProvider = choices[index].first) else it })
+                    dialog.dismiss(); toast(if (index > 0) "${provider.name}: Usenet links show the ${choices[index].second} logo." else "${provider.name}: no news-provider logo."); sourceProvidersPage()
+                } catch (error: Exception) { toast(uiErrorMessage(error)) }
             }.setNegativeButton("Cancel", null).show()
     }
 

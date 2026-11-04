@@ -160,18 +160,20 @@ data class SourceLanguageOrder(val audio: String, val subtitle: String, val fall
         else -> 5
     }
 
+    /** Sorts by [base], whose priority says where the language step sits (first by default). */
     fun sorted(sources: List<SourceItem>, base: SourceSortOrder): List<SourceItem> {
-        val ordered = base.sorted(sources)
-        if (!active) return ordered
-        val original = originalLanguage(ordered)
-        return ordered.map { source ->
+        if (!active) return base.sorted(sources)
+        val original = originalLanguage(base.sorted(sources))
+        val ranks = IdentityHashMap<SourceItem, Int>()
+        fun rank(source: SourceItem): Int = ranks.getOrPut(source) {
             val found = detect(source)
             val subtitles = when {
                 subtitleCode.isEmpty() || subtitleCode in found.subtitles -> 0
                 fallback.isNotEmpty() && fallback in found.subtitles -> 1
                 else -> 2
             }
-            source to audioGroup(found, original) * 3 + subtitles
-        }.sortedBy { it.second }.map { it.first }
+            audioGroup(found, original) * 3 + subtitles
+        }
+        return base.sorted(sources, ::rank)
     }
 }

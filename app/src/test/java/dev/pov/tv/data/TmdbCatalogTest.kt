@@ -54,4 +54,54 @@ class TmdbCatalogTest {
         catalog("eyJtoken", ids, second).homeShelves()
         assertTrue("cached ids must not be fetched again", second.none { "/external_ids" in it.first })
     }
+
+    @Test fun `cast is the first seven billed actors, with shows using the whole run's roles`() {
+        val cast = (0 until 9).joinToString(",") { """{"id":${100 + it},"name":"Actor $it","character":"Part $it","order":${8 - it},"profile_path":"/a$it.jpg"}""" }
+        val movie = TmdbCatalog("k", "PK", MemoryIds()) { url, _ ->
+            when {
+                "/find/tt1375666" in url -> """{"movie_results":[{"id":27205}],"tv_results":[]}"""
+                "/movie/27205/credits" in url -> """{"cast":[$cast]}"""
+                else -> error("unexpected $url")
+            }
+        }.cast("tt1375666", "movie")
+        assertEquals(7, movie.size)
+        assertEquals("Actor 8", movie.first().name)   // lowest "order" first
+        assertEquals("Part 8", movie.first().character)
+        assertEquals("https://image.tmdb.org/t/p/w185/a8.jpg", movie.first().photo)
+        val show = TmdbCatalog("k", "PK", MemoryIds()) { url, _ ->
+            when {
+                "/find/tt0944947" in url -> """{"movie_results":[],"tv_results":[{"id":1399}]}"""
+                "/tv/1399/aggregate_credits" in url -> """{"cast":[{"id":5,"name":"Emilia","order":0,"roles":[{"character":"Daenerys"}]},{"id":6,"name":"No photo","order":1,"roles":[]}]}"""
+                else -> error("unexpected $url")
+            }
+        }.cast("tt0944947", "series")
+        assertEquals(listOf("Daenerys", ""), show.map { it.character })
+        assertEquals("", show[1].photo)
+    }
+
+    @Test fun `filmography splits films and shows, most popular first, without talk shows or posterless titles`() {
+        val ids = MemoryIds()
+        val credits = """{"cast":[
+            {"id":1,"media_type":"movie","title":"Small","poster_path":"/1.jpg","popularity":2.0,"release_date":"2001-01-01"},
+            {"id":2,"media_type":"movie","title":"Big","poster_path":"/2.jpg","popularity":90.0,"release_date":"2010-07-16"},
+            {"id":3,"media_type":"movie","title":"No poster","poster_path":null,"popularity":99.0},
+            {"id":2,"media_type":"movie","title":"Big","poster_path":"/2.jpg","popularity":90.0},
+            {"id":4,"media_type":"tv","name":"Drama show","poster_path":"/4.jpg","popularity":50.0,"genre_ids":[18]},
+            {"id":5,"media_type":"tv","name":"Late night","poster_path":"/5.jpg","popularity":80.0,"genre_ids":[10767]}]}"""
+        val result = TmdbCatalog("k", "PK", ids) { url, _ ->
+            when {
+                "/person/6193/combined_credits" in url -> credits
+                "/external_ids" in url -> """{"imdb_id":"tt00000${url.substringAfter("/3/").substringAfter('/').substringBefore('/')}0"}"""
+                else -> error("unexpected $url")
+            }
+        }.filmography(6193)
+        assertEquals(listOf("Big", "Small"), result.movies.map { it.title })
+        assertEquals(listOf("tt0000020", "tt0000010"), result.movies.map { it.imdbId })
+        assertEquals(listOf("Drama show"), result.shows.map { it.title })
+        assertEquals("series", result.shows.single().type)
+        // See all: every title, newest release first.
+        val all = TmdbCatalog("k", "PK", ids) { url, _ -> if ("/person/6193/combined_credits" in url) credits else """{"imdb_id":"tt0000099"}""" }.filmography(6193, Int.MAX_VALUE, byRelease = true)
+        assertEquals(listOf("Big", "Small"), all.movies.map { it.title }.distinct())
+        assertEquals("2010", all.movies.first().year)
+    }
 }

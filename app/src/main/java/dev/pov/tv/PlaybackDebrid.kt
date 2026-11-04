@@ -13,10 +13,17 @@ internal object PlaybackDebrid {
     const val EASYNEWS = "easynews"
     const val PENGUPLAY = AddonBadges.PENGUPLAY
     const val CNCVERSE = AddonBadges.CNCVERSE
+    const val PLAVIO = AddonBadges.PLAVIO
+    const val AIOSTREAMS = AddonBadges.AIOSTREAMS
     private val ADDONS = AddonBadges.IDS
     /** The add-on badge of a direct link: from the add-on's address (see AddonBadges), else its name. */
     fun addon(source: SourceItem): String? = source.addon ?: if (source.directUrl.isNotEmpty()) AddonBadges.of("", source.provider) else null
-    private fun label(id: String) = when (id) { EASYNEWS -> "Easynews"; PENGUPLAY -> "PenguPlay"; CNCVERSE -> "CNCVerse"; else -> DebridServices.name(id) }
+    /** A logo id's name; unknown ids give the id itself. */
+    fun describe(id: String) = label(id)
+    private fun label(id: String) = when (id) { EASYNEWS -> "Easynews"; PENGUPLAY -> "PenguPlay"; CNCVERSE -> "CNCVerse"; PLAVIO -> "PlavioHD"; AIOSTREAMS -> "AIOStreams"; in AddonBadges.NEWS_PROVIDER_IDS -> AddonBadges.NEWS_PROVIDERS.first { it.first == id }.second
+        in AddonBadges.INDEXER_NAMES -> AddonBadges.INDEXER_NAMES.getValue(id)
+        // Never crash on a logo id without a name (it only feeds the spoken description).
+        else -> if (id in DebridServices.IDS) DebridServices.name(id) else id }
     fun normalize(service: String?): String? = service?.takeIf { it in DebridServices.IDS }
     /** The service's logo (Easynews included), as the player badge and the source list show it. */
     fun logo(id: String) = when (id) {
@@ -28,6 +35,32 @@ internal object PlaybackDebrid {
         EASYNEWS -> R.drawable.pov_easynews_logo
         PENGUPLAY -> R.drawable.pov_penguplay_logo
         CNCVERSE -> R.drawable.pov_cncverse_logo
+        PLAVIO -> R.drawable.pov_plavio_logo
+        AIOSTREAMS -> R.drawable.pov_aiostreams_logo
+        AddonBadges.NEWSHOSTING -> R.drawable.pov_newshosting_logo
+        "eweka" -> R.drawable.pov_eweka_logo
+        "giganews" -> R.drawable.pov_giganews_logo
+        "usenetserver" -> R.drawable.pov_usenetserver_logo
+        "frugalusenet" -> R.drawable.pov_frugalusenet_logo
+        "tweaknews" -> R.drawable.pov_tweaknews_logo
+        "usenetfarm" -> R.drawable.pov_usenetfarm_logo
+        "newsdemon" -> R.drawable.pov_newsdemon_logo
+        "pureusenet" -> R.drawable.pov_pureusenet_logo
+        "vipernews" -> R.drawable.pov_vipernews_logo
+        "nzbgeek" -> R.drawable.pov_nzbgeek_logo
+        "ninjacentral" -> R.drawable.pov_ninjacentral_logo
+        "miatrix" -> R.drawable.pov_miatrix_logo
+        "usenetcrawler" -> R.drawable.pov_usenetcrawler_logo
+        "nzbnest" -> R.drawable.pov_nzbnest_logo
+        "drunkenslug" -> R.drawable.pov_drunkenslug_logo
+        "nzbfinder" -> R.drawable.pov_nzbfinder_logo
+        "nzbplanet" -> R.drawable.pov_nzbplanet_logo
+        "dognzb" -> R.drawable.pov_dognzb_logo
+        "althub" -> R.drawable.pov_althub_logo
+        "abnzb" -> R.drawable.pov_abnzb_logo
+        "tabularasa" -> R.drawable.pov_tabularasa_logo
+        "omgwtfnzbs" -> R.drawable.pov_omgwtfnzbs_logo
+        "digitalcarnage" -> R.drawable.pov_digitalcarnage_logo
         else -> R.drawable.pov_debridlink_logo
     }
     /** AllDebrid's mark is a wordmark that already spells the name. */
@@ -37,18 +70,45 @@ internal object PlaybackDebrid {
      * [url] marks Easynews: an easynews.com address is the same test the player uses to add the Easynews login, so the
      * badge shows exactly when the video streams from Easynews.
      */
+    /**
+     * The add-on tag the player gets for a direct link: the add-on's id, and for AIOStreams the logos of what it streams
+     * from ("aiostreams|easynews,nzbgeek": news provider or debrid, then indexer), the same logos as on its link card.
+     */
+    fun tag(source: SourceItem): String? {
+        val addon = addon(source) ?: return null
+        if (addon != AIOSTREAMS) return addon
+        val more = SourceBadges.cachedOn(source).drop(1)
+        return if (more.isEmpty()) addon else "$addon|${more.joinToString(",")}"
+    }
+
     fun bind(root: View, service: String?, url: String = "", addon: String? = null) {
-        val id = normalize(service) ?: EASYNEWS.takeIf { Easynews.isHost(url) } ?: addon?.takeIf { it in ADDONS }
-        root.findViewById<View>(R.id.pov_debrid_badge).visibility = if (id == null) View.GONE else View.VISIBLE
+        val tagged = addon?.substringBefore('|')
+        // Logo ids only; a tag saved by an older preview held words ("Usenet · Newshosting"), which are skipped.
+        val more = addon?.substringAfter('|', "").orEmpty().split(',').filter { it.matches(Regex("[a-z]+")) }
+        val id = normalize(service) ?: EASYNEWS.takeIf { Easynews.isHost(url) } ?: tagged?.takeIf { it in ADDONS }
+        val badge = root.findViewById<android.view.ViewGroup>(R.id.pov_debrid_badge)
+        badge.visibility = if (id == null) View.GONE else View.VISIBLE
+        // AIOStreams shows only logos (its own, the news provider or debrid, the indexer), no words.
+        val logosOnly = id == AIOSTREAMS && id == tagged
         val label = if (id == null) "" else label(id)
         root.findViewById<TextView>(R.id.pov_debrid_name).apply {
-            text = label; visibility = if (wordmark(id)) View.GONE else View.VISIBLE
+            text = label; visibility = if (wordmark(id) || logosOnly) View.GONE else View.VISIBLE
         }
+        val density = root.resources.displayMetrics.density
         root.findViewById<ImageView>(R.id.pov_debrid_logo).apply {
-            val density = resources.displayMetrics.density
             layoutParams = layoutParams.apply { width = ((if (wordmark(id)) 72 else 20) * density).toInt() }
             setImageResource(if (id == null) 0 else logo(id))
-            contentDescription = if (id == null) null else "Streaming with $label"
+            contentDescription = if (id == null) null else "Streaming with " + (listOf(label) + if (logosOnly) more.map(::label) else emptyList()).joinToString(", ")
+        }
+        // The extra logos from a previous video are replaced.
+        (badge.childCount - 1 downTo 0).map(badge::getChildAt).filter { it.tag == EXTRA_LOGO }.forEach(badge::removeView)
+        if (logosOnly) more.forEach { extra ->
+            badge.addView(ImageView(root.context).apply {
+                tag = EXTRA_LOGO; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                scaleType = ImageView.ScaleType.FIT_CENTER; adjustViewBounds = true; maxWidth = (120 * density).toInt()
+                setImageResource(logo(extra))
+            }, android.widget.LinearLayout.LayoutParams(-2, (20 * density).toInt()).apply { leftMargin = (8 * density).toInt() })
         }
     }
+    private const val EXTRA_LOGO = "pov-extra-logo"
 }

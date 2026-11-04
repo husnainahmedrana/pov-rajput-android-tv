@@ -3,6 +3,7 @@ package dev.pov.tv
 import dev.pov.tv.data.AddonBadges
 import dev.pov.tv.data.SourceItem
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SourceNameTest {
@@ -29,5 +30,24 @@ class SourceNameTest {
         val other = SourceItem("Movie.2026.2160p.WEB-DL.mkv", "Torrentio", infoHash = "a".repeat(40))
         assertEquals("Movie.2026.2160p.WEB-DL.mkv", SourceBadges.name(other))
         assertEquals("Torrentio", SourceBadges.origin(other))
+    }
+
+    @Test fun `AIOStreams links show its logo, the news provider or debrid, and the indexer`() {
+        val usenet = SourceItem("Inception.2010.1080p.BluRay.x265-LAMA", "Meeky AIO", directUrl = "https://aio.example/api/v1/debrid/playback/x",
+            addon = AddonBadges.AIOSTREAMS, usenet = true, indexer = "NZBgeek", newsProvider = "easynews")
+        assertEquals(listOf("aiostreams", "easynews", "nzbgeek"), SourceBadges.cachedOn(usenet))
+        assertEquals("NZBgeek · Meeky AIO", SourceBadges.origin(usenet))
+        assertEquals("aiostreams|easynews,nzbgeek", PlaybackDebrid.tag(usenet))
+        // No news provider chosen: no plain Usenet logo, just AIOStreams and the indexer.
+        assertEquals(listOf("aiostreams", "nzbnest"), SourceBadges.cachedOn(usenet.copy(newsProvider = "", indexer = "NzbNest")))
+        val debrid = usenet.copy(usenet = false, indexer = "", newsProvider = "", servedBy = "torbox")
+        assertEquals(listOf("aiostreams", "torbox"), SourceBadges.cachedOn(debrid))
+        assertEquals("aiostreams|torbox", PlaybackDebrid.tag(debrid))
+        // Every logo a tag can carry has a name, so the player badge never fails on it (it crashed on "miatrix").
+        val ids = listOf("aiostreams") + AddonBadges.NEWS_PROVIDER_IDS + AddonBadges.INDEXER_LOGOS + listOf("torbox", "offcloud", "unknown-id")
+        ids.forEach { PlaybackDebrid.describe(it) }
+        assertEquals("Miatrix", PlaybackDebrid.describe("miatrix"))
+        // A library link carries an In library badge.
+        assertTrue(SourceBadges.forRow(usenet.copy(inLibrary = true), null, null, emptyList(), logos = true).any { it.label == "IN LIBRARY" })
     }
 }

@@ -2,6 +2,15 @@ package dev.pov.tv
 
 internal enum class VolumeBoostState { OFF, WAITING_FOR_AUDIO, REQUESTED, UNAVAILABLE }
 
+/** The volume boost every video starts with (Settings → Audio & Subtitles); 0 is off. */
+internal class VolumeBoostPreferences(context: android.content.Context) {
+    private val preferences = context.applicationContext.getSharedPreferences("pov_audio", android.content.Context.MODE_PRIVATE)
+    var defaultDb: Int
+        get() = preferences.getInt("default_boost_db", 0).takeIf { it in SessionVolumeBoost.STEPS } ?: 0
+        set(value) { require(value in SessionVolumeBoost.STEPS); preferences.edit().putInt("default_boost_db", value).apply() }
+    val label: String get() = if (defaultDb == 0) "Off" else "+$defaultDb dB"
+}
+
 /**
  * Session-owned software gain. Public methods and notifications run on the main thread.
  * REQUESTED is retained for UI compatibility and means PCM was processed with the selected gain.

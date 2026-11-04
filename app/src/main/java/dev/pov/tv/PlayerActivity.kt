@@ -1017,6 +1017,18 @@ class PlayerActivity : Activity() {
             skipAction?.run?.invoke(); revealKey = event.keyCode; return true
         }
         if (event.action == KeyEvent.ACTION_DOWN) controls.userInteraction()
+        // Left/Right along the buttons skips the ones a stream can't use (Rewind and Forward on a live or otherwise
+        // unseekable stream). The default search stopped at a disabled button, leaving focus stuck on Pause.
+        if (event.action == KeyEvent.ACTION_DOWN && horizontal && !seekPreview.active && activeDialog?.isShowing != true) {
+            val index = rowIds.indexOf(currentFocus?.id ?: View.NO_ID)
+            if (index >= 0) {
+                val step = if (event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1
+                generateSequence(index + step) { it + step }.takeWhile { it in rowIds.indices }
+                    .mapNotNull { view.findViewById<View>(rowIds[it]) }
+                    .firstOrNull { it.isShown && it.isEnabled && it.isFocusable }?.requestFocus()
+                return true
+            }
+        }
         if (event.keyCode == KeyEvent.KEYCODE_MENU || event.keyCode == KeyEvent.KEYCODE_CAPTIONS) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                 if (event.keyCode == KeyEvent.KEYCODE_CAPTIONS) showTracks(C.TRACK_TYPE_TEXT) else showOptionsMenu()

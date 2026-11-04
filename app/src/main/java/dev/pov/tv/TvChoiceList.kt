@@ -69,7 +69,10 @@ internal class TvChoiceRow(
 ) : FrameLayout(context) {
     private fun px(value: Int) = (value * DeviceLayout.unit(resources)).roundToInt().coerceAtLeast(1)
     val cardHeight = if (badges.isNotEmpty()) LayoutParams.WRAP_CONTENT else px(if (eyebrow.isBlank()) 79 else 101)
-    val gap = px(9)
+    /** Link cards (with badges) in the compact list: one-line name, source in the badge row, tighter spacing. */
+    private val compact = badges.isNotEmpty() && LinkListPreferences.compact(context)
+    val gap = px(if (compact) 7 else 9)
+    private var titleLabel: TextView? = null
     private val labels = mutableListOf<TextView>()
     val poster = android.widget.ImageView(context).apply { scaleType = android.widget.ImageView.ScaleType.CENTER_CROP; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
 
@@ -84,7 +87,7 @@ internal class TvChoiceRow(
         val column = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(px(if (withPoster) 70 else 15), px(10), px(15), px(10))
+            setPadding(px(if (withPoster) 70 else 15), px(if (compact) 8 else 10), px(15), px(if (compact) 8 else 10))
             isFocusable = false
             importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         }
@@ -103,10 +106,12 @@ internal class TvChoiceRow(
             setHorizontallyScrolling(false)
             labels += this
         }
-        if (badges.isNotEmpty()) column.addView(SourceBadgeStrip(context, badges), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = px(7) })
+        if (badges.isNotEmpty()) column.addView(SourceBadgeStrip(context, badges, compact = compact, trailing = if (compact) detail else ""),
+            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = px(if (compact) 5 else 7) })
         if (eyebrow.isNotBlank()) column.addView(label(eyebrow, 10, 1, true), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = px(5) })
-        column.addView(label(title, 14, 2, true), LinearLayout.LayoutParams(-1, -2))
-        if (detail.isNotBlank()) column.addView(label(detail, 11, 1, false), LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(5) })
+        titleLabel = label(title, 14, if (compact) 1 else 2, true)
+        column.addView(titleLabel, LinearLayout.LayoutParams(-1, -2))
+        if (detail.isNotBlank() && !compact) column.addView(label(detail, 11, 1, false), LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(5) })
         if (logos.isEmpty()) addView(column, LayoutParams(-1, if (badges.isNotEmpty()) LayoutParams.WRAP_CONTENT else -1))
         else {
             // The text keeps the width the logos leave; the logos sit centred on the right.
@@ -119,7 +124,8 @@ internal class TvChoiceRow(
             }
             logos.forEach { logo ->
                 marks.addView(android.widget.ImageView(context).apply {
-                    setImageResource(logo); adjustViewBounds = true; maxWidth = px(84); scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                    // Wide wordmarks (Newshosting, NewsDemon, AllDebrid) get room to stay readable; square logos are unaffected.
+                    setImageResource(logo); adjustViewBounds = true; maxWidth = px(130); scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
                 }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, px(24)).apply { leftMargin = px(8) })
             }
             line.addView(marks, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
@@ -143,6 +149,8 @@ internal class TvChoiceRow(
             foreground = if (flix && focused) GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = px(9).toFloat(); setStroke(px(2), Color.WHITE) }
                 else FocusRingDrawable(if (focused) palette.accent else palette.border, px(7).toFloat(), focused, px(if (focused) 2 else 1).toFloat())
             labels.forEach { it.setTextColor(if (focused && !flix) Color.rgb(4, 15, 24) else palette.text) }
+            // Compact: the focused link shows its full name on two lines.
+            if (compact) titleLabel?.maxLines = if (focused) 2 else 1
         }
         setOnFocusChangeListener { _, focused -> paint(focused) }
         setOnClickListener { action() }

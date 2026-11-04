@@ -67,10 +67,34 @@ object SourceMetadata {
     }
 }
 
-data class SourceSortOrder(val qualityDescending: Boolean = true, val sizeAscending: Boolean = true) {
-    fun sorted(sources: List<SourceItem>): List<SourceItem> = sources.sortedWith { left, right ->
-        val quality = compareKnown(left.qualityHeight?.takeIf { it > 0 }, right.qualityHeight?.takeIf { it > 0 }, !qualityDescending)
-        if (quality != 0) quality else compareKnown(left.sizeBytes?.takeIf { it > 0 }, right.sizeBytes?.takeIf { it > 0 }, sizeAscending)
+/**
+ * How links are ordered: [priority] says which comes first (language, quality, size, in any order), and each keeps its
+ * own direction. The language step only applies when a language rank is given (a preferred language is set).
+ */
+data class SourceSortOrder(val qualityDescending: Boolean = true, val sizeAscending: Boolean = true,
+                           val priority: List<String> = DEFAULT_PRIORITY) {
+    fun sorted(sources: List<SourceItem>, languageRank: ((SourceItem) -> Int)? = null): List<SourceItem> = sources.sortedWith { left, right ->
+        var result = 0
+        for (key in priority) {
+            result = when (key) {
+                LANGUAGE -> if (languageRank == null) 0 else languageRank(left).compareTo(languageRank(right))
+                QUALITY -> compareKnown(left.qualityHeight?.takeIf { it > 0 }, right.qualityHeight?.takeIf { it > 0 }, !qualityDescending)
+                SIZE -> compareKnown(left.sizeBytes?.takeIf { it > 0 }, right.sizeBytes?.takeIf { it > 0 }, sizeAscending)
+                else -> 0
+            }
+            if (result != 0) break
+        }
+        result
+    }
+
+    companion object {
+        const val LANGUAGE = "language"; const val QUALITY = "quality"; const val SIZE = "size"
+        val DEFAULT_PRIORITY = listOf(LANGUAGE, QUALITY, SIZE)
+        /** A saved order, repaired: each key once, unknown keys dropped, missing ones added at the end. */
+        fun priority(saved: String?): List<String> {
+            val keys = saved.orEmpty().split(',').map(String::trim).filter { it in DEFAULT_PRIORITY }.distinct()
+            return keys + DEFAULT_PRIORITY.filterNot { it in keys }
+        }
     }
     private fun <T : Comparable<T>> compareKnown(left: T?, right: T?, ascending: Boolean): Int = when {
         left == null && right == null -> 0

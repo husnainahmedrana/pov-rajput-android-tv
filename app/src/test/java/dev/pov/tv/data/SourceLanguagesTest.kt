@@ -132,4 +132,20 @@ class SourceLanguagesTest {
             SourceLanguageOrder("hi", "", "en").sorted(items, SourceSortOrder()).map { it.title })
         assertEquals("Movie.1080p.ITALIAN.mkv", SourceLanguageOrder("hi", "").sorted(items, SourceSortOrder())[1].title)
     }
+
+    @Test fun `the sort follows the chosen order of language, quality and size`() {
+        val items = listOf(
+            SourceItem("Movie.2026.1080p.WEB-DL.English.mkv", "fixture", sizeBytes = 3_000_000_000L, qualityHeight = 1080),
+            SourceItem("Movie.2026.2160p.WEB-DL.Hindi.mkv", "fixture", sizeBytes = 9_000_000_000L, qualityHeight = 2160),
+            SourceItem("Movie.2026.2160p.WEB-DL.English.mkv", "fixture", sizeBytes = 12_000_000_000L, qualityHeight = 2160))
+        val english = SourceLanguageOrder("en", "")
+        // Language first (default): both English links, 4K before 1080p, then the Hindi one.
+        assertEquals(listOf(2, 0, 1), english.sorted(items, SourceSortOrder()).map(items::indexOf))
+        // Quality first: the 4K links (English before Hindi), then 1080p.
+        assertEquals(listOf(2, 1, 0), english.sorted(items, SourceSortOrder(priority = listOf("quality", "language", "size"))).map(items::indexOf))
+        // Size first: smallest first.
+        assertEquals(listOf(0, 1, 2), english.sorted(items, SourceSortOrder(priority = listOf("size", "quality", "language"))).map(items::indexOf))
+        // A saved order is repaired: duplicates dropped, missing keys added.
+        assertEquals(listOf("quality", "language", "size"), SourceSortOrder.priority("quality,quality,bogus"))
+    }
 }

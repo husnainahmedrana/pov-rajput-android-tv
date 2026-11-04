@@ -12,7 +12,7 @@ internal class AudioPreferences(context: Context) {
         get() = preferences.getString("language", "en").orEmpty().takeIf { value -> LANGUAGES.any { it.first == value } }.orEmpty()
         set(value) { require(LANGUAGES.any { it.first == value }); preferences.edit().putString("language", value).apply() }
     val languageLabel: String get() = LANGUAGES.first { it.first == language }.second
-    /** When a video lacks the preferred audio or subtitle language, English is tried before the player's default. */
+    /** When a video lacks the preferred audio language, English is tried before the player's default (subtitles have their own). */
     var englishFallback: Boolean
         get() = preferences.getBoolean("english_fallback", true)
         set(value) { preferences.edit().putBoolean("english_fallback", value).apply() }

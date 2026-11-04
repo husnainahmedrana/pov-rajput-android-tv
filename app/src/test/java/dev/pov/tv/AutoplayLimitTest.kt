@@ -14,7 +14,7 @@ class AutoplayLimitTest {
 
     @Test fun `the estimated bitrate appears as a badge beside the size`() {
         val source = dev.pov.tv.data.SourceItem("Movie.mkv", "fixture", sizeBytes = 10_000_000_000L)
-        assertEquals("≈11 Mbps", SourceBadges.from(source, runtimeMinutes = 120)[2].label)
+        assertEquals("10.00 GB · ≈11 Mbps", SourceBadges.from(source, runtimeMinutes = 120)[1].label)
         assertTrue(SourceBadges.from(source).none { it.label.endsWith("Mbps") })
     }
 

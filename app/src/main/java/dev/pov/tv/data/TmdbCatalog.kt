@@ -79,6 +79,72 @@ class TmdbCatalog internal constructor(
     /** Checks the key with the smallest authenticated request. */
     fun validate() { json("/configuration") }
 
+    /** One actor of a title: TMDB person id, name, the part they play and a portrait (blank when TMDB has none). */
+    data class CastMember(val personId: Long, val name: String, val character: String, val photo: String)
+    /** An actor's films and shows, each most popular first. */
+    data class Filmography(val movies: List<MediaItemData>, val shows: List<MediaItemData>)
+
+    /** The first [limit] billed actors of an IMDb title; for shows the whole run's cast (aggregate credits). */
+    fun cast(imdbId: String, type: String, limit: Int = 7): List<CastMember> {
+        val tv = type == "series"
+        val found = json("/find/$imdbId?external_source=imdb_id").optJSONArray(if (tv) "tv_results" else "movie_results")
+        val id = found?.optJSONObject(0)?.optLong("id", -1)?.takeIf { it > 0 } ?: return emptyList()
+        ids.put(mapOf("${if (tv) "tv" else "movie"}:$id" to imdbId))
+        val list = json(if (tv) "/tv/$id/aggregate_credits" else "/movie/$id/credits").optJSONArray("cast") ?: return emptyList()
+        return (0 until list.length()).mapNotNull { list.optJSONObject(it) }
+            .sortedBy { it.optInt("order", Int.MAX_VALUE) }
+            .mapNotNull { entry ->
+                val person = entry.optLong("id", -1).takeIf { it > 0 } ?: return@mapNotNull null
+                val name = entry.optString("name").ifBlank { return@mapNotNull null }
+                val character = if (tv) entry.optJSONArray("roles")?.optJSONObject(0)?.optString("character").orEmpty()
+                    else entry.optString("character")
+                CastMember(person, name, character.trim(), image(entry.optString("profile_path"), "w185"))
+            }.distinctBy { it.personId }.take(limit)
+    }
+
+    /**
+     * An actor's films and shows from TMDB combined credits: posters only, no talk, news or reality shows (where they
+     * appear as themselves), up to [limit] of each, most popular first, or with [byRelease] newest release first.
+     * Titles without an IMDb id drop out.
+     */
+    fun filmography(personId: Long, limit: Int = 30, byRelease: Boolean = false): Filmography {
+        val list = json("/person/$personId/combined_credits").optJSONArray("cast") ?: return Filmography(emptyList(), emptyList())
+        val entries = (0 until list.length()).mapNotNull { list.optJSONObject(it) }
+            .filter { it.optString("poster_path").startsWith('/') }
+            .filterNot { entry -> entry.optJSONArray("genre_ids")?.let { genres -> (0 until genres.length()).any { genres.optInt(it) in NOT_ACTING } } == true }
+            .let { all ->
+                // Release order puts titles without a date (announced, not out) after the dated ones.
+                if (byRelease) all.sortedByDescending { it.optString("release_date").ifBlank { it.optString("first_air_date") }.ifBlank { "0" } }
+                else all.sortedByDescending { it.optDouble("popularity", 0.0) }
+            }
+        fun pick(mediaType: String, type: String) = entries.filter { it.optString("media_type") == mediaType }
+            .distinctBy { it.optLong("id") }.take(limit)
+            .mapNotNull { entry -> item(entry, type)?.let { "$mediaType:${entry.optLong("id")}" to it } }
+        val movies = pick("movie", "movie"); val shows = pick("tv", "series")
+        val pool = Executors.newFixedThreadPool(6)
+        try {
+            val missing = (movies + shows).map { it.first }.distinct().filter { ids.get(it) == null }
+            ids.put(missing.map { ref -> pool.submit(Callable { ref to runCatching { imdbId(ref) }.getOrNull() }) }
+                .mapNotNull { task -> task.get().let { (ref, imdb) -> imdb?.let { ref to it } } }.toMap())
+        } finally { pool.shutdownNow() }
+        fun resolved(items: List<Pair<String, MediaItemData>>) =
+            items.mapNotNull { (ref, item) -> ids.get(ref)?.takeIf { it.startsWith("tt") }?.let { item.copy(imdbId = it) } }
+        return Filmography(resolved(movies), resolved(shows))
+    }
+
+    private fun item(entry: JSONObject, type: String): MediaItemData? {
+        val title = entry.optString(if (type == "movie") "title" else "name").ifBlank { return null }
+        val genres = entry.optJSONArray("genre_ids")?.let { array -> (0 until array.length()).mapNotNull { GENRES[array.optInt(it)] } }.orEmpty()
+        val rating = entry.optDouble("vote_average", 0.0).takeIf { it > 0 }?.let { String.format(Locale.US, "%.1f", it) }.orEmpty()
+        return MediaItemData(
+            imdbId = "", type = type, title = title,
+            year = entry.optString(if (type == "movie") "release_date" else "first_air_date").take(4),
+            poster = image(entry.optString("poster_path"), "w342"),
+            background = image(entry.optString("backdrop_path"), "w1280"),
+            description = entry.optString("overview"), genres = genres.distinct().take(3), rating = rating,
+        )
+    }
+
     private fun results(shelf: Shelf): List<Pair<String, MediaItemData>> {
         val list = json(shelf.path).optJSONArray("results") ?: return emptyList()
         val tmdbType = if (shelf.type == "movie") "movie" else "tv"
@@ -138,6 +204,8 @@ class TmdbCatalog internal constructor(
             "Sci-Fi & Fantasy" to 10765, "Soap" to 10766, "Talk" to 10767, "War & Politics" to 10768, "Western" to 37,
         )
         // TMDB's fixed genre ids for movies and TV.
+        /** TV talk, news and reality genres: an actor there is usually a guest appearing as themselves. */
+        private val NOT_ACTING = setOf(10767, 10763, 10764)
         private val GENRES = mapOf(
             28 to "Action", 12 to "Adventure", 16 to "Animation", 35 to "Comedy", 80 to "Crime", 99 to "Documentary",
             18 to "Drama", 10751 to "Family", 14 to "Fantasy", 36 to "History", 27 to "Horror", 10402 to "Music",

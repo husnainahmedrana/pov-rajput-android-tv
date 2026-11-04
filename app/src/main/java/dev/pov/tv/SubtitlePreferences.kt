@@ -19,6 +19,14 @@ internal class SubtitlePreferences(private val context: Context) {
         get() = preferences.getBoolean("transparent_background", true)
         set(value) { preferences.edit().putBoolean("transparent_background", value).apply() }
     /** Find subtitles online when a video has none in the chosen language. */
+    /**
+     * English subtitles when none are in the chosen language. Its own switch since the audio one split off; until it is
+     * set, it follows the old shared "English fallback" switch, so nothing changes for existing viewers.
+     */
+    var englishFallback: Boolean
+        get() = if (preferences.contains("english_fallback")) preferences.getBoolean("english_fallback", true) else AudioPreferences(context).englishFallback
+        set(value) { preferences.edit().putBoolean("english_fallback", value).apply() }
+    fun withFallback(code: String): Array<String> = (listOf(code) + if (englishFallback) listOf("en") else emptyList()).distinct().toTypedArray()
     var autoFetch: Boolean
         get() = preferences.getBoolean("auto_fetch", true)
         set(value) { preferences.edit().putBoolean("auto_fetch", value).apply() }
@@ -63,7 +71,7 @@ internal class SubtitlePreferences(private val context: Context) {
                     .setSelectUndeterminedTextLanguage(defaults.selectUndeterminedTextLanguage)
                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, C.TRACK_TYPE_TEXT in defaults.disabledTrackTypes).build()
             }
-            else -> builder.setPreferredTextLanguages(*AudioPreferences(context).withFallback(selected)).setPreferredTextRoleFlags(0)
+            else -> builder.setPreferredTextLanguages(*withFallback(selected)).setPreferredTextRoleFlags(0)
                 .setSelectUndeterminedTextLanguage(false).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).build()
         }
     }

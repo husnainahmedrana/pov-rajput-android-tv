@@ -6,8 +6,13 @@ import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 
 /** Public Cinemeta metadata, with no embedded third-party account credentials. Call on a worker. */
-class CatalogApi internal constructor(private val publicJson: (String) -> JSONObject) {
-    constructor() : this(Net::publicJson)
+class CatalogApi internal constructor(
+    /** The viewer's chosen add-on for search and details (e.g. AIOMetadata), tried before Cinemeta. */
+    private val source: () -> MetadataSource? = { null },
+    private val addonJson: (String) -> JSONObject = { Net.json(it) },
+    private val publicJson: (String) -> JSONObject,
+) {
+    constructor() : this(publicJson = Net::publicJson)
     data class SearchResults(val items: List<MediaItemData>, val unavailableTypes: List<String>)
 
     /** Search both catalogs concurrently and retain useful results if one catalog is unavailable. */
@@ -67,6 +72,15 @@ class CatalogApi internal constructor(private val publicJson: (String) -> JSONOb
     }
 
     fun search(query: String, type: String): List<MediaItemData> {
+        // The chosen add-on first; Cinemeta when it fails or finds nothing.
+        source()?.let { addon ->
+            addon.searches[type]?.let { catalog ->
+                val term = query.trim().take(120)
+                if (term.isNotEmpty()) runCatching {
+                    parseCatalog(addonJson("${addon.address}/catalog/$type/${Net.encode(catalog)}/search=${Net.encode(term)}.json"), type)
+                }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
+            }
+        }
         requireType(type)
         val term = query.trim().take(200)
         if (term.isEmpty()) return emptyList()
@@ -76,7 +90,12 @@ class CatalogApi internal constructor(private val publicJson: (String) -> JSONOb
     fun details(item: MediaItemData): MediaItemData {
         requireType(item.type)
         require(IMDB_ID.matches(item.imdbId)) { "This title has no supported IMDb identifier." }
-        val meta = publicJson("$BASE/meta/${item.type}/${item.imdbId}.json")
+        // The chosen add-on's details first (when it serves them); Cinemeta when it fails or has nothing.
+        val fromAddon = source()?.takeIf { it.details }?.let { addon ->
+            runCatching { addonJson("${addon.address}/meta/${item.type}/${item.imdbId}.json").optJSONObject("meta") }.getOrNull()
+                ?.takeIf { it.optString("name").isNotBlank() && (it.optString("imdb_id") == item.imdbId || it.optString("id") == item.imdbId) }
+        }
+        val meta = fromAddon ?: publicJson("$BASE/meta/${item.type}/${item.imdbId}.json")
             .optJSONObject("meta") ?: throw IllegalStateException("Title details are unavailable.")
         check(!meta.has("type") || meta.isNull("type") || meta.optString("type") == item.type) {
             "The catalog returned a different media type. Choose the matching movie or TV show."

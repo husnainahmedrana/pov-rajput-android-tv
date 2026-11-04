@@ -5,7 +5,8 @@ import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal data class SourceProvider(val id: String, val name: String, val address: String, val enabled: Boolean = true)
+/** [newsProvider]: the Usenet news provider this add-on (AIOStreams) downloads through, chosen by the viewer, for its logo. */
+internal data class SourceProvider(val id: String, val name: String, val address: String, val enabled: Boolean = true, val newsProvider: String = "")
 
 /** Configured add-on addresses may contain private configuration; keep them in SecureStore. */
 internal class SourceProviders(private val get: (String) -> String, private val put: (Map<String, String>) -> Unit) {
@@ -18,7 +19,7 @@ internal class SourceProviders(private val get: (String) -> String, private val 
             check(array.length() <= MAX)
             (0 until array.length()).map { index ->
                 val item = array.getJSONObject(index)
-                SourceProvider(item.getString("id"), item.getString("name"), item.getString("address"), item.getBoolean("enabled"))
+                SourceProvider(item.getString("id"), item.getString("name"), item.getString("address"), item.getBoolean("enabled"), item.optString("newsProvider"))
             }.also(::validate)
         } catch (_: Exception) { throw IllegalStateException("Saved source providers could not be read. Check source providers in Settings.") }
         val legacy = get("sources.endpoint")
@@ -29,7 +30,7 @@ internal class SourceProviders(private val get: (String) -> String, private val 
         validate(providers)
         val array = JSONArray()
         providers.forEach { provider -> array.put(JSONObject().put("id", provider.id).put("name", provider.name)
-            .put("address", endpoint(provider.address)).put("enabled", provider.enabled)) }
+            .put("address", endpoint(provider.address)).put("enabled", provider.enabled).put("newsProvider", provider.newsProvider)) }
         // Clear the legacy slot atomically so an empty list never resurrects a removed provider.
         put(mapOf(KEY to array.toString(), "sources.endpoint" to ""))
     }
