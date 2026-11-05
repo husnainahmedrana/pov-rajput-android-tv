@@ -156,10 +156,11 @@ class MainActivity : Activity() {
     private val fadedTrailerViews = java.util.IdentityHashMap<View, Float>()
     private var trailerBackdropY = 0f
     private var trailerFadeGeneration = -1
+    private var homeTrailerFocus: View? = null
     private var heroTrailer: HeroTrailerPreview? = null
     private val trailerCatalog = HeroTrailerCatalog()
     private fun heroTrailersEnabled() = DeviceLayout.tv && getSharedPreferences("pov_hero_trailers", 0).getBoolean("enabled", false)
-    private fun heroTrailerFillEnabled() = getSharedPreferences("pov_hero_trailers", 0).getBoolean("fill_screen", false)
+    private fun heroTrailerFillEnabled() = getSharedPreferences("pov_hero_trailers", 0).getBoolean("fill_screen", true)
     private fun heroTrailerSoundEnabled() = getSharedPreferences("pov_hero_trailers", 0).getBoolean("sound", true)
     private var featureShown: MediaItemData? = null
     private val featureHandler = Handler(Looper.getMainLooper())
@@ -703,6 +704,7 @@ class MainActivity : Activity() {
         (0 until body.childCount).map(body::getChildAt), intArrayOf(body.paddingLeft, body.paddingTop, body.paddingRight, body.paddingBottom),
         isHome, generation, heroBackdrop.visibility, heroBackdrop.layoutParams.height, backdropArt.drawable, backdropArt.tag as? String, pageRevision(), sourcesPage)
     private fun restorePage(cached: RetainedPage) {
+        homeTrailerFocus = null
         heroTrailer?.stop()
         generation = cached.generation; resolvingGeneration = null; isHome = cached.home; flixScrollTarget = -1
         focusController.reset(); body.removeAllViews()
@@ -747,6 +749,7 @@ class MainActivity : Activity() {
         }
     }
     private fun page(title: String, subtitle: String = ""): Int {
+        homeTrailerFocus = null
         heroTrailer?.stop()
         generation = ++pageSequence; resolvingGeneration = null; isHome = false; wantsContentFocus = true; flixScrollTarget = -1
         featureHandler.removeCallbacksAndMessages(null); featureShown = null; backdropArt.alpha = 1f
@@ -1400,6 +1403,7 @@ class MainActivity : Activity() {
                 if (!resumed || !flix || featureHero() !== frame || inShelves) return
                 index = (index + 1) % rotation.size
                 val next = rotation[index]
+                homeTrailerFocus = null
                 rotation[(index + 1) % rotation.size].let { prefetch(backdropFor(it), backdrop = true); prefetch(logoFor(it)) }
                 frame.setTag(R.id.pov_feature_item, next)
                 (frame.findViewWithTag<LinearLayout>("feature-actions")?.getChildAt(0) as? TextView)?.text = playLabel(next)
@@ -1552,6 +1556,8 @@ class MainActivity : Activity() {
     private fun scheduleFeature(item: MediaItemData) {
         prefetchDetails(item)
         if (!flix || !isHome) return
+        heroTrailer?.stop()
+        homeTrailerFocus = currentFocus
         featureHandler.removeCallbacksAndMessages(null)
         featureHandler.postDelayed({ showFeature(item) }, 280)
     }
@@ -1590,7 +1596,7 @@ class MainActivity : Activity() {
         if (!heroBackdrop.getGlobalVisibleRect(android.graphics.Rect())) return null
         return android.graphics.Rect(0, 0, heroBackdrop.width, heroBackdrop.height)
     }
-    private fun trailerPermitted() = heroTrailersEnabled() && !isHome && resumed && hasWindowFocus() && trailerHero() != null && flix &&
+    private fun trailerPermitted() = heroTrailersEnabled() && (!isHome || (homeTrailerFocus != null && currentFocus === homeTrailerFocus)) && resumed && hasWindowFocus() && trailerHero() != null && flix &&
         !InAppPlaybackSession.hasActive() && !isDestroyed && splash == null && navigationViews.values.none { it.hasFocus() }
 
     private fun refreshHeroTrailer() {
@@ -4037,11 +4043,11 @@ class MainActivity : Activity() {
                 "home" -> {
             val home = settingsGroup("Home & appearance", "home")
             if (DeviceLayout.tv) {
-                settingsToggle(home, "Details trailers (preview)", "Trailers play in the details backdrop after a short pause. Home keeps rotating backdrop images. Unavailable trailers keep the artwork.", heroTrailersEnabled()) { enabled ->
+                settingsToggle(home, "Trailers (preview)", "Trailers play on details pages and when a Home shelf poster has focus. The rotating top recommendations show backdrop images only.", heroTrailersEnabled()) { enabled ->
                     getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("enabled", enabled).apply()
                     heroTrailer?.stop()
                 }
-                settingsToggle(home, "Trailer sound", "Play trailer audio on details pages. Turn off for muted previews.", heroTrailerSoundEnabled()) { enabled ->
+                settingsToggle(home, "Trailer sound", "Play trailer audio on details pages and focused Home posters. Turn off for muted previews.", heroTrailerSoundEnabled()) { enabled ->
                     getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("sound", enabled).apply()
                     heroTrailer?.stop()
                 }

@@ -57,6 +57,16 @@ class HeroTrailerInstrumentation : Instrumentation() {
             repeat(3) { main { rotation.run() };SystemClock.sleep(450) }
             check(main { (hero.getTag(R.id.pov_feature_item) as MediaItemData).imdbId!=first })
             report.putBoolean("home_rotation_with_trailers_enabled",true)
+            stage="home_poster_trailer"
+            val focusedPoster=call("card",movie) as View
+            main {
+                (field("body").get(app) as ViewGroup).addView(focusedPoster,1,android.widget.LinearLayout.LayoutParams(500,260))
+                focusedPoster.requestFocus()
+            }
+            await { status()=="playing" && audible() }
+            report.putBoolean("home_focused_poster_trailer",true)
+            main { hero.findViewWithTag<ViewGroup>("feature-actions").getChildAt(0).requestFocus() }
+            check(main { player()==null });report.putBoolean("rotating_hero_stays_backdrop_only",true)
             stage="details_sound_on"
             call("details",movie)
             await { status()=="playing" && audible() }

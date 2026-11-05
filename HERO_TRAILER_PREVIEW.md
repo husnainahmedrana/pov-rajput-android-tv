@@ -3,8 +3,8 @@
 Local experiment based on v0.3.17-rajput. Not published.
 
 - Separate package: `dev.pov.tv.rajput.trailerpreview` (normal app settings remain separate).
-- TV only, opt-in under Settings → Home & appearance → Details trailers (preview).
-- Home rotates still backdrop images only. AVC trailer video up to 720p plays on details pages after a short selection delay.
+- TV only, opt-in under Settings → Home & appearance → Trailers (preview).
+- The top Home recommendations rotate still backdrops only. Focusing a Home shelf poster plays its trailer; details pages also play trailers. Native AVC video is capped at 720p.
 - Trailer sound is on by default. Settings → Home & appearance → Trailer sound turns it off/on.
 - AAC audio is merged with native video when sound is on; muted previews do not fetch a separate audio track.
 - Audible previews request media audio focus and release it when stopped.
@@ -12,7 +12,7 @@ Local experiment based on v0.3.17-rajput. Not published.
 - On details pages, app overlays and gradients fade after two idle seconds of actual trailer playback.
   Any remote key reveals details; that first key gesture only reveals them. After two idle seconds
   they fade again. Holding a button keeps details visible until release. Home does not auto-hide.
-- Trailer video keeps its aspect ratio. Fill trailer screen optionally adds 35% zoom to trim common cinematic black bars; picture edges are cropped, never stretched. Turn it off for the original framing.
+- Trailer video keeps its aspect ratio. Fill trailer screen is on by default and adds 35% zoom to trim common cinematic black bars; picture edges are cropped, never stretched. Turn it off for the original framing.
 - Artwork remains visible until the first decoded video frame; unavailable trailers keep artwork.
 - Changing selection, opening menus, leaving a title page or backgrounding the app releases the player.
 - Normal playback has priority over hero trailers. No account credentials are used by trailer lookup.
@@ -72,3 +72,11 @@ channels/Watch Next data can be published successfully without being displayed b
 The app cannot force visibility or placement. Official documentation:
 https://developer.android.com/training/tv/get-started/google-tv
 https://developer.android.com/training/tv/discovery/recommendations-channel
+
+Live launcher verification on the bedroom TV: nine real Simkl Continue Watching entries were
+published to the app channel and Watch Next, with valid identity-only resume intents. The user
+confirmed that the app channel is visible on this TV. Placement is controlled by the launcher.
+
+The final live TV audit passed for focused Home-poster video/audio, suppressing trailers when
+focus returns to the rotating top recommendations, details trailers, idle overlay fade/reveal,
+Fill/original framing, and nine synced launcher items. Fill framing is retained as the default.
