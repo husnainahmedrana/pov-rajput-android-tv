@@ -71,7 +71,7 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
     }
     private fun play(source: NativeTrailerSource.Source, ticket: Int) {
         val area = bounds() ?: run { stop(); return }
-        val corner = area.width() < host.width
+        val corner = area.width() < host.width || area.height() < host.height
         val video = TextureView(activity).apply { isFocusable = false; isClickable = false; isOpaque = false }
         val container = BlendedTrailerFrame(activity, corner).apply {
             tag = "hero-trailer-player"; alpha = 0f
@@ -94,9 +94,12 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
             if (video.width == 0 || video.height == 0 || size.height == 0) return
             val aspect = size.width * size.pixelWidthHeightRatio / size.height
             val viewAspect = video.width.toFloat() / video.height
-            val zoom = if (fillScreen()) 1.35f else 1f
+            // The wide Home viewport already crops cinematic letterboxing; avoid a second zoom.
+            val fill = fillScreen()
+            val zoom = if (fill && !corner) 1.35f else 1f
             video.setTransform(Matrix().apply {
-                setScale(maxOf(1f, aspect / viewAspect), maxOf(1f, viewAspect / aspect), video.width / 2f, video.height / 2f)
+                if (corner && !fill) setScale(minOf(1f, aspect / viewAspect), minOf(1f, viewAspect / aspect), video.width.toFloat(), video.height / 2f)
+                else setScale(maxOf(1f, aspect / viewAspect), maxOf(1f, viewAspect / aspect), video.width / 2f, video.height / 2f)
             })
             video.scaleX = zoom; video.scaleY = zoom
             video.invalidate()

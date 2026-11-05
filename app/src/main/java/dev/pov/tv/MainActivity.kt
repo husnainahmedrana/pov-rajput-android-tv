@@ -1595,10 +1595,9 @@ class MainActivity : Activity() {
         if (trailerHero() == null || !heroBackdrop.isShown || heroBackdrop.width == 0 || heroBackdrop.height == 0) return null
         if (!heroBackdrop.getGlobalVisibleRect(android.graphics.Rect())) return null
         if (isHome) {
-            // Keep the whole trailer above the focused shelves, to the right of the feature copy.
-            val height = minOf(dp(FLIX_ROW_LINE - 8), heroBackdrop.height, heroBackdrop.width * 9 / 16)
-            val width = height * 16 / 9
-            return android.graphics.Rect(heroBackdrop.width - width, 0, heroBackdrop.width, height)
+            // One wide moving hero, weighted to the right and kept near the visible shelf line.
+            val height = minOf(dp(FLIX_ROW_LINE + 32), heroBackdrop.height)
+            return android.graphics.Rect(0, 0, heroBackdrop.width, height)
         }
         return android.graphics.Rect(0, 0, heroBackdrop.width, heroBackdrop.height)
     }
@@ -1610,9 +1609,16 @@ class MainActivity : Activity() {
         val item = (if (isHome) featureShown else null) ?: trailerHero()?.getTag(R.id.pov_feature_item) as? MediaItemData ?: return
         scheduleHeroTrailer(item)
     }
+    private fun onHeroTrailerPlaying(playing: Boolean) {
+        detailsTrailerChrome.playbackChanged(playing)
+        if (!::backdropArt.isInitialized) return
+        backdropArt.animate().cancel()
+        if (isHome && playing) backdropArt.animate().alpha(0f).setDuration(450).start()
+        else backdropArt.alpha = 1f
+    }
     private fun scheduleHeroTrailer(item: MediaItemData) {
         if (!trailerPermitted()) { heroTrailer?.stop(); return }
-        if (heroTrailer == null) heroTrailer = HeroTrailerPreview(this, heroBackdrop, worker, trailerCatalog::videos, ::trailerArea, ::trailerPermitted, bg, ::heroTrailerSoundEnabled, detailsTrailerChrome::playbackChanged, ::heroTrailerFillEnabled)
+        if (heroTrailer == null) heroTrailer = HeroTrailerPreview(this, heroBackdrop, worker, trailerCatalog::videos, ::trailerArea, ::trailerPermitted, bg, ::heroTrailerSoundEnabled, ::onHeroTrailerPlaying, ::heroTrailerFillEnabled)
         heroTrailer?.select(item)
     }
 
@@ -1626,7 +1632,8 @@ class MainActivity : Activity() {
         // The previous artwork stays until the next arrives; image() then cross-fades old into new.
         fun reveal(loaded: Boolean) {
             if (!loaded || featureShown != item) return
-            backdropArt.animate().cancel(); backdropArt.alpha = 1f
+            backdropArt.animate().cancel()
+            backdropArt.alpha = if (isHome && heroTrailer?.status == "playing") 0f else 1f
         }
         image(backdropArt, address, keep = true, feature = true) { loaded ->
             if (loaded) reveal(true)

@@ -4,7 +4,7 @@ import android.content.Context
 import android.graphics.*
 import android.widget.FrameLayout
 
-/** Alpha-feather the Home trailer into the existing artwork; no solid panel edges. */
+/** Alpha-feather the Home trailer into the hero background; no solid panel edges. */
 internal class BlendedTrailerFrame(context:Context, private val blendEdges:Boolean):FrameLayout(context) {
     private val mask=Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode=PorterDuffXfermode(PorterDuff.Mode.DST_IN) }
     private var leftMask:Shader?=null
@@ -12,7 +12,7 @@ internal class BlendedTrailerFrame(context:Context, private val blendEdges:Boole
     override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int) {
         super.onSizeChanged(w,h,oldw,oldh)
         if(w>0 && h>0 && blendEdges) {
-            leftMask=LinearGradient(0f,0f,w*0.16f,0f,Color.TRANSPARENT,Color.WHITE,Shader.TileMode.CLAMP)
+            leftMask=LinearGradient(0f,0f,w*0.30f,0f,Color.TRANSPARENT,Color.WHITE,Shader.TileMode.CLAMP)
             bottomMask=LinearGradient(0f,h*0.82f,0f,h.toFloat(),Color.WHITE,Color.TRANSPARENT,Shader.TileMode.CLAMP)
         }
     }

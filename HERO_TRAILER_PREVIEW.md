@@ -81,8 +81,9 @@ The final live TV audit passed for focused Home-poster video/audio, suppressing 
 focus returns to the rotating top recommendations, details trailers, idle overlay fade/reveal,
 Fill/original framing, and nine synced launcher items. Fill framing is retained as the default.
 
-Home trailer framing now uses a 16:9 viewport anchored to the upper-right, above the shelf line.
-Its left and bottom edges are alpha-feathered into the artwork instead of drawing a boxed player.
+Home trailer framing now uses a wide viewport across the hero, weighted toward the upper-right.
+The still backdrop fades away during playback, so it does not show through the moving image.
+Its left and bottom edges are alpha-feathered into the page background instead of drawing a boxed player.
 Details pages retain their existing full-backdrop framing. The live TV audit verified the corner
 geometry, native video/audio, details fade/reveal, and nine synced launcher cards; lint passed.
 
@@ -90,3 +91,8 @@ The trailer feature is currently enabled only for TV layouts. Native YouTube URL
 an approved embedded-player integration. GPL permissions for the app's source do not grant rights
 to YouTube content or establish compliance with YouTube's service terms; public release should
 revisit an authorized trailer source or supported playback method.
+
+The revised moving-hero TV audit verified that the still image is hidden while Home video plays,
+restores it when focus returns to the rotating recommendations, and retains full details playback,
+audio, fade/reveal and launcher syncing. The wider Home viewport avoids an extra zoom on top of
+its cinematic crop. Lint and live TV checks passed.
