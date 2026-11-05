@@ -16,6 +16,14 @@ class NativeTrailerSourceTest {
         assertNotNull(selected);assertEquals(9000L,selected!!.length);assertTrue(selected.url.endsWith("h=720"))
         assertNotNull(NativeTrailerSource.parse(payload(formats=format(360))))
     }
+    private fun webm(height:Int,codec:String="vp9") = """{"height":$height,"mimeType":"video/webm; codecs=\"$codec\"","url":"https://r1.googlevideo.com/videoplayback?vp9=$height","contentLength":"9000"}"""
+    @Test fun `prefers 720p vp9 only when hardware vp9 is allowed`() {
+        val formats=listOf(format(720),webm(720),webm(480),webm(720,"vp09.02.51.10")).joinToString()
+        assertTrue(NativeTrailerSource.parse(payload(formats=formats),vp9=true)!!.url.endsWith("vp9=720"))
+        assertTrue(NativeTrailerSource.parse(payload(formats=formats))!!.url.endsWith("h=720"))
+        assertTrue(NativeTrailerSource.parse(payload(formats=listOf(format(720),webm(480)).joinToString()),vp9=true)!!.url.endsWith("h=720"))
+        assertNull(NativeTrailerSource.parse(payload(formats=webm(720,"vp09.02.51.10")),vp9=true))
+    }
     @Test fun `requires playable public https media target and known file length`() {
         assertNull(NativeTrailerSource.parse(payload("LOGIN_REQUIRED",format(720))))
         assertNull(NativeTrailerSource.parse(payload(formats=format(720,host="googlevideo.com.evil.example"))))

@@ -1,5 +1,7 @@
 package dev.pov.tv.data
 
+import android.media.MediaCodecList
+import android.os.Build
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -21,6 +23,8 @@ internal class NativeTrailerSource {
     private var keyAt = 0L
     @Volatile private var blockedUntil = 0L
     private val cache = linkedMapOf<String, Pair<Long,Source>>()
+    /** VP9 is usually cleaner than AVC at the same 720p size; only used with a hardware decoder. */
+    private val vp9 by lazy { hardwareVp9() }
     @Synchronized fun resolve(id: String): Source? {
         if (!id.matches(Regex("[A-Za-z0-9_-]{11}"))) return null
         val now = System.currentTimeMillis()
@@ -40,7 +44,7 @@ internal class NativeTrailerSource {
             .header("User-Agent",UA).header("X-Youtube-Client-Name","3")
             .header("X-Youtube-Client-Version","20.10.35")
             .post(body.toString().toRequestBody("application/json".toMediaType())).build()) ?: return null
-        val source = parse(JSONObject(response)) ?: return null
+        val source = parse(JSONObject(response), vp9) ?: return null
         cache[id] = now to source
         while (cache.size > 12) cache.remove(cache.keys.first())
         return source
@@ -51,7 +55,18 @@ internal class NativeTrailerSource {
     }
     companion object {
         private const val UA = "com.google.android.youtube/20.10.35 (Linux; U; Android 14; en_US) gzip"
-        fun parse(response: JSONObject): Source? {
+        private const val VP9 = "video/x-vnd.on2.vp9"
+        private val VP9_MIME = Regex("""^video/webm;\s*codecs="?vp9"?$""")
+        private fun hardwareVp9(): Boolean = runCatching {
+            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
+                !info.isEncoder && info.supportedTypes.any { it.equals(VP9, true) } &&
+                    (if (Build.VERSION.SDK_INT >= 29) info.isHardwareAccelerated
+                     else !info.name.startsWith("OMX.google.") && !info.name.startsWith("c2.android.")) &&
+                    info.getCapabilitiesForType(VP9).videoCapabilities?.isSizeSupported(1280, 720) == true
+            }
+        }.getOrDefault(false)
+        /** Picks the tallest video up to 720p; at equal height VP9 wins when [vp9] is allowed. */
+        fun parse(response: JSONObject, vp9: Boolean = false): Source? {
             if (response.optJSONObject("playabilityStatus")?.optString("status") != "OK") return null
             val streaming = response.optJSONObject("streamingData") ?: return null
             val candidates = mutableListOf<Pair<Int,Source>>()
@@ -73,7 +88,9 @@ internal class NativeTrailerSource {
                         if (track == null || track.optBoolean("audioIsDefault",true))
                             audio += f.optInt("bitrate") to Audio(address,length)
                     } else if (height in 144..720 && mime.contains("avc1")) {
-                        candidates += height to Source(address,length,UA)
+                        candidates += height * 2 to Source(address,length,UA)
+                    } else if (vp9 && height in 144..720 && VP9_MIME.matches(mime)) {
+                        candidates += height * 2 + 1 to Source(address,length,UA)
                     }
                 }
             }
