@@ -4,10 +4,13 @@ Local experiment based on v0.3.17-rajput. Not published.
 
 - Separate package: `dev.pov.tv.rajput.trailerpreview` (normal app settings remain separate).
 - TV only, opt-in under Settings → Home & appearance → Hero trailers (preview).
-- Muted AVC video up to 720p replaces the hero backdrop after a short selection delay.
+- AVC video up to 720p replaces the Home or details backdrop after a short selection delay.
+- Trailer sound is on by default. Settings → Home & appearance → Trailer sound turns it off/on.
+- AAC audio is merged with native video when sound is on; muted previews do not fetch a separate audio track.
+- Audible previews request media audio focus and release it when stopped.
 - Title, synopsis, gradients, shelves and remote navigation remain native app views above video.
 - Artwork remains visible until the first decoded video frame; unavailable trailers keep artwork.
-- Changing selection, opening menus, leaving Home or backgrounding the app releases the player.
+- Changing selection, opening menus, leaving a title page or backgrounding the app releases the player.
 - Normal playback has priority over hero trailers. No account credentials are used by trailer lookup.
 - Public trailer metadata comes from Cinemeta. Public YouTube media availability is not guaranteed;
   restricted videos, failed extraction and rate limits fall back to the artwork.
@@ -36,7 +39,9 @@ The temporary examples shelf is debug-only and appears when preview trailers are
 
 ## Verification
 
-TV preview APK and instrumentation APK built; lint passed. Seven focused unit tests passed.
+TV preview APK and instrumentation APK built; lint passed. Nine focused unit tests passed.
 Live tests on the bedroom Android TV verified decoded first frames for Inception and Breaking Bad,
 D-pad navigation, stopping the old trailer when selecting another title, stopping on page exit
-and backgrounding, missing-trailer artwork fallback, and disabling the preview toggle.
+and backgrounding, missing-trailer artwork fallback, and disabling the preview toggle. The expanded TV test also verified trailer video/audio on movie
+details, muted series details, audio rendering on Home, the sound-on default, and changing the
+Trailer sound switch off and back on through the actual Settings UI.

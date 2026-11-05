@@ -15,15 +15,17 @@ import androidx.media3.common.*
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MergingMediaSource
 import dev.pov.tv.data.MediaItemData
 import dev.pov.tv.data.NativeTrailerSource
 import java.util.concurrent.Executor
 
-/** Muted native video in the backdrop layer; all navigation and copy remain above it. */
+/** Native trailer video and optional audio; navigation and copy remain above the backdrop. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal class HeroTrailerPreview(private val activity: Activity, private val host: FrameLayout,
     private val worker: Executor, private val fetch: (MediaItemData) -> List<String>,
-    private val bounds: () -> Rect?, private val permitted: () -> Boolean, private val backdropColor: Int) {
+    private val bounds: () -> Rect?, private val permitted: () -> Boolean, private val backdropColor: Int,
+    private val soundEnabled: () -> Boolean) {
     private val handler = Handler(Looper.getMainLooper())
     private val resolver = NativeTrailerSource()
     private var serial = 0
@@ -94,8 +96,10 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
                 setScale(maxOf(1f, aspect / viewAspect), maxOf(1f, viewAspect / aspect), video.width / 2f, video.height / 2f)
             })
         }
-        exo.volume = 0f
-        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true).build()
+        val sound = soundEnabled()
+        exo.volume = if (sound) 1f else 0f
+        exo.setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), sound)
+        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, !sound).build()
         exo.addListener(object : Player.Listener {
             override fun onVideoSizeChanged(videoSize: VideoSize) { crop(videoSize) }
             override fun onRenderedFirstFrame() {
@@ -111,7 +115,14 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
             }
         })
         exo.setVideoTextureView(video)
-        exo.setMediaItem(MediaItem.fromUri(source.url)); exo.prepare(); exo.play()
+        val videoSource = DefaultMediaSourceFactory(TrailerDataSourceFactory(source)).createMediaSource(MediaItem.fromUri(source.url))
+        val audio = source.audio
+        if (sound && audio != null) {
+            val audioFile = source.copy(url = audio.url, length = audio.length, audio = null)
+            val audioSource = DefaultMediaSourceFactory(TrailerDataSourceFactory(audioFile)).createMediaSource(MediaItem.fromUri(audio.url))
+            exo.setMediaSource(MergingMediaSource(true, videoSource, audioSource))
+        } else exo.setMediaSource(videoSource)
+        exo.prepare(); exo.play()
         handler.removeCallbacks(timeout); handler.postDelayed(timeout, 20_000)
         handler.removeCallbacks(visibilityCheck); handler.postDelayed(visibilityCheck, 250)
     }

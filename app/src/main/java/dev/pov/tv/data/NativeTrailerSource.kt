@@ -13,7 +13,8 @@ import java.util.concurrent.TimeUnit
  * No user cookies, login tokens, hardcoded API keys, deciphering or restricted videos.
  */
 internal class NativeTrailerSource {
-    data class Source(val url: String, val length: Long, val userAgent: String)
+    data class Audio(val url: String, val length: Long)
+    data class Source(val url: String, val length: Long, val userAgent: String, val audio: Audio? = null)
     private val http = OkHttpClient.Builder().connectTimeout(10,TimeUnit.SECONDS)
         .readTimeout(12,TimeUnit.SECONDS).callTimeout(15,TimeUnit.SECONDS).build()
     private var key: String? = null
@@ -54,22 +55,29 @@ internal class NativeTrailerSource {
             if (response.optJSONObject("playabilityStatus")?.optString("status") != "OK") return null
             val streaming = response.optJSONObject("streamingData") ?: return null
             val candidates = mutableListOf<Pair<Int,Source>>()
+            val audio = mutableListOf<Pair<Int,Audio>>()
             for (name in listOf("adaptiveFormats","formats")) {
                 val formats = streaming.optJSONArray(name) ?: continue
                 for (i in 0 until formats.length()) {
                     val f = formats.optJSONObject(i) ?: continue
-                    val height = f.optInt("height")
-                    // Silent background trailers only need the video track. Prefer broadly supported AVC.
-                    if (height !in 144..720 || !f.optString("mimeType").contains("avc1")) continue
                     val address = f.optString("url")
                     val uri = runCatching { URI(address) }.getOrNull() ?: continue
                     if (uri.scheme != "https" || uri.userInfo != null || uri.host?.endsWith(".googlevideo.com") != true) continue
                     val length = f.optLong("contentLength",-1)
                     if (length <= 0) continue
-                    candidates += height to Source(address,length,UA)
+                    val mime = f.optString("mimeType")
+                    val height = f.optInt("height")
+                    // AAC and AVC work on a broad range of Android TVs without software decoding.
+                    if (mime.startsWith("audio/mp4") && mime.contains("mp4a")) {
+                        val track = f.optJSONObject("audioTrack")
+                        if (track == null || track.optBoolean("audioIsDefault",true))
+                            audio += f.optInt("bitrate") to Audio(address,length)
+                    } else if (height in 144..720 && mime.contains("avc1")) {
+                        candidates += height to Source(address,length,UA)
+                    }
                 }
             }
-            return candidates.maxByOrNull { it.first }?.second
+            return candidates.maxByOrNull { it.first }?.second?.copy(audio = audio.maxByOrNull { it.first }?.second)
         }
     }
 }

@@ -106,6 +106,7 @@ class MainActivity : Activity() {
         if (::focusController.isInitialized) focusController.revealCurrent()
         if (flix && android.os.SystemClock.uptimeMillis() < menuHoldUntil && destination == "home" && navigationViews.values.none { it.hasFocus() }) body.post { openMenu() }
         else if (flix) setRailExpanded(navigationViews.values.any { it.hasFocus() })
+        if (::body.isInitialized) refreshHeroTrailer()
     }
     private data class RetainedPage(val children: List<View>, val padding: IntArray, val home: Boolean, val generation: Int,
         val heroVisibility: Int, val heroHeight: Int, val heroArt: android.graphics.drawable.Drawable?, val heroAddress: String?, val revision: String,
@@ -154,6 +155,7 @@ class MainActivity : Activity() {
     private var heroTrailer: HeroTrailerPreview? = null
     private val trailerCatalog = HeroTrailerCatalog()
     private fun heroTrailersEnabled() = DeviceLayout.tv && getSharedPreferences("pov_hero_trailers", 0).getBoolean("enabled", false)
+    private fun heroTrailerSoundEnabled() = getSharedPreferences("pov_hero_trailers", 0).getBoolean("sound", true)
     private var featureShown: MediaItemData? = null
     private val featureHandler = Handler(Looper.getMainLooper())
     private val rotationHandler = Handler(Looper.getMainLooper())
@@ -535,7 +537,7 @@ class MainActivity : Activity() {
             // The link list's art stays put behind the list.
             if (flix && DeviceLayout.tv) featureHero()?.translationY = y.toFloat() else if (!sourcesPage) heroBackdrop.translationY = -y.toFloat()
             heroTrailer?.stop()
-            if (isHome) body.postDelayed({ refreshHeroTrailer() }, 400)
+            body.postDelayed({ refreshHeroTrailer() }, 400)
             body.invalidate()
         }
         val layout = theme.layout
@@ -692,6 +694,7 @@ class MainActivity : Activity() {
         (0 until body.childCount).map(body::getChildAt), intArrayOf(body.paddingLeft, body.paddingTop, body.paddingRight, body.paddingBottom),
         isHome, generation, heroBackdrop.visibility, heroBackdrop.layoutParams.height, backdropArt.drawable, backdropArt.tag as? String, pageRevision(), sourcesPage)
     private fun restorePage(cached: RetainedPage) {
+        heroTrailer?.stop()
         generation = cached.generation; resolvingGeneration = null; isHome = cached.home; flixScrollTarget = -1
         focusController.reset(); body.removeAllViews()
         body.animate().cancel(); body.alpha = 1f; body.translationY = 0f
@@ -705,6 +708,7 @@ class MainActivity : Activity() {
         backdropArt.setTag(R.id.pov_backdrop_key, cached.heroAddress?.let { if (cached.home) "backdrop-corner:$it" else "backdrop:$it" })
         if (cached.heroArt == null) cached.heroAddress?.let { image(backdropArt, it) }
         heroBackdrop.requestLayout(); featureShown = null; backdropArt.alpha = 1f
+        body.post { refreshHeroTrailer() }
     }
 
     private fun navigate(screen: () -> Unit) {
@@ -1368,7 +1372,7 @@ class MainActivity : Activity() {
             copy.addView(metaChips(item), copy.indexOfChild(meta), margin(-1, -2, top = 12))
         }
         if (showAction && rotation.size > 1) rotateFeature(frame, rotation)
-        if (showAction) frame.post { scheduleHeroTrailer(item) }
+        frame.post { if (body.findViewWithTag<View>("featured-hero") === frame) refreshHeroTrailer() }
         if (showAction && BuildConfig.DEBUG && heroTrailersEnabled()) {
             mediaRow("Trailer preview examples", listOf(
                 MediaItemData("tt1375666", "movie", "Inception", "2010", background = "https://images.metahub.space/background/medium/tt1375666/img"),
@@ -1483,6 +1487,7 @@ class MainActivity : Activity() {
 
     /** Writes a title into the pinned feature copy, preferring its artwork logo once it arrives. */
     private fun renderFeature(frame: View, item: MediaItemData) {
+        frame.setTag(R.id.pov_feature_item, item)
         val copy = frame.findViewWithTag<LinearLayout>("feature-copy")
         // The image loader owns the logo's view tag, so the logo is found by position.
         val logo = copy.getChildAt(0) as ImageView
@@ -1548,23 +1553,26 @@ class MainActivity : Activity() {
         featureHandler.postDelayed({ showFeature(item) }, 280)
     }
 
-    /** Native video shares the backdrop layer beneath the existing hero copy and shelves. */
+    private fun trailerHero(): FrameLayout? = if (flix && !sourcesPage && ::body.isInitialized) body.findViewWithTag("featured-hero") else null
+
+    /** Native video shares the backdrop layer beneath Home or details copy and controls. */
     private fun trailerArea(): android.graphics.Rect? {
-        if (!isHome || !flix || !DeviceLayout.tv || !::heroBackdrop.isInitialized) return null
-        if (featureHero() == null || !heroBackdrop.isShown || heroBackdrop.width == 0 || heroBackdrop.height == 0) return null
+        if (!flix || !DeviceLayout.tv || !::heroBackdrop.isInitialized) return null
+        if (trailerHero() == null || !heroBackdrop.isShown || heroBackdrop.width == 0 || heroBackdrop.height == 0) return null
+        if (!heroBackdrop.getGlobalVisibleRect(android.graphics.Rect())) return null
         return android.graphics.Rect(0, 0, heroBackdrop.width, heroBackdrop.height)
     }
-    private fun trailerPermitted() = heroTrailersEnabled() && resumed && hasWindowFocus() && isHome && flix &&
+    private fun trailerPermitted() = heroTrailersEnabled() && resumed && hasWindowFocus() && trailerHero() != null && flix &&
         !InAppPlaybackSession.hasActive() && !isDestroyed && splash == null && navigationViews.values.none { it.hasFocus() }
 
     private fun refreshHeroTrailer() {
         if (!trailerPermitted()) { heroTrailer?.stop(); return }
-        val item = featureShown ?: featureHero()?.getTag(R.id.pov_feature_item) as? MediaItemData ?: return
+        val item = (if (isHome) featureShown else null) ?: trailerHero()?.getTag(R.id.pov_feature_item) as? MediaItemData ?: return
         scheduleHeroTrailer(item)
     }
     private fun scheduleHeroTrailer(item: MediaItemData) {
         if (!trailerPermitted()) { heroTrailer?.stop(); return }
-        if (heroTrailer == null) heroTrailer = HeroTrailerPreview(this, heroBackdrop, worker, trailerCatalog::videos, ::trailerArea, ::trailerPermitted, bg)
+        if (heroTrailer == null) heroTrailer = HeroTrailerPreview(this, heroBackdrop, worker, trailerCatalog::videos, ::trailerArea, ::trailerPermitted, bg, ::heroTrailerSoundEnabled)
         heroTrailer?.select(item)
     }
 
@@ -3992,8 +4000,12 @@ class MainActivity : Activity() {
                 "home" -> {
             val home = settingsGroup("Home & appearance", "home")
             if (DeviceLayout.tv) {
-                settingsToggle(home, "Hero trailers (preview)", "Muted trailers in the artwork area after a short pause. Unavailable trailers keep the backdrop. Home rotation pauses while enabled.", heroTrailersEnabled()) { enabled ->
+                settingsToggle(home, "Hero trailers (preview)", "Trailers play in the Home and details backdrop after a short pause. Unavailable trailers keep the artwork. Home rotation pauses while enabled.", heroTrailersEnabled()) { enabled ->
                     getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("enabled", enabled).apply()
+                    heroTrailer?.stop()
+                }
+                settingsToggle(home, "Trailer sound", "Play trailer audio on Home and details pages. Turn off for muted previews.", heroTrailerSoundEnabled()) { enabled ->
+                    getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("sound", enabled).apply()
                     heroTrailer?.stop()
                 }
             }
