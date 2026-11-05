@@ -9,6 +9,10 @@ Local experiment based on v0.3.17-rajput. Not published.
 - AAC audio is merged with native video when sound is on; muted previews do not fetch a separate audio track.
 - Audible previews request media audio focus and release it when stopped.
 - Title, synopsis, gradients, shelves and remote navigation remain native app views above video.
+- On details pages, app overlays and gradients fade after two idle seconds of actual trailer playback.
+  Any remote key reveals details; that first key gesture only reveals them. After two idle seconds
+  they fade again. Holding a button keeps details visible until release. Home does not auto-hide.
+- Trailer video keeps its aspect ratio. Cinema-format or encoded black bars may remain.
 - Artwork remains visible until the first decoded video frame; unavailable trailers keep artwork.
 - Changing selection, opening menus, leaving a title page or backgrounding the app releases the player.
 - Normal playback has priority over hero trailers. No account credentials are used by trailer lookup.
@@ -39,9 +43,14 @@ The temporary examples shelf is debug-only and appears when preview trailers are
 
 ## Verification
 
-TV preview APK and instrumentation APK built; lint passed. Nine focused unit tests passed.
+TV preview APK and instrumentation APK built; lint passed. Thirteen focused unit tests passed.
 Live tests on the bedroom Android TV verified decoded first frames for Inception and Breaking Bad,
 D-pad navigation, stopping the old trailer when selecting another title, stopping on page exit
 and backgrounding, missing-trailer artwork fallback, and disabling the preview toggle. The expanded TV test also verified trailer video/audio on movie
 details, muted series details, audio rendering on Home, the sound-on default, and changing the
 Trailer sound switch off and back on through the actual Settings UI.
+
+The idle-overlay TV audit verified hidden chrome after two seconds, revealing with OK without
+starting the movie, and hiding again after the next idle pause. TMDB cast lookup was also verified
+with the configured device key; no key was copied to logs or source. Automated public-preview
+mode skips saved API keys; start the app normally to use configured metadata providers.

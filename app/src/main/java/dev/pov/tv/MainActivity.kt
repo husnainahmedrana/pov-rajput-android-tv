@@ -152,6 +152,10 @@ class MainActivity : Activity() {
     private var railExpanded = false
     private var railAnimator: ValueAnimator? = null
     private val railLabels = mutableListOf<View>()
+    private val detailsTrailerChrome by lazy { DetailsTrailerChrome({ !isHome && trailerPermitted() }, ::hideDetailsTrailerChrome, ::showDetailsTrailerChrome) }
+    private val fadedTrailerViews = java.util.IdentityHashMap<View, Float>()
+    private var trailerBackdropY = 0f
+    private var trailerFadeGeneration = -1
     private var heroTrailer: HeroTrailerPreview? = null
     private val trailerCatalog = HeroTrailerCatalog()
     private fun heroTrailersEnabled() = DeviceLayout.tv && getSharedPreferences("pov_hero_trailers", 0).getBoolean("enabled", false)
@@ -258,6 +262,7 @@ class MainActivity : Activity() {
     override fun onPause() {
         // Keep the outgoing target until the incoming fullscreen view can attach first.
         heroTrailer?.stop()
+        detailsTrailerChrome.stop()
         resumed = false; miniFrame?.setTag(R.id.pov_mini_shown, false)
         super.onPause()
     }
@@ -272,6 +277,7 @@ class MainActivity : Activity() {
     }
     override fun onDestroy() {
         heroTrailer?.stop(); heroTrailer = null
+        detailsTrailerChrome.stop()
         window.decorView.viewTreeObserver.takeIf { it.isAlive }?.removeOnGlobalFocusChangeListener(contentFocusChanged)
         currentPlaybackOptionsDialog?.dismiss(); currentPlaybackOptionsDialog = null
         searchDialog?.dismiss(); authorization?.dismiss(); apiKeyDialog?.dismiss(); miniPlayer?.let(InAppPlaybackSession::detachPlayerView)
@@ -396,6 +402,7 @@ class MainActivity : Activity() {
         if (flix) body.post { if (!focusController.first()) wantsContentFocus = true }
     }
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (detailsTrailerChrome.key(event)) return true
         if (backHold.intercept(event)) return true
         // Show page: one Down from the buttons goes to the next episode's card (and brings the season tabs into view).
         if (flix && event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
@@ -1553,6 +1560,31 @@ class MainActivity : Activity() {
         featureHandler.postDelayed({ showFeature(item) }, 280)
     }
 
+    private fun hideDetailsTrailerChrome() {
+        if (isHome || !::shellRoot.isInitialized) return
+        trailerFadeGeneration = generation
+        trailerBackdropY = heroBackdrop.translationY
+        for (i in 0 until shellRoot.childCount) {
+            val view = shellRoot.getChildAt(i)
+            if (view === heroBackdrop) continue
+            fadedTrailerViews[view] = view.alpha
+            view.animate().cancel(); view.animate().alpha(0f).setDuration(350).start()
+        }
+        heroBackdrop.animate().cancel(); heroBackdrop.animate().translationY(0f).setDuration(350).start()
+        heroTrailer?.setUnobstructed(true)
+    }
+    private fun showDetailsTrailerChrome() {
+        fadedTrailerViews.forEach { (view, alpha) ->
+            view.animate().cancel(); view.animate().alpha(alpha).setDuration(180).start()
+        }
+        fadedTrailerViews.clear()
+        if (::heroBackdrop.isInitialized && trailerFadeGeneration == generation) {
+            heroBackdrop.animate().cancel(); heroBackdrop.animate().translationY(trailerBackdropY).setDuration(180).start()
+        }
+        heroTrailer?.setUnobstructed(false)
+        trailerFadeGeneration = -1
+    }
+
     private fun trailerHero(): FrameLayout? = if (flix && !sourcesPage && ::body.isInitialized) body.findViewWithTag("featured-hero") else null
 
     /** Native video shares the backdrop layer beneath Home or details copy and controls. */
@@ -1572,7 +1604,7 @@ class MainActivity : Activity() {
     }
     private fun scheduleHeroTrailer(item: MediaItemData) {
         if (!trailerPermitted()) { heroTrailer?.stop(); return }
-        if (heroTrailer == null) heroTrailer = HeroTrailerPreview(this, heroBackdrop, worker, trailerCatalog::videos, ::trailerArea, ::trailerPermitted, bg, ::heroTrailerSoundEnabled)
+        if (heroTrailer == null) heroTrailer = HeroTrailerPreview(this, heroBackdrop, worker, trailerCatalog::videos, ::trailerArea, ::trailerPermitted, bg, ::heroTrailerSoundEnabled, detailsTrailerChrome::playbackChanged)
         heroTrailer?.select(item)
     }
 

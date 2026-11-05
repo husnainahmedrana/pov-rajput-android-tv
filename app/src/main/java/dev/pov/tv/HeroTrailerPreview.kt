@@ -25,7 +25,7 @@ import java.util.concurrent.Executor
 internal class HeroTrailerPreview(private val activity: Activity, private val host: FrameLayout,
     private val worker: Executor, private val fetch: (MediaItemData) -> List<String>,
     private val bounds: () -> Rect?, private val permitted: () -> Boolean, private val backdropColor: Int,
-    private val soundEnabled: () -> Boolean) {
+    private val soundEnabled: () -> Boolean, private val playingChanged: (Boolean) -> Unit) {
     private val handler = Handler(Looper.getMainLooper())
     private val resolver = NativeTrailerSource()
     private var serial = 0
@@ -76,9 +76,9 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
             isFocusable = false; isClickable = false
             descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
             addView(video, FrameLayout.LayoutParams(-1, -1))
-            addView(View(activity).apply { background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+            addView(View(activity).apply { tag = "hero-trailer-shade"; background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
                 intArrayOf(backdropColor, (backdropColor and 0x00FFFFFF) or (180 shl 24), Color.TRANSPARENT)) }, FrameLayout.LayoutParams(-1,-1))
-            addView(View(activity).apply { background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
+            addView(View(activity).apply { tag = "hero-trailer-shade"; background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
                 intArrayOf(backdropColor, Color.TRANSPARENT, Color.TRANSPARENT)) }, FrameLayout.LayoutParams(-1,-1))
         }
         layer = container
@@ -108,6 +108,7 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
                 crop(exo.videoSize); status = "playing"
                 handler.removeCallbacks(timeout)
                 container.animate().alpha(1f).setDuration(450).start()
+                playingChanged(true)
             }
             override fun onPlayerError(error: PlaybackException) { if (ticket == serial && player === exo) next(ticket) }
             override fun onPlaybackStateChanged(state: Int) {
@@ -141,7 +142,17 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
         handler.removeCallbacks(timeout); handler.removeCallbacks(visibilityCheck)
         disposePlayer(); playingId = ""; status = reason
     }
+    fun setUnobstructed(clear: Boolean) {
+        val current = layer ?: return
+        for (i in 0 until current.childCount) {
+            val view = current.getChildAt(i)
+            if (view.tag == "hero-trailer-shade") {
+                view.animate().cancel(); view.animate().alpha(if (clear) 0f else 1f).setDuration(if (clear) 350 else 180).start()
+            }
+        }
+    }
     private fun disposePlayer() {
+        playingChanged(false)
         player?.release(); player = null
         layer?.let { it.animate().cancel(); (it.parent as? ViewGroup)?.removeView(it) }; layer = null
     }

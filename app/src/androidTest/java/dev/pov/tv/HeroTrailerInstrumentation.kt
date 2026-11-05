@@ -29,6 +29,7 @@ class HeroTrailerInstrumentation : Instrumentation() {
             fun call(name:String,vararg args:Any?)=main {MainActivity::class.java.declaredMethods.first{it.name==name && it.parameterCount==args.size}.apply{isAccessible=true}.invoke(app,*args)}
             fun trailer()=field("heroTrailer").get(app) as? HeroTrailerPreview
             fun status()=main{trailer()?.status.orEmpty()}
+            fun chrome()=field("detailsTrailerChrome\$delegate").get(app).let { (it as Lazy<*>).value as DetailsTrailerChrome }
             fun player()=trailer()?.let { HeroTrailerPreview::class.java.getDeclaredField("player").apply{isAccessible=true}.get(it) as? ExoPlayer }
             fun audible()=main { player()?.let { it.isPlaying && it.volume > 0f && (it.audioDecoderCounters?.renderedOutputBufferCount ?: 0) > 0 } == true }
             fun toggleSound()=main {
@@ -73,6 +74,15 @@ class HeroTrailerInstrumentation : Instrumentation() {
             report.putBoolean("movie_details_video_and_audio",true)
             SystemClock.sleep(4000)
             uiAutomation.takeScreenshot().let { bitmap -> File(targetContext.externalCacheDir,"hero-trailer-details.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle() }
+            stage="details_idle_fade"
+            await { main { chrome().hidden && (field("scroller").get(app) as View).alpha < 0.01f } }
+            report.putBoolean("details_hide_after_idle",true)
+            val detailGeneration=main { field("generation").getInt(app) }
+            sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+            SystemClock.sleep(300)
+            check(main { !chrome().hidden && field("generation").getInt(app)==detailGeneration && (field("scroller").get(app) as View).alpha > 0.99f })
+            report.putBoolean("first_ok_reveals_without_playing",true)
+            await { main { chrome().hidden } };report.putBoolean("details_hide_again_after_idle",true)
             stage="sound_toggle_off"
             call("settings");check(status()=="idle");call("settingsSectionContent","home");toggleSound()
             check(call("heroTrailerSoundEnabled")==false)
@@ -81,6 +91,18 @@ class HeroTrailerInstrumentation : Instrumentation() {
             SystemClock.sleep(2500)
             check(main { player()?.volume==0f && player()?.audioFormat==null && player()?.trackSelectionParameters?.disabledTrackTypes?.contains(C.TRACK_TYPE_AUDIO)==true })
             report.putBoolean("series_details_muted",true)
+            stage="saved_tmdb_cast"
+            main { field("publicPreview").setBoolean(app,false) }
+            val tmdbConfigured=main { (field("store").get(app) as SecureStore).get("tmdb.key").isNotBlank() }
+            report.putBoolean("saved_tmdb_key_configured",tmdbConfigured)
+            if (tmdbConfigured) {
+                call("details",movie)
+                fun castCount(view:View):Int = (if (view.tag?.toString()?.startsWith("cast:")==true) 1 else 0) +
+                    (if (view is ViewGroup) (0 until view.childCount).sumOf { castCount(view.getChildAt(it)) } else 0)
+                await { main { castCount(field("body").get(app) as View)>0 } }
+                report.putBoolean("saved_tmdb_cast_loaded",true)
+            }
+            main { field("publicPreview").setBoolean(app,true) }
             stage="sound_toggle_on"
             call("settings");check(status()=="idle");call("settingsSectionContent","home");toggleSound()
             check(call("heroTrailerSoundEnabled")==true)
