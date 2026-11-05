@@ -124,7 +124,7 @@ class MainActivity : Activity() {
     private var miniFocus: MiniPlayerFocusRouter? = null
     internal var currentPlaybackOptionsDialog: AlertDialog? = null
         private set
-    private val playbackChanged: () -> Unit = { runOnUiThread { if (resumed && !isDestroyed) updateMiniPlayer() } }
+    private val playbackChanged: () -> Unit = { runOnUiThread { if (resumed && !isDestroyed) { updateMiniPlayer(); refreshHeroTrailer() } } }
     private val authWorker = Executors.newSingleThreadExecutor()
     private val selectedSeasons = mutableMapOf<String, Int>()
     private val catalogOffsets = mutableMapOf<String, ArrayDeque<Int>>()
@@ -151,6 +151,9 @@ class MainActivity : Activity() {
     private var railExpanded = false
     private var railAnimator: ValueAnimator? = null
     private val railLabels = mutableListOf<View>()
+    private var heroTrailer: HeroTrailerPreview? = null
+    private val trailerCatalog = HeroTrailerCatalog()
+    private fun heroTrailersEnabled() = DeviceLayout.tv && getSharedPreferences("pov_hero_trailers", 0).getBoolean("enabled", false)
     private var featureShown: MediaItemData? = null
     private val featureHandler = Handler(Looper.getMainLooper())
     private val rotationHandler = Handler(Looper.getMainLooper())
@@ -225,7 +228,7 @@ class MainActivity : Activity() {
         authorization?.takeIf { it.isShowing }?.pollNow()
         if (playerShown) { playerShown = false; scheduleContinueRefresh() }
         if (!publicPreview && ::store.isInitialized && android.os.SystemClock.elapsedRealtime() - watchedCheckedAt > 60_000) refreshWatched()
-        if (::shellRoot.isInitialized) updateMiniPlayer()
+        if (::shellRoot.isInitialized) { updateMiniPlayer(); refreshHeroTrailer() }
         if (BackHoldGesture.settingsRequested && ::shellRoot.isInitialized) { BackHoldGesture.settingsRequested = false; openSettingsAnywhere() }
         PlayerActivity.nextEpisodeAfter?.let { finished ->
             PlayerActivity.nextEpisodeAfter = null
@@ -252,6 +255,7 @@ class MainActivity : Activity() {
     }
     override fun onPause() {
         // Keep the outgoing target until the incoming fullscreen view can attach first.
+        heroTrailer?.stop()
         resumed = false; miniFrame?.setTag(R.id.pov_mini_shown, false)
         super.onPause()
     }
@@ -260,7 +264,12 @@ class MainActivity : Activity() {
         backupInBackground()
         super.onStop()
     }
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) heroTrailer?.stop() else if (::body.isInitialized) refreshHeroTrailer()
+    }
     override fun onDestroy() {
+        heroTrailer?.stop(); heroTrailer = null
         window.decorView.viewTreeObserver.takeIf { it.isAlive }?.removeOnGlobalFocusChangeListener(contentFocusChanged)
         currentPlaybackOptionsDialog?.dismiss(); currentPlaybackOptionsDialog = null
         searchDialog?.dismiss(); authorization?.dismiss(); apiKeyDialog?.dismiss(); miniPlayer?.let(InAppPlaybackSession::detachPlayerView)
@@ -371,7 +380,7 @@ class MainActivity : Activity() {
         (overlay as? ViewGroup)?.let { group -> (0 until group.childCount).map(group::getChildAt).forEach {
             it.animate().scaleX(it.scaleX * 1.18f).scaleY(it.scaleY * 1.18f).setDuration(380).start()
         } }
-        overlay.animate().alpha(0f).setDuration(380).withEndAction { (overlay.parent as? ViewGroup)?.removeView(overlay) }.start()
+        overlay.animate().alpha(0f).setDuration(380).withEndAction { (overlay.parent as? ViewGroup)?.removeView(overlay); refreshHeroTrailer() }.start()
     }
 
     private var lastRepeatAt = 0L
@@ -490,6 +499,7 @@ class MainActivity : Activity() {
     private var statusScrim: View? = null
 
     private fun shell() {
+        heroTrailer?.stop(); heroTrailer = null
         miniPlayer?.let(InAppPlaybackSession::detachPlayerView)
         miniPlayer = null; miniFrame = null; miniLabel = null; miniFocus = null
         navigationViews.clear(); rail = null; railExpanded = false; railLabels.clear(); notice = null
@@ -524,6 +534,8 @@ class MainActivity : Activity() {
             // On the phone the banner and its copy scroll away with the page.
             // The link list's art stays put behind the list.
             if (flix && DeviceLayout.tv) featureHero()?.translationY = y.toFloat() else if (!sourcesPage) heroBackdrop.translationY = -y.toFloat()
+            heroTrailer?.stop()
+            if (isHome) body.postDelayed({ refreshHeroTrailer() }, 400)
             body.invalidate()
         }
         val layout = theme.layout
@@ -722,6 +734,7 @@ class MainActivity : Activity() {
         }
     }
     private fun page(title: String, subtitle: String = ""): Int {
+        heroTrailer?.stop()
         generation = ++pageSequence; resolvingGeneration = null; isHome = false; wantsContentFocus = true; flixScrollTarget = -1
         featureHandler.removeCallbacksAndMessages(null); featureShown = null; backdropArt.alpha = 1f
         bottomAligner?.let(body::removeOnLayoutChangeListener); bottomAligner = null
@@ -1227,6 +1240,7 @@ class MainActivity : Activity() {
 
     /** Android refuses focus to zero-width views, so the hidden menu opens before taking focus. */
     private fun openMenu(): Boolean {
+        heroTrailer?.stop()
         val view = rail ?: return false
         // While a video plays, the menu opens on Now playing so it is one press away.
         val target = navigationViews["nowplaying"] ?: navigationViews[destination] ?: navigationViews["home"] ?: return false
@@ -1354,6 +1368,12 @@ class MainActivity : Activity() {
             copy.addView(metaChips(item), copy.indexOfChild(meta), margin(-1, -2, top = 12))
         }
         if (showAction && rotation.size > 1) rotateFeature(frame, rotation)
+        if (showAction) frame.post { scheduleHeroTrailer(item) }
+        if (showAction && BuildConfig.DEBUG && heroTrailersEnabled()) {
+            mediaRow("Trailer preview examples", listOf(
+                MediaItemData("tt1375666", "movie", "Inception", "2010", background = "https://images.metahub.space/background/medium/tt1375666/img"),
+                MediaItemData("tt0903747", "series", "Breaking Bad", "2008", background = "https://images.metahub.space/background/medium/tt0903747/img")))
+        }
     }
 
     private fun savedFor(item: MediaItemData) = if (publicPreview) null else history.continueWatching().firstOrNull { it.identity?.imdbId == item.imdbId }
@@ -1370,7 +1390,7 @@ class MainActivity : Activity() {
                 rotationHandler.postDelayed(this, FEATURE_INTERVAL_MS)
                 val focus = currentFocus
                 val inShelves = focus != null && within(focus, body) && !within(focus, frame)
-                if (!resumed || !flix || featureHero() !== frame || inShelves) return
+                if (!resumed || !flix || featureHero() !== frame || inShelves || heroTrailersEnabled()) return
                 index = (index + 1) % rotation.size
                 val next = rotation[index]
                 rotation[(index + 1) % rotation.size].let { prefetch(backdropFor(it), backdrop = true); prefetch(logoFor(it)) }
@@ -1528,7 +1548,28 @@ class MainActivity : Activity() {
         featureHandler.postDelayed({ showFeature(item) }, 280)
     }
 
+    /** Native video shares the backdrop layer beneath the existing hero copy and shelves. */
+    private fun trailerArea(): android.graphics.Rect? {
+        if (!isHome || !flix || !DeviceLayout.tv || !::heroBackdrop.isInitialized) return null
+        if (featureHero() == null || !heroBackdrop.isShown || heroBackdrop.width == 0 || heroBackdrop.height == 0) return null
+        return android.graphics.Rect(0, 0, heroBackdrop.width, heroBackdrop.height)
+    }
+    private fun trailerPermitted() = heroTrailersEnabled() && resumed && hasWindowFocus() && isHome && flix &&
+        !InAppPlaybackSession.hasActive() && !isDestroyed && splash == null && navigationViews.values.none { it.hasFocus() }
+
+    private fun refreshHeroTrailer() {
+        if (!trailerPermitted()) { heroTrailer?.stop(); return }
+        val item = featureShown ?: featureHero()?.getTag(R.id.pov_feature_item) as? MediaItemData ?: return
+        scheduleHeroTrailer(item)
+    }
+    private fun scheduleHeroTrailer(item: MediaItemData) {
+        if (!trailerPermitted()) { heroTrailer?.stop(); return }
+        if (heroTrailer == null) heroTrailer = HeroTrailerPreview(this, heroBackdrop, worker, trailerCatalog::videos, ::trailerArea, ::trailerPermitted, bg)
+        heroTrailer?.select(item)
+    }
+
     private fun showFeature(item: MediaItemData) {
+        scheduleHeroTrailer(item)
         if (item == featureShown || isDestroyed) return
         featureShown = item
         featureHero()?.let { renderFeature(it, item) }
@@ -3950,6 +3991,12 @@ class MainActivity : Activity() {
                 }
                 "home" -> {
             val home = settingsGroup("Home & appearance", "home")
+            if (DeviceLayout.tv) {
+                settingsToggle(home, "Hero trailers (preview)", "Muted trailers in the artwork area after a short pause. Unavailable trailers keep the backdrop. Home rotation pauses while enabled.", heroTrailersEnabled()) { enabled ->
+                    getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("enabled", enabled).apply()
+                    heroTrailer?.stop()
+                }
+            }
             val tmdbKey = store.get(TMDB_KEY)
             settingsRow(home, "TMDB", if (tmdbKey.isBlank()) "Not set" else "Connected",
                 "Your own free TMDB key adds TMDB catalogs, and makes artwork load faster: TMDB backdrops are a fraction of the size.",

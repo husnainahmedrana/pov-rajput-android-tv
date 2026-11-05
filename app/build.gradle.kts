@@ -10,6 +10,7 @@ android {
     testBuildType = providers.gradleProperty("povTestBuildType").orElse("debug").get()
     defaultConfig {
         applicationId = "dev.pov.tv.rajput"
+        manifestPlaceholders["appLabel"] = providers.gradleProperty("povAppLabel").orElse("POV Rajput").get()
         minSdk = 26
         targetSdk = 35
         versionCode = 50
