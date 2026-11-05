@@ -70,20 +70,21 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
         }
     }
     private fun play(source: NativeTrailerSource.Source, ticket: Int) {
-        if (bounds() == null) { stop(); return }
+        val area = bounds() ?: run { stop(); return }
+        val corner = area.width() < host.width
         val video = TextureView(activity).apply { isFocusable = false; isClickable = false; isOpaque = false }
-        val container = FrameLayout(activity).apply {
+        val container = BlendedTrailerFrame(activity, corner).apply {
             tag = "hero-trailer-player"; alpha = 0f
             isFocusable = false; isClickable = false
             descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
             addView(video, FrameLayout.LayoutParams(-1, -1))
-            addView(View(activity).apply { tag = "hero-trailer-shade"; background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+            if (!corner) addView(View(activity).apply { tag = "hero-trailer-shade"; background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
                 intArrayOf(backdropColor, (backdropColor and 0x00FFFFFF) or (180 shl 24), Color.TRANSPARENT)) }, FrameLayout.LayoutParams(-1,-1))
-            addView(View(activity).apply { tag = "hero-trailer-shade"; background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
+            if (!corner) addView(View(activity).apply { tag = "hero-trailer-shade"; background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
                 intArrayOf(backdropColor, Color.TRANSPARENT, Color.TRANSPARENT)) }, FrameLayout.LayoutParams(-1,-1))
         }
         layer = container
-        host.addView(container, FrameLayout.LayoutParams(-1, -1))
+        host.addView(container, FrameLayout.LayoutParams(area.width(), area.height()).apply { leftMargin = area.left; topMargin = area.top })
         val exo = ExoPlayer.Builder(activity)
             .setMediaSourceFactory(DefaultMediaSourceFactory(TrailerDataSourceFactory(source)))
             .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(2_000, 8_000, 500, 1_000).build())

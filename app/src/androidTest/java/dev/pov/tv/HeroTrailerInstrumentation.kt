@@ -65,6 +65,14 @@ class HeroTrailerInstrumentation : Instrumentation() {
             }
             await { status()=="playing" && audible() }
             report.putBoolean("home_focused_poster_trailer",true)
+            main {
+                val frame=checkNotNull(trailer()?.frame)
+                val backdrop=field("heroBackdrop").get(app) as View
+                check(frame.top==0 && frame.right==backdrop.width && frame.width()<backdrop.width && frame.height()<backdrop.height)
+            }
+            report.putBoolean("home_trailer_top_right",true)
+            main { player()?.seekTo(30_000) };SystemClock.sleep(3000)
+            uiAutomation.takeScreenshot().let { bitmap -> File(targetContext.externalCacheDir,"home-trailer-top-right.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle() }
             main { hero.findViewWithTag<ViewGroup>("feature-actions").getChildAt(0).requestFocus() }
             check(main { player()==null });report.putBoolean("rotating_hero_stays_backdrop_only",true)
             stage="details_sound_on"

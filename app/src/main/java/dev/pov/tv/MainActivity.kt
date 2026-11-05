@@ -1594,6 +1594,12 @@ class MainActivity : Activity() {
         if (!flix || !DeviceLayout.tv || !::heroBackdrop.isInitialized) return null
         if (trailerHero() == null || !heroBackdrop.isShown || heroBackdrop.width == 0 || heroBackdrop.height == 0) return null
         if (!heroBackdrop.getGlobalVisibleRect(android.graphics.Rect())) return null
+        if (isHome) {
+            // Keep the whole trailer above the focused shelves, to the right of the feature copy.
+            val height = minOf(dp(FLIX_ROW_LINE - 8), heroBackdrop.height, heroBackdrop.width * 9 / 16)
+            val width = height * 16 / 9
+            return android.graphics.Rect(heroBackdrop.width - width, 0, heroBackdrop.width, height)
+        }
         return android.graphics.Rect(0, 0, heroBackdrop.width, heroBackdrop.height)
     }
     private fun trailerPermitted() = heroTrailersEnabled() && (!isHome || (homeTrailerFocus != null && currentFocus === homeTrailerFocus)) && resumed && hasWindowFocus() && trailerHero() != null && flix &&
