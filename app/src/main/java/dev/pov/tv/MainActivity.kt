@@ -159,7 +159,7 @@ class MainActivity : Activity() {
     private var homeTrailerFocus: View? = null
     private var heroTrailer: HeroTrailerPreview? = null
     private val trailerCatalog = HeroTrailerCatalog()
-    private fun heroTrailersEnabled() = DeviceLayout.tv && getSharedPreferences("pov_hero_trailers", 0).getBoolean("enabled", false)
+    private fun heroTrailersEnabled() = DeviceLayout.tv && getSharedPreferences("pov_hero_trailers", 0).getBoolean("enabled", true)
     private fun heroTrailerFillEnabled() = getSharedPreferences("pov_hero_trailers", 0).getBoolean("fill_screen", true)
     private fun heroTrailerSoundEnabled() = getSharedPreferences("pov_hero_trailers", 0).getBoolean("sound", true)
     private var featureShown: MediaItemData? = null
@@ -4056,7 +4056,7 @@ class MainActivity : Activity() {
                 "home" -> {
             val home = settingsGroup("Home & appearance", "home")
             if (DeviceLayout.tv) {
-                settingsToggle(home, "Trailers (preview)", "Trailers play on details pages and when a Home shelf poster has focus. The rotating top recommendations show backdrop images only.", heroTrailersEnabled()) { enabled ->
+                settingsToggle(home, "Trailers", "Trailers play on details pages and when a Home shelf poster has focus. The rotating top recommendations show backdrop images only.", heroTrailersEnabled()) { enabled ->
                     getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("enabled", enabled).apply()
                     heroTrailer?.stop()
                 }
