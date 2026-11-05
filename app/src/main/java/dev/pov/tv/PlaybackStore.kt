@@ -7,6 +7,7 @@ import org.json.JSONObject
 import java.util.UUID
 
 class PlaybackStore(context: Context, private val pendingKey: String = "pending") {
+    private val appContext = context.applicationContext
     private val preferences = context.applicationContext.getSharedPreferences("playback", Context.MODE_PRIVATE)
     data class Recent(val key: String, val title: String, val identity: PlaybackIdentity?, val position: Long, val duration: Long)
     data class Pending(val identity: PlaybackIdentity, val percent: Double, val action: String, val revision: String, val accountRevision: String = "", val timestamp: String = "", val scrobbleRevision: String = "")
@@ -21,7 +22,11 @@ class PlaybackStore(context: Context, private val pendingKey: String = "pending"
                 .put("identity", it.identity?.toJson()).put("position", it.position).put("duration", it.duration))
         }
         preferences.edit().putString("recent", json.toString()).apply()
+        identity?.let { preferences.edit().putLong("launcher:${it.type}:${it.imdbId}",System.currentTimeMillis()).apply() }
+        TvContinueWatching.request(appContext)
     }
+
+    fun launcherPlayedAt(identity: PlaybackIdentity) = preferences.getLong("launcher:${identity.type}:${identity.imdbId}",0)
 
     fun recent(): List<Recent> = synchronized(lock) {
         try {
@@ -50,9 +55,11 @@ class PlaybackStore(context: Context, private val pendingKey: String = "pending"
         val hidden = preferences.getStringSet("hiddenContinue", emptySet()).orEmpty().toMutableSet()
         hidden.add(hiddenToken(key, identity))
         check(preferences.edit().putStringSet("hiddenContinue", hidden).commit())
+        TvContinueWatching.request(appContext)
     }
     /** A deliberate new playback session makes a hidden item visible again. Periodic saves do not. */
     fun show(key: String, identity: PlaybackIdentity?) = synchronized(lock) {
+        identity?.let { TvContinueWatching.allow(appContext,it) }
         val hidden = preferences.getStringSet("hiddenContinue", emptySet()).orEmpty().toMutableSet()
         if (hidden.remove(hiddenToken(key, identity))) check(preferences.edit().putStringSet("hiddenContinue", hidden).commit())
         Unit

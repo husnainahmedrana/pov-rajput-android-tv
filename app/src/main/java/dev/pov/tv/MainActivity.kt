@@ -159,6 +159,7 @@ class MainActivity : Activity() {
     private var heroTrailer: HeroTrailerPreview? = null
     private val trailerCatalog = HeroTrailerCatalog()
     private fun heroTrailersEnabled() = DeviceLayout.tv && getSharedPreferences("pov_hero_trailers", 0).getBoolean("enabled", false)
+    private fun heroTrailerFillEnabled() = getSharedPreferences("pov_hero_trailers", 0).getBoolean("fill_screen", false)
     private fun heroTrailerSoundEnabled() = getSharedPreferences("pov_hero_trailers", 0).getBoolean("sound", true)
     private var featureShown: MediaItemData? = null
     private val featureHandler = Handler(Looper.getMainLooper())
@@ -193,7 +194,7 @@ class MainActivity : Activity() {
         InAppPlaybackSession.addListener(playbackChanged)
         if (savedInstanceState == null && !publicPreview && !sourcePreview) showSplash()
         if (!publicPreview) refreshWatched()
-        shell(); if (sourcePreview) sourceChoiceAudit() else home(); if (!publicPreview) { retrySync(); checkStartupUpdate() }
+        shell(); if (sourcePreview) sourceChoiceAudit() else home(); body.post { openLauncherResume(intent) }; if (!publicPreview) { retrySync(); checkStartupUpdate() }
         window.decorView.viewTreeObserver.addOnGlobalFocusChangeListener(contentFocusChanged)
         // A restore reopens the app; say what happened once it is back.
         store.get(ACCOUNT_NOTICE).takeIf { it.isNotBlank() }?.let { notice -> store.remove(ACCOUNT_NOTICE); body.postDelayed({ toast(notice) }, 1_800) }
@@ -230,6 +231,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume(); resumed = true; launchingPlayer = false
+        if (!publicPreview) { TvContinueWatching.schedule(this); TvContinueWatching.request(this) }
         // Back from approving a sign-in code in the browser: check for it straight away.
         authorization?.takeIf { it.isShowing }?.pollNow()
         if (playerShown) { playerShown = false; scheduleContinueRefresh() }
@@ -1102,8 +1104,7 @@ class MainActivity : Activity() {
                 val fresh = try { tracker.refreshCaches(); tracker.continueWatching() } catch (_: Exception) { null }
                 runOnUiThread {
                     if (fresh == null || isDestroyed || tracker.accountRevision() != revision || !row.isAttachedToWindow) return@runOnUiThread
-                    store.put(CONTINUE_CACHE, org.json.JSONObject().put("revision", revision).put("items", org.json.JSONArray(fresh.map { (identity, percent) ->
-                        org.json.JSONObject().put("id", identity.toJson()).put("percent", percent) })).toString())
+                    TvContinueWatching.rememberRemote(this,revision,fresh)
                     if (!row.hasFocus()) fill(fresh)
                 }
             }
@@ -1111,8 +1112,7 @@ class MainActivity : Activity() {
         val cached = cachedContinueWatching()
         cached?.let(::fill)
         read(id, { wetrakr.continueWatching() }) { progress ->
-            store.put(CONTINUE_CACHE, org.json.JSONObject().put("revision", revision).put("items", org.json.JSONArray(progress.map { (identity, percent) ->
-                org.json.JSONObject().put("id", identity.toJson()).put("percent", percent) })).toString())
+            TvContinueWatching.rememberRemote(this,revision,progress)
             // Refreshing never pulls the row out from under a viewer who is browsing it.
             if (progress != cached && !row.hasFocus()) fill(progress)
         }
@@ -1380,11 +1380,7 @@ class MainActivity : Activity() {
         }
         if (showAction && rotation.size > 1) rotateFeature(frame, rotation)
         frame.post { if (body.findViewWithTag<View>("featured-hero") === frame) refreshHeroTrailer() }
-        if (showAction && BuildConfig.DEBUG && heroTrailersEnabled()) {
-            mediaRow("Trailer preview examples", listOf(
-                MediaItemData("tt1375666", "movie", "Inception", "2010", background = "https://images.metahub.space/background/medium/tt1375666/img"),
-                MediaItemData("tt0903747", "series", "Breaking Bad", "2008", background = "https://images.metahub.space/background/medium/tt0903747/img")))
-        }
+
     }
 
     private fun savedFor(item: MediaItemData) = if (publicPreview) null else history.continueWatching().firstOrNull { it.identity?.imdbId == item.imdbId }
@@ -1401,7 +1397,7 @@ class MainActivity : Activity() {
                 rotationHandler.postDelayed(this, FEATURE_INTERVAL_MS)
                 val focus = currentFocus
                 val inShelves = focus != null && within(focus, body) && !within(focus, frame)
-                if (!resumed || !flix || featureHero() !== frame || inShelves || heroTrailersEnabled()) return
+                if (!resumed || !flix || featureHero() !== frame || inShelves) return
                 index = (index + 1) % rotation.size
                 val next = rotation[index]
                 rotation[(index + 1) % rotation.size].let { prefetch(backdropFor(it), backdrop = true); prefetch(logoFor(it)) }
@@ -1594,7 +1590,7 @@ class MainActivity : Activity() {
         if (!heroBackdrop.getGlobalVisibleRect(android.graphics.Rect())) return null
         return android.graphics.Rect(0, 0, heroBackdrop.width, heroBackdrop.height)
     }
-    private fun trailerPermitted() = heroTrailersEnabled() && resumed && hasWindowFocus() && trailerHero() != null && flix &&
+    private fun trailerPermitted() = heroTrailersEnabled() && !isHome && resumed && hasWindowFocus() && trailerHero() != null && flix &&
         !InAppPlaybackSession.hasActive() && !isDestroyed && splash == null && navigationViews.values.none { it.hasFocus() }
 
     private fun refreshHeroTrailer() {
@@ -1604,7 +1600,7 @@ class MainActivity : Activity() {
     }
     private fun scheduleHeroTrailer(item: MediaItemData) {
         if (!trailerPermitted()) { heroTrailer?.stop(); return }
-        if (heroTrailer == null) heroTrailer = HeroTrailerPreview(this, heroBackdrop, worker, trailerCatalog::videos, ::trailerArea, ::trailerPermitted, bg, ::heroTrailerSoundEnabled, detailsTrailerChrome::playbackChanged)
+        if (heroTrailer == null) heroTrailer = HeroTrailerPreview(this, heroBackdrop, worker, trailerCatalog::videos, ::trailerArea, ::trailerPermitted, bg, ::heroTrailerSoundEnabled, detailsTrailerChrome::playbackChanged, ::heroTrailerFillEnabled)
         heroTrailer?.select(item)
     }
 
@@ -1748,6 +1744,15 @@ class MainActivity : Activity() {
         in 5..11 -> "Good morning."; in 12..17 -> "Good afternoon."; else -> "Good evening."
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent); setIntent(intent); openLauncherResume(intent)
+    }
+    private fun openLauncherResume(launch: Intent) {
+        val identity = LauncherResumeLink.parse(this,launch) ?: return
+        // Consume once so rotating/resuming the activity cannot start it again.
+        intent = Intent(this,MainActivity::class.java)
+        continuePlayback(identity)
+    }
     private fun continuePlayback(identity: PlaybackIdentity) {
         val link = LastPlayedLinks(store).find(identity)
         if (link == null) { navigate { showSources(identity) }; return }
@@ -4032,13 +4037,22 @@ class MainActivity : Activity() {
                 "home" -> {
             val home = settingsGroup("Home & appearance", "home")
             if (DeviceLayout.tv) {
-                settingsToggle(home, "Hero trailers (preview)", "Trailers play in the Home and details backdrop after a short pause. Unavailable trailers keep the artwork. Home rotation pauses while enabled.", heroTrailersEnabled()) { enabled ->
+                settingsToggle(home, "Details trailers (preview)", "Trailers play in the details backdrop after a short pause. Home keeps rotating backdrop images. Unavailable trailers keep the artwork.", heroTrailersEnabled()) { enabled ->
                     getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("enabled", enabled).apply()
                     heroTrailer?.stop()
                 }
-                settingsToggle(home, "Trailer sound", "Play trailer audio on Home and details pages. Turn off for muted previews.", heroTrailerSoundEnabled()) { enabled ->
+                settingsToggle(home, "Trailer sound", "Play trailer audio on details pages. Turn off for muted previews.", heroTrailerSoundEnabled()) { enabled ->
                     getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("sound", enabled).apply()
                     heroTrailer?.stop()
+                }
+            }
+            if (DeviceLayout.tv) {
+                settingsToggle(home, "Fill trailer screen", "Zoom and crop wide trailers to reduce black bars. Some picture edges are cut off; turn off for original framing.", heroTrailerFillEnabled()) { enabled ->
+                    getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("fill_screen", enabled).apply()
+                    heroTrailer?.stop()
+                }
+                settingsToggle(home, "TV home Continue Watching", "Show resume cards on supported TV launchers. Your TV controls whether the row appears.", TvContinueWatching.enabled(this)) { enabled ->
+                    TvContinueWatching.setEnabled(this,enabled)
                 }
             }
             val tmdbKey = store.get(TMDB_KEY)

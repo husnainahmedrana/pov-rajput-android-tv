@@ -18,8 +18,10 @@ import java.util.concurrent.atomic.AtomicReference
 class HeroTrailerInstrumentation : Instrumentation() {
     private fun <T> main(work:()->T):T {val result=AtomicReference<Result<T>>();runOnMainSync{result.set(runCatching(work))};return result.get().getOrThrow()}
     private fun await(work:()->Boolean) {val until=SystemClock.elapsedRealtime()+100000;while(SystemClock.elapsedRealtime()<until){if(work())return;SystemClock.sleep(250)};error("Preview timeout")}
-    override fun onCreate(arguments:Bundle?){super.onCreate(arguments);start()}
+    private var launcherOnly=false
+    override fun onCreate(arguments:Bundle?){super.onCreate(arguments);launcherOnly=arguments?.getString("launcher_only")=="true";start()}
     override fun onStart(){
+        if(launcherOnly) { auditLauncher(); return }
         val report=Bundle();var activity:MainActivity?=null;var stage="start"
         try {
             targetContext.getSharedPreferences("pov_hero_trailers",0).edit().putBoolean("enabled",true).remove("sound").commit()
@@ -44,29 +46,17 @@ class HeroTrailerInstrumentation : Instrumentation() {
             main {field("catalog").set(app,catalog)};call("home")
             await{main{(field("body").get(app) as ViewGroup).findViewWithTag<View>("featured-hero")!=null}}
             val movie=CatalogApi().details(MediaItemData("tt1375666","movie","Inception"))
-            stage="movie";call("showFeature",movie)
-            await {status() in setOf("playing","unavailable","ended")}
-            report.putString("movie_state",status());report.putBoolean("actual_trailer_played",status()=="playing")
-            main {
-                trailer()?.frame?.let { area -> check(area.width()>=200 && area.height()>=200);report.putBoolean("visible_hero_viewport",true) }
-                check(app.currentFocus !is TextureView);report.putBoolean("native_focus_retained",true)
-            }
-            await { audible() };report.putBoolean("home_audio_rendered",true)
-            SystemClock.sleep(7000)
-            uiAutomation.takeScreenshot().let { bitmap -> File(targetContext.externalCacheDir,"hero-trailer-movie.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle() }
-            val focusedBefore = main { app.currentFocus }
-            sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_DOWN);waitForIdleSync();SystemClock.sleep(500)
-            report.putBoolean("dpad_navigation",main { app.currentFocus !== focusedBefore && app.currentFocus !is TextureView })
-            sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_RIGHT);waitForIdleSync()
-            stage="switch"
-            call("showFeature",MediaItemData("tt0903747","series","Breaking Bad"))
-            check(main{trailer()?.playingId.orEmpty().isEmpty()});report.putBoolean("previous_trailer_stops_on_selection",true)
-            await {status() in setOf("playing","unavailable","ended")}
-            report.putString("series_state",status())
-            report.putString("series_trailer_id",main{trailer()?.playingId.orEmpty()})
-            report.putBoolean("actual_trailer_played",status()=="playing" || report.getBoolean("actual_trailer_played"))
-            SystemClock.sleep(2000)
-            uiAutomation.takeScreenshot().let { bitmap -> File(targetContext.externalCacheDir,"hero-trailer-series.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle() }
+            stage="home_backdrops"
+            SystemClock.sleep(2200)
+            check(main { trailer()?.frame==null && player()==null })
+            report.putBoolean("home_backdrops_only",true)
+            val hero=main { (field("body").get(app) as ViewGroup).findViewWithTag<View>("featured-hero") }
+            val rotation=main { field("heroRotation").get(app) as Runnable }
+            val first=main { (hero.getTag(R.id.pov_feature_item) as MediaItemData).imdbId }
+            main { hero.findViewWithTag<ViewGroup>("feature-actions").getChildAt(0).requestFocus() }
+            repeat(3) { main { rotation.run() };SystemClock.sleep(450) }
+            check(main { (hero.getTag(R.id.pov_feature_item) as MediaItemData).imdbId!=first })
+            report.putBoolean("home_rotation_with_trailers_enabled",true)
             stage="details_sound_on"
             call("details",movie)
             await { status()=="playing" && audible() }
@@ -74,6 +64,16 @@ class HeroTrailerInstrumentation : Instrumentation() {
             report.putBoolean("movie_details_video_and_audio",true)
             SystemClock.sleep(4000)
             uiAutomation.takeScreenshot().let { bitmap -> File(targetContext.externalCacheDir,"hero-trailer-details.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle() }
+            stage="framing_comparison"
+            main { player()?.seekTo(30_000) };SystemClock.sleep(2500)
+            main { player()?.pause() }
+            main { targetContext.getSharedPreferences("pov_hero_trailers",0).edit().putBoolean("fill_screen",false).commit();trailer()?.updateFraming() }
+            SystemClock.sleep(350)
+            uiAutomation.takeScreenshot().let { bitmap -> File(targetContext.externalCacheDir,"trailer-original.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle() }
+            main { targetContext.getSharedPreferences("pov_hero_trailers",0).edit().putBoolean("fill_screen",true).commit();trailer()?.updateFraming() }
+            SystemClock.sleep(350)
+            uiAutomation.takeScreenshot().let { bitmap -> File(targetContext.externalCacheDir,"trailer-fill.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle() }
+            main { player()?.play() };report.putBoolean("fill_screen_comparison",true)
             stage="details_idle_fade"
             await { main { chrome().hidden && (field("scroller").get(app) as View).alpha < 0.01f } }
             report.putBoolean("details_hide_after_idle",true)
@@ -109,15 +109,49 @@ class HeroTrailerInstrumentation : Instrumentation() {
             report.putBoolean("sound_toggle_roundtrip",true)
             report.putBoolean("page_exit_stops_trailer",true)
             call("home");await{main{(field("body").get(app) as ViewGroup).findViewWithTag<View>("featured-hero")!=null}}
-            call("showFeature",movie);SystemClock.sleep(1000)
+            call("details",movie);SystemClock.sleep(1000)
             main {callActivityOnPause(app)};check(status()=="idle");main{callActivityOnResume(app)};report.putBoolean("background_stops_trailer",true)
-            stage="missing";call("showFeature",MediaItemData("tt0000000","movie","Missing trailer test"));await{status()=="unavailable"}
+            stage="missing"
+            main { (field("body").get(app) as ViewGroup).findViewWithTag<View>("featured-hero").setTag(R.id.pov_feature_item,MediaItemData("tt0000000","movie","Missing trailer test")) }
+            call("refreshHeroTrailer");await{status()=="unavailable"}
             check(main{trailer()?.frame==null});report.putBoolean("missing_trailer_keeps_artwork",true)
             main{targetContext.getSharedPreferences("pov_hero_trailers",0).edit().putBoolean("enabled",false).commit()};call("refreshHeroTrailer");check(status()=="idle")
             report.putBoolean("toggle_off_stops_preview",true)
             main{targetContext.getSharedPreferences("pov_hero_trailers",0).edit().putBoolean("enabled",true).commit()}
+            stage="launcher_sync"
+            val homeSync=TvContinueWatching(targetContext)
+            homeSync.sync()
+            check(targetContext.getSharedPreferences(TvContinueWatching.PREFS,0).getString("status","").orEmpty().startsWith("Synced"))
+            report.putString("launcher_status",targetContext.getSharedPreferences(TvContinueWatching.PREFS,0).getString("status",""))
             report.putBoolean("passed",true)
         }catch(error:Throwable){report.putString("failure_stage",stage);report.putString("error_type",error.javaClass.simpleName);report.putBoolean("passed",false)}
         finally{activity?.let{main{it.finish()}};finish(-1,report)}
+    }
+    private fun auditLauncher() {
+        val report=Bundle();val publisher=TvContinueWatching(targetContext)
+        var diagnostic=false
+        try {
+            publisher.sync(refreshRemote=true)
+            fun rows(table:android.net.Uri):List<Pair<Long,String>> = targetContext.contentResolver.query(table,arrayOf("_id","package_name","internal_provider_id","intent_uri"),null,null,null)?.use { cursor ->
+                buildList { while(cursor.moveToNext()) if(cursor.getString(1)==targetContext.packageName && cursor.getString(2).orEmpty().startsWith(TvContinueWatching.PREFIX)) add(cursor.getLong(0) to cursor.getString(3)) }
+            }.orEmpty()
+            val before=rows(android.media.tv.TvContract.PreviewPrograms.CONTENT_URI)
+            report.putInt("real_continue_count",before.size)
+            if(before.isEmpty()) {
+                diagnostic=true
+                check(publisher.publish(listOf(TvContinueWatching.Entry(PlaybackIdentity("tt1375666","movie","POV launcher test · Inception"),32.0,8_880_000))))
+            }
+            val preview=rows(android.media.tv.TvContract.PreviewPrograms.CONTENT_URI)
+            val watch=rows(android.media.tv.TvContract.WatchNextPrograms.CONTENT_URI)
+            check(preview.isNotEmpty() && watch.isNotEmpty())
+            report.putInt("launcher_channel_count",preview.size);report.putInt("watch_next_count",watch.size)
+            preview.forEach { (_,uri) -> check(LauncherResumeLink.parse(targetContext,Intent.parseUri(uri,Intent.URI_INTENT_SCHEME))!=null) }
+            report.putBoolean("resume_intents_valid",true)
+            targetContext.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            SystemClock.sleep(7000)
+            uiAutomation.takeScreenshot().let { bitmap -> File(targetContext.externalCacheDir,"launcher-continue.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle() }
+            report.putBoolean("passed",true)
+        }catch(error:Throwable){report.putString("error_type",error.javaClass.simpleName);report.putBoolean("passed",false)}
+        finally { if(diagnostic) publisher.sync();finish(-1,report) }
     }
 }

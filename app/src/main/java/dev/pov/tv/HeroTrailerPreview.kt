@@ -25,13 +25,14 @@ import java.util.concurrent.Executor
 internal class HeroTrailerPreview(private val activity: Activity, private val host: FrameLayout,
     private val worker: Executor, private val fetch: (MediaItemData) -> List<String>,
     private val bounds: () -> Rect?, private val permitted: () -> Boolean, private val backdropColor: Int,
-    private val soundEnabled: () -> Boolean, private val playingChanged: (Boolean) -> Unit) {
+    private val soundEnabled: () -> Boolean, private val playingChanged: (Boolean) -> Unit, private val fillScreen: () -> Boolean) {
     private val handler = Handler(Looper.getMainLooper())
     private val resolver = NativeTrailerSource()
     private var serial = 0
     private var key = ""
     private var player: ExoPlayer? = null
     private var layer: FrameLayout? = null
+    private var refreshFraming: (() -> Unit)? = null
     private var ids = emptyList<String>()
     private var index = 0
     var status = "idle"; private set
@@ -92,10 +93,14 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
             if (video.width == 0 || video.height == 0 || size.height == 0) return
             val aspect = size.width * size.pixelWidthHeightRatio / size.height
             val viewAspect = video.width.toFloat() / video.height
+            val zoom = if (fillScreen()) 1.35f else 1f
             video.setTransform(Matrix().apply {
                 setScale(maxOf(1f, aspect / viewAspect), maxOf(1f, viewAspect / aspect), video.width / 2f, video.height / 2f)
             })
+            video.scaleX = zoom; video.scaleY = zoom
+            video.invalidate()
         }
+        refreshFraming = { crop(exo.videoSize) }
         val sound = soundEnabled()
         exo.volume = if (sound) 1f else 0f
         exo.setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), sound)
@@ -142,6 +147,7 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
         handler.removeCallbacks(timeout); handler.removeCallbacks(visibilityCheck)
         disposePlayer(); playingId = ""; status = reason
     }
+    fun updateFraming() { refreshFraming?.invoke() }
     fun setUnobstructed(clear: Boolean) {
         val current = layer ?: return
         for (i in 0 until current.childCount) {
@@ -153,7 +159,7 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
     }
     private fun disposePlayer() {
         playingChanged(false)
-        player?.release(); player = null
+        player?.release(); player = null; refreshFraming = null
         layer?.let { it.animate().cancel(); (it.parent as? ViewGroup)?.removeView(it) }; layer = null
     }
     fun stop() {
