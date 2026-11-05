@@ -2,10 +2,10 @@
 
 ## Trailers (TV)
 
-- On by default. Settings → Home & appearance → Trailers turns them off.
+- On by default. All trailer settings are on one page: Settings → Home & appearance → Trailers.
 - Trailers play on details pages and when a Home shelf poster has focus. The rotating top
   recommendations show backdrop images only.
-- Trailer sound is on by default (Settings → Home & appearance → Trailer sound).
+- Trailer sound is on by default (Trailer sound on the Trailers page).
 - Fill trailer screen (on by default) zooms wide trailers to trim black bars; turn it off for
   the original framing. Video is capped at 720p.
 - High quality trailers (on by default) uses VP9 video when the TV has a hardware VP9 decoder,

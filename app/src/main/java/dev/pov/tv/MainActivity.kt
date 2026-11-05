@@ -4057,24 +4057,8 @@ class MainActivity : Activity() {
                 "home" -> {
             val home = settingsGroup("Home & appearance", "home")
             if (DeviceLayout.tv) {
-                settingsToggle(home, "Trailers", "Trailers play on details pages and when a Home shelf poster has focus. The rotating top recommendations show backdrop images only.", heroTrailersEnabled()) { enabled ->
-                    getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("enabled", enabled).apply()
-                    heroTrailer?.stop()
-                }
-                settingsToggle(home, "Trailer sound", "Play trailer audio on details pages and focused Home posters. Turn off for muted previews.", heroTrailerSoundEnabled()) { enabled ->
-                    getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("sound", enabled).apply()
-                    heroTrailer?.stop()
-                }
-            }
-            if (DeviceLayout.tv) {
-                settingsToggle(home, "High quality trailers", "Use sharper VP9 video when this TV can decode it in hardware. Turn off to use standard AVC video.", heroTrailerHighQuality()) { enabled ->
-                    getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("high_quality", enabled).apply()
-                    heroTrailer?.stop()
-                }
-                settingsToggle(home, "Fill trailer screen", "Zoom and crop wide trailers to reduce black bars. Some picture edges are cut off; turn off for original framing.", heroTrailerFillEnabled()) { enabled ->
-                    getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("fill_screen", enabled).apply()
-                    heroTrailer?.stop()
-                }
+                settingsRow(home, "Trailers", if (!heroTrailersEnabled()) "Off" else listOf("On", if (heroTrailerSoundEnabled()) "sound on" else "muted", if (heroTrailerHighQuality()) "high quality" else "standard quality").joinToString(" · "),
+                    "Trailers on details pages and focused Home posters: sound, quality and screen fill.") { navigate { playbackPage("trailers") } }
                 settingsToggle(home, "TV home Continue Watching", "Show resume cards on supported TV launchers. Your TV controls whether the row appears.", TvContinueWatching.enabled(this)) { enabled ->
                     TvContinueWatching.setEnabled(this,enabled)
                 }
@@ -4447,12 +4431,31 @@ class MainActivity : Activity() {
         val (title, subtitle) = when (section) {
             "links" -> "Links & sorting" to "How links are ordered, and which are left out."
             "autoplay" -> "Auto-play" to "What Play starts on its own, and the next episode."
+            "trailers" -> "Trailers" to "Trailers on details pages and when a Home shelf poster has focus."
             else -> "Player" to "The player's extras: mini player, skip buttons, seek previews and picture."
         }
         page(title, subtitle)
         // The page title already names the card.
         val playback = settingsGroup(title, "nowplaying", heading = false)
         when (section) {
+            "trailers" -> {
+            settingsToggle(playback, "Trailers", "Trailers play on details pages and when a Home shelf poster has focus. The rotating top recommendations show backdrop images only.", heroTrailersEnabled()) { enabled ->
+                getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("enabled", enabled).apply()
+                heroTrailer?.stop()
+            }
+            settingsToggle(playback, "Trailer sound", "Play trailer audio on details pages and focused Home posters. Turn off for muted previews.", heroTrailerSoundEnabled()) { enabled ->
+                getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("sound", enabled).apply()
+                heroTrailer?.stop()
+            }
+            settingsToggle(playback, "High quality trailers", "Use sharper VP9 video when this TV can decode it in hardware. Turn off to use standard AVC video.", heroTrailerHighQuality()) { enabled ->
+                getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("high_quality", enabled).apply()
+                heroTrailer?.stop()
+            }
+            settingsToggle(playback, "Fill trailer screen", "Zoom and crop wide trailers to reduce black bars. Some picture edges are cut off; turn off for original framing.", heroTrailerFillEnabled()) { enabled ->
+                getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("fill_screen", enabled).apply()
+                heroTrailer?.stop()
+            }
+            }
             "links" -> {
             settingsRow(playback, "Link sorting", SourceSortPreferences(this).label,
                 "Choose what comes first (language, quality or size) and each one's direction. Auto-play follows this order.") {
