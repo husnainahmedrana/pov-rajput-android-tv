@@ -8,6 +8,9 @@
 - Trailer sound is on by default (Settings → Home & appearance → Trailer sound).
 - Fill trailer screen (on by default) zooms wide trailers to trim black bars; turn it off for
   the original framing. Video is capped at 720p.
+- High quality trailers (on by default) uses VP9 video when the TV has a hardware VP9 decoder,
+  which looks cleaner than AVC at the same 720p size. Turn it off, or on TVs without hardware
+  VP9, trailers use AVC.
 - Artwork stays visible until the first video frame. If a trailer is unavailable, restricted or
   rate-limited, the artwork is kept.
 - Changing selection, opening menus, leaving a page or backgrounding the app stops the trailer.

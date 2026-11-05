@@ -161,6 +161,7 @@ class MainActivity : Activity() {
     private val trailerCatalog = HeroTrailerCatalog()
     private fun heroTrailersEnabled() = DeviceLayout.tv && getSharedPreferences("pov_hero_trailers", 0).getBoolean("enabled", true)
     private fun heroTrailerFillEnabled() = getSharedPreferences("pov_hero_trailers", 0).getBoolean("fill_screen", true)
+    private fun heroTrailerHighQuality() = getSharedPreferences("pov_hero_trailers", 0).getBoolean("high_quality", true)
     private fun heroTrailerSoundEnabled() = getSharedPreferences("pov_hero_trailers", 0).getBoolean("sound", true)
     private var featureShown: MediaItemData? = null
     private val featureHandler = Handler(Looper.getMainLooper())
@@ -1618,7 +1619,7 @@ class MainActivity : Activity() {
     }
     private fun scheduleHeroTrailer(item: MediaItemData) {
         if (!trailerPermitted()) { heroTrailer?.stop(); return }
-        if (heroTrailer == null) heroTrailer = HeroTrailerPreview(this, heroBackdrop, worker, trailerCatalog::videos, ::trailerArea, ::trailerPermitted, bg, ::heroTrailerSoundEnabled, ::onHeroTrailerPlaying, ::heroTrailerFillEnabled)
+        if (heroTrailer == null) heroTrailer = HeroTrailerPreview(this, heroBackdrop, worker, trailerCatalog::videos, ::trailerArea, ::trailerPermitted, bg, ::heroTrailerSoundEnabled, ::onHeroTrailerPlaying, ::heroTrailerFillEnabled, ::heroTrailerHighQuality)
         heroTrailer?.select(item)
     }
 
@@ -4066,6 +4067,10 @@ class MainActivity : Activity() {
                 }
             }
             if (DeviceLayout.tv) {
+                settingsToggle(home, "High quality trailers", "Use sharper VP9 video when this TV can decode it in hardware. Turn off to use standard AVC video.", heroTrailerHighQuality()) { enabled ->
+                    getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("high_quality", enabled).apply()
+                    heroTrailer?.stop()
+                }
                 settingsToggle(home, "Fill trailer screen", "Zoom and crop wide trailers to reduce black bars. Some picture edges are cut off; turn off for original framing.", heroTrailerFillEnabled()) { enabled ->
                     getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("fill_screen", enabled).apply()
                     heroTrailer?.stop()

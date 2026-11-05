@@ -25,7 +25,8 @@ import java.util.concurrent.Executor
 internal class HeroTrailerPreview(private val activity: Activity, private val host: FrameLayout,
     private val worker: Executor, private val fetch: (MediaItemData) -> List<String>,
     private val bounds: () -> Rect?, private val permitted: () -> Boolean, private val backdropColor: Int,
-    private val soundEnabled: () -> Boolean, private val playingChanged: (Boolean) -> Unit, private val fillScreen: () -> Boolean) {
+    private val soundEnabled: () -> Boolean, private val playingChanged: (Boolean) -> Unit, private val fillScreen: () -> Boolean,
+    private val highQuality: () -> Boolean = { true }) {
     private val handler = Handler(Looper.getMainLooper())
     private val resolver = NativeTrailerSource()
     private var serial = 0
@@ -62,7 +63,7 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
         disposePlayer(); status = "loading"; playingId = ids[index]
         val id = playingId
         worker.execute {
-            val source = runCatching { resolver.resolve(id) }.getOrNull()
+            val source = runCatching { resolver.resolve(id, highQuality()) }.getOrNull()
             handler.post {
                 if (ticket != serial || id != playingId || !permitted()) return@post
                 if (source == null) next(ticket) else play(source, ticket)

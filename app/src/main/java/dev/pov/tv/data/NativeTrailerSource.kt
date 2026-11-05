@@ -25,10 +25,12 @@ internal class NativeTrailerSource {
     private val cache = linkedMapOf<String, Pair<Long,Source>>()
     /** VP9 is usually cleaner than AVC at the same 720p size; only used with a hardware decoder. */
     private val vp9 by lazy { hardwareVp9() }
-    @Synchronized fun resolve(id: String): Source? {
+    @Synchronized fun resolve(id: String, highQuality: Boolean = true): Source? {
         if (!id.matches(Regex("[A-Za-z0-9_-]{11}"))) return null
         val now = System.currentTimeMillis()
-        cache[id]?.takeIf { now - it.first in 0..1_200_000L }?.let { return it.second }
+        val useVp9 = highQuality && vp9
+        val cacheKey = "$id:$useVp9"
+        cache[cacheKey]?.takeIf { now - it.first in 0..1_200_000L }?.let { return it.second }
         if (now < blockedUntil) return null
         if (key == null || now - keyAt !in 0..10_800_000L) {
             val html = request(Request.Builder().url("https://www.youtube.com/watch?v=$id&hl=en").build()) ?: return null
@@ -44,8 +46,8 @@ internal class NativeTrailerSource {
             .header("User-Agent",UA).header("X-Youtube-Client-Name","3")
             .header("X-Youtube-Client-Version","20.10.35")
             .post(body.toString().toRequestBody("application/json".toMediaType())).build()) ?: return null
-        val source = parse(JSONObject(response), vp9) ?: return null
-        cache[id] = now to source
+        val source = parse(JSONObject(response), useVp9) ?: return null
+        cache[cacheKey] = now to source
         while (cache.size > 12) cache.remove(cache.keys.first())
         return source
     }
