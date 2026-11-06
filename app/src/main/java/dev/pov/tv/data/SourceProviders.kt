@@ -62,5 +62,23 @@ internal class SourceProviders(private val get: (String) -> String, private val 
             }
             return candidate
         }
+
+        /**
+         * Torz settings for a StremThru server: the P2P store, so it lists plain torrents and the viewer's own debrid
+         * services (connected in POV) check them, like Torrentio. No key is inside: base64url of {"stores":[{"c":"p2p"}]}.
+         */
+        const val STREMTHRU_TORZ_P2P = "eyJzdG9yZXMiOlt7ImMiOiJwMnAifV19"
+
+        /**
+         * A bare server address ("https://stremthru.example/") is not an add-on. When it is a StremThru server, its Torz
+         * torrent search is used instead. [manifest] fetches a manifest (call on a worker); any other address, or a
+         * server that isn't StremThru, comes back unchanged.
+         */
+        fun resolveServer(address: String, manifest: (String) -> JSONObject): String {
+            val endpoint = endpoint(address)
+            if (!URI(endpoint).path.isNullOrEmpty()) return endpoint
+            val torz = try { manifest("$endpoint/stremio/torz/manifest.json") } catch (_: Exception) { return endpoint }
+            return if (torz.optString("id").endsWith("stremthru.torz")) "$endpoint/stremio/torz/$STREMTHRU_TORZ_P2P" else endpoint
+        }
     }
 }

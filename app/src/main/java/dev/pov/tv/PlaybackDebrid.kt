@@ -20,7 +20,7 @@ internal object PlaybackDebrid {
     fun addon(source: SourceItem): String? = source.addon ?: if (source.directUrl.isNotEmpty()) AddonBadges.of("", source.provider) else null
     /** A logo id's name; unknown ids give the id itself. */
     fun describe(id: String) = label(id)
-    private fun label(id: String) = when (id) { EASYNEWS -> "Easynews"; PENGUPLAY -> "PenguPlay"; CNCVERSE -> "CNCVerse"; PLAVIO -> "PlavioHD"; AIOSTREAMS -> "AIOStreams"; in AddonBadges.NEWS_PROVIDER_IDS -> AddonBadges.NEWS_PROVIDERS.first { it.first == id }.second
+    private fun label(id: String) = when (id) { EASYNEWS -> "Easynews"; PENGUPLAY -> "PenguPlay"; CNCVERSE -> "CNCVerse"; PLAVIO -> "PlavioHD"; AIOSTREAMS -> "AIOStreams"; AddonBadges.ALTMOUNT -> "AltMount"; AddonBadges.STREAMNZB -> "StreamNZB";in AddonBadges.NEWS_PROVIDER_IDS -> AddonBadges.NEWS_PROVIDERS.first { it.first == id }.second
         in AddonBadges.INDEXER_NAMES -> AddonBadges.INDEXER_NAMES.getValue(id)
         // Never crash on a logo id without a name (it only feeds the spoken description).
         else -> if (id in DebridServices.IDS) DebridServices.name(id) else id }
@@ -37,6 +37,8 @@ internal object PlaybackDebrid {
         CNCVERSE -> R.drawable.pov_cncverse_logo
         PLAVIO -> R.drawable.pov_plavio_logo
         AIOSTREAMS -> R.drawable.pov_aiostreams_logo
+        AddonBadges.ALTMOUNT -> R.drawable.pov_altmount_logo
+        AddonBadges.STREAMNZB -> R.drawable.pov_streamnzb_logo
         AddonBadges.NEWSHOSTING -> R.drawable.pov_newshosting_logo
         "eweka" -> R.drawable.pov_eweka_logo
         "giganews" -> R.drawable.pov_giganews_logo
@@ -76,7 +78,7 @@ internal object PlaybackDebrid {
      */
     fun tag(source: SourceItem): String? {
         val addon = addon(source) ?: return null
-        if (addon != AIOSTREAMS) return addon
+        if (!AddonBadges.usenet(addon)) return addon
         val more = SourceBadges.cachedOn(source).drop(1)
         return if (more.isEmpty()) addon else "$addon|${more.joinToString(",")}"
     }
@@ -89,7 +91,7 @@ internal object PlaybackDebrid {
         val badge = root.findViewById<android.view.ViewGroup>(R.id.pov_debrid_badge)
         badge.visibility = if (id == null) View.GONE else View.VISIBLE
         // AIOStreams shows only logos (its own, the news provider or debrid, the indexer), no words.
-        val logosOnly = id == AIOSTREAMS && id == tagged
+        val logosOnly = AddonBadges.usenet(id) && id == tagged
         val label = if (id == null) "" else label(id)
         root.findViewById<TextView>(R.id.pov_debrid_name).apply {
             text = label; visibility = if (wordmark(id) || logosOnly) View.GONE else View.VISIBLE
@@ -111,4 +113,16 @@ internal object PlaybackDebrid {
         }
     }
     private const val EXTRA_LOGO = "pov-extra-logo"
+
+    /**
+     * The debrid services a torrent link can be played on when the viewer holds OK on it (link list and the player's
+     * Streams panel), as (service id, label): the services it is cached on (the preferred one first), then the connected
+     * services that can only check when played. Empty for direct links.
+     */
+    fun choices(source: SourceItem, checkOnPlay: List<String>): List<Pair<String, String>> {
+        if (source.directUrl.isNotEmpty() || source.infoHash.isBlank()) return emptyList()
+        val cached = source.cachedServices.distinct()
+        return cached.mapIndexed { index, service -> service to "Play with ${DebridServices.name(service)}${if (index == 0) " · preferred" else ""}" } +
+            checkOnPlay.filterNot { it in cached }.map { service -> service to "Try ${DebridServices.name(service)} · checks when played" }
+    }
 }

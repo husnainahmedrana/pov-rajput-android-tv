@@ -688,7 +688,8 @@ class PlayerActivity : Activity() {
                     // Only the badges, the release name and the source's own name, as in the source list.
                     PlayerSheetChoice(name.ifBlank { source.title }, checked = current, detail = SourceBadges.origin(source),
                         badges = SourceBadges.forRow(source, languages, minutes, checkOnPlay, logos = true),
-                        logos = SourceBadges.cachedOn(source).map(PlaybackDebrid::logo)) { pickStream(media, source) }
+                        logos = SourceBadges.cachedOn(source).map(PlaybackDebrid::logo),
+                        hold = PlaybackDebrid.choices(source, checkOnPlay).takeIf { it.isNotEmpty() }?.let { services -> { pickDebrid(media, source, services) } }) { pickStream(media, source) }
                 }
                 showSheet("Streams", "${links.size} links · pick one to continue from the same spot.", choices)
             }
@@ -707,6 +708,21 @@ class PlayerActivity : Activity() {
         val ordered = StreamChoices.items.orEmpty()
         activeDialog?.dismiss()
         runSwitch(media, source, at, "Preparing ${source.title.lineSequence().firstOrNull().orEmpty().take(60)}…") { switcher.prepare(source, media, ordered) }
+    }
+
+    /** Hold OK on a link in Streams: pick the debrid service it plays on, continuing at the same spot. */
+    private fun pickDebrid(media: PlaybackIdentity, source: dev.pov.tv.data.SourceItem, services: List<Pair<String, String>>) {
+        showSheet("Play with…", SourceBadges.name(source).ifBlank { source.title }.take(80), services.map { (service, label) ->
+            PlayerSheetChoice(label) {
+                if (switching) { Toast.makeText(this, "Preparing the link you picked…", Toast.LENGTH_SHORT).show(); return@PlayerSheetChoice }
+                val at = player?.currentPosition ?: 0L
+                activeDialog?.dismiss()
+                runSwitch(media, source, at, "Preparing on ${dev.pov.tv.data.DebridServices.name(service)}…") {
+                    switcher.prepare(source, media, StreamChoices.items.orEmpty(), only = service)
+                }
+            }
+        })
+        streamsDialog = activeDialog
     }
 
     private fun runSwitch(media: PlaybackIdentity, source: dev.pov.tv.data.SourceItem, at: Long, message: String, work: () -> StreamSwitcher.Result) {

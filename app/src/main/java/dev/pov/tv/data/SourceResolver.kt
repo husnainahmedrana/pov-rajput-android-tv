@@ -91,7 +91,10 @@ class SourceResolver internal constructor(
             val data = stream.optJSONObject("streamData")
             if (data?.optString("type") in setOf("statistic", "info", "error")) return@mapNotNull null
             val aio = data != null || stream.optJSONObject("behaviorHints")?.optString("bingeGroup").orEmpty().startsWith("com.aiostreams")
-            val linkAddon = addon ?: AddonBadges.AIOSTREAMS.takeIf { aio }
+            // The AltMount and StreamNZB add-ons name every link "AltMount …" / "StreamNZB …", whatever the viewer called the add-on.
+            val linkAddon = addon ?: AddonBadges.AIOSTREAMS.takeIf { aio } ?: AddonBadges.ALTMOUNT.takeIf { ALTMOUNT_NAME.containsMatchIn(stream.optString("name")) }
+                ?: AddonBadges.STREAMNZB.takeIf { STREAMNZB_NAME.containsMatchIn(stream.optString("name")) ||
+                    stream.optJSONObject("behaviorHints")?.optString("bingeGroup").orEmpty().startsWith("streamnzb") }
             val hash = stream.optString("infoHash").lowercase(Locale.ROOT).takeIf(HASH::matches).orEmpty()
             val direct = stream.optString("url").takeIf(::isWebLink).orEmpty()
             // Stremio sends these through its local proxy; the player sends them itself.
@@ -106,11 +109,18 @@ class SourceResolver internal constructor(
             SourceItem(title = title, provider = provider, infoHash = hash, fileIndex = fileIndex, directUrl = direct,
                 sizeBytes = SourceMetadata.sizeBytes(stream), qualityHeight = SourceMetadata.qualityHeight(stream), headers = headers,
                 addon = linkAddon?.takeIf { direct.isNotBlank() },
-                usenet = linkAddon == AddonBadges.AIOSTREAMS && (data?.optString("type")?.let { it == "usenet" || it == "stremio-usenet" }
+                usenet = AddonBadges.standaloneUsenet(linkAddon) || linkAddon == AddonBadges.AIOSTREAMS && (data?.optString("type")?.let { it == "usenet" || it == "stremio-usenet" }
                     ?: USENET_TITLE.containsMatchIn("${stream.optString("name")} $description")),
-                indexer = if (linkAddon == AddonBadges.AIOSTREAMS) data?.optString("indexer").orEmpty().take(40) else "",
-                servedBy = data?.optJSONObject("service")?.optString("id")?.takeIf { it in DebridServices.IDS },
-                newsProvider = if (linkAddon == AddonBadges.AIOSTREAMS) newsProvider else "",
+                indexer = when (linkAddon) {
+                    AddonBadges.AIOSTREAMS -> data?.optString("indexer").orEmpty().take(40)
+                    AddonBadges.ALTMOUNT -> altmountIndexer(direct, description)
+                    // "🔍 Crawler" on its own line of the description.
+                    AddonBadges.STREAMNZB -> STREAMNZB_INDEXER_LINE.find(description)?.groupValues?.get(1).orEmpty().trim().take(40)
+                    else -> ""
+                },
+                servedBy = data?.optJSONObject("service")?.optString("id")?.takeIf { it in DebridServices.IDS || it == AddonBadges.ALTMOUNT }
+                    ?: AddonBadges.ALTMOUNT.takeIf { linkAddon == AddonBadges.AIOSTREAMS && data == null && ALTMOUNT_TITLE.containsMatchIn("${stream.optString("name")} $description") },
+                newsProvider = if (AddonBadges.usenet(linkAddon)) newsProvider else "",
                 inLibrary = data?.optBoolean("library") == true,
                 detail = listOf(stream.optString("name"), description.lineSequence().drop(1).joinToString(" · "))
                     .filter { it.isNotBlank() }.joinToString(" · ").take(800))
@@ -119,6 +129,18 @@ class SourceResolver internal constructor(
 
     // A public AIOStreams instance sends no stream data; its formatted titles usually say "usenet" or show 📰.
     private val USENET_TITLE = Regex("(?i)(?<![a-z])usenet(?![a-z])|📰")
+    private val ALTMOUNT_TITLE = Regex("(?i)(?<![a-z])alt[ ._-]?mount(?![a-z])")
+    private val ALTMOUNT_NAME = Regex("(?i)^\\s*altmount(?![a-z])")
+    private val ALTMOUNT_INDEXER_LINE = Regex("🌐\\s*([^\\n]+)")
+    private val STREAMNZB_NAME = Regex("(?i)^\\s*streamnzb(?![a-z])")
+    private val STREAMNZB_INDEXER_LINE = Regex("🔍\\s*([^\\n]+)")
+    /** The AltMount add-on names the indexer in its play address ("…/play?release=…&indexer=Geek"), and after 🌐 in the title. */
+    private fun altmountIndexer(url: String, description: String): String {
+        val query = try { URI(url).rawQuery } catch (_: Exception) { null }.orEmpty()
+        val fromUrl = query.split('&').firstOrNull { it.startsWith("indexer=") }?.substringAfter('=')
+            ?.let { try { java.net.URLDecoder.decode(it, "UTF-8") } catch (_: Exception) { it } }
+        return (fromUrl ?: ALTMOUNT_INDEXER_LINE.find(description)?.groupValues?.get(1)).orEmpty().trim().take(40)
+    }
 
     private fun deduplicate(items: List<SourceItem>): List<SourceItem> = LibraryCopies.merge(mergeCopies(items))
 
@@ -182,8 +204,12 @@ class SourceResolver internal constructor(
         } finally { executor.shutdownNow() }
     }
 
-    /** Cached providers are tried in priority order; only an explicitly chosen uncached source may create a download. */
-    fun prepare(source: SourceItem, identity: PlaybackIdentity): PreparedSource {
+    /**
+     * Cached providers are tried in priority order; only an explicitly chosen uncached source may create a download.
+     * [only] plays the link on that one service (picked by holding OK on a link) instead of the preferred one, and
+     * never starts a download there.
+     */
+    fun prepare(source: SourceItem, identity: PlaybackIdentity, only: String? = null): PreparedSource {
         validateIdentity(identity)
         require(identity.type != "series" || !EpisodeFilename.isExplicitMismatch(source.title, identity.season, identity.episode)) {
             "This source identifies a different episode. Choose another source."
@@ -196,6 +222,14 @@ class SourceResolver internal constructor(
         require(HASH.matches(hash)) { "The selected source has no valid torrent hash." }
         val services = activeServices()
         check(services.isNotEmpty()) { "Connect a debrid service in Settings first." }
+        if (only != null) {
+            check(only in services) { "Connect ${DebridServices.name(only)} in Settings first." }
+            // Real-Debrid-style services only know by trying; the others are checked first so nothing is downloaded.
+            if (only !in LinkDebrids.CHECK_ON_PLAY) check(hash in checkCaches(listOf(only), listOf(hash)).single().hashes) {
+                "This link isn't cached on ${DebridServices.name(only)}. Choose another service."
+            }
+            return prepareWith(only, source.copy(cached = true), identity)
+        }
         val availability = checkCaches(services, listOf(hash))
         val cachedOn = availability.filter { hash in it.hashes }.map { it.service }
         var failure: Exception? = null

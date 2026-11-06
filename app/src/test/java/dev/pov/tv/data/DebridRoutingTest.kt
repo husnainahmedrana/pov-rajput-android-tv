@@ -96,6 +96,16 @@ class DebridRoutingTest {
         assertEquals(0, h.offcloudCreates + h.torboxCreates)
     }
 
+    @Test fun `a service picked by holding OK plays the link there instead of the preferred one`() {
+        val h = Harness()
+        assertTrue(h.resolver.prepare(source(), identity, only = "torbox") is PreparedSource.Files)
+        assertEquals(0, h.offcloudPrepares); assertEquals(1, h.torboxPrepares)
+        // Not cached on the picked service: a clear error, never a download.
+        val error = assertThrows(IllegalStateException::class.java) { h.resolver.prepare(source(b), identity, only = "torbox") }
+        assertTrue(error.message!!.contains("isn't cached on TorBox"))
+        assertEquals(0, h.offcloudCreates + h.torboxCreates)
+    }
+
     @Test fun `shared cached source uses TorBox when it is first`() {
         val h = Harness(); h.order = listOf("torbox", "offcloud")
         assertTrue(h.resolver.prepare(source(), identity) is PreparedSource.Files)

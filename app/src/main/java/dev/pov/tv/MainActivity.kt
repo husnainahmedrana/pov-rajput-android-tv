@@ -169,6 +169,7 @@ class MainActivity : Activity() {
     private var heroRotation: Runnable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        DeviceLayout.fit(resources)
         super.onCreate(savedInstanceState)
         if (packageName.endsWith(".preview")) {
             // Preview-only test switches: start with an empty artwork cache, and choose card image size.
@@ -323,7 +324,7 @@ class MainActivity : Activity() {
     private fun showSplash() {
         val root = window.decorView as? FrameLayout ?: return
         val overlay = FrameLayout(this).apply { setBackgroundColor(0xFF141414.toInt()); isClickable = true; elevation = 100f }
-        val size = (resources.displayMetrics.widthPixels * if (DeviceLayout.phone) 0.3f else 0.11f).roundToInt()
+        val size = if (DeviceLayout.phone) dp(120) else (resources.displayMetrics.widthPixels * 0.11f).roundToInt()
         // A neon glow in the logo's own cyan and magenta, breathing behind it.
         val glow = View(this).apply {
             background = GradientDrawable().apply {
@@ -1347,7 +1348,7 @@ class MainActivity : Activity() {
             // Whatever the header shows now: the show's synopsis, or the focused episode's.
             synopsisDialog(item.title, copy.findViewWithTag<TextView>("feature-description")?.text?.toString()?.ifBlank { null } ?: item.description)
         }.apply { gravity = Gravity.CENTER }, margin(90, 34, top = 10))
-        if (DeviceLayout.phone) frame.addView(copy, FrameLayout.LayoutParams(-1, -2).apply { topMargin = dp(PHONE_COPY_TOP) })
+        if (DeviceLayout.phone) frame.addView(copy, FrameLayout.LayoutParams(if (DeviceLayout.wide) dp(DeviceLayout.PHONE_SHORT_SIDE) else -1, -2).apply { topMargin = dp(if (DeviceLayout.wide) PHONE_WIDE_COPY_TOP else PHONE_COPY_TOP) })
         else frame.addView(copy, FrameLayout.LayoutParams(dp(if (showAction) 420 else 560), -2).apply { topMargin = dp(if (!showAction) 12 else if (compact) 24 else 30) })
         if (showAction) {
             val actions = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; tag = "feature-actions"; clipChildren = false }
@@ -1451,7 +1452,7 @@ class MainActivity : Activity() {
         val params = heroBackdrop.layoutParams as FrameLayout.LayoutParams
         if (DeviceLayout.phone) {
             // The link list's art fills the phone; other pages use the banner.
-            val height = if (sourcesPage) -1 else resources.displayMetrics.widthPixels * 9 / 16
+            val height = if (sourcesPage) -1 else dp(DeviceLayout.PHONE_SHORT_SIDE) * 9 / 16
             if (params.width != -1 || params.height != height) {
                 params.width = -1; params.height = height; params.gravity = Gravity.TOP; heroBackdrop.layoutParams = params
             }
@@ -2022,7 +2023,7 @@ class MainActivity : Activity() {
         read(id, { if (query.isBlank()) anime.popular(type, skip) else anime.search(query, type, skip) }) { result ->
             if (result.items.isEmpty()) body.addView(text("No anime found. Try a different title or category.", 14, muted), margin(-1, -2, top = 20))
             val width = DeviceLayout.canvasWidth - theme.layout.railWidthDp - theme.layout.contentInsetDp * 2
-            val count = if (DeviceLayout.phone) 2 else (width / (cardWidth() + theme.layout.cardGapDp)).coerceAtLeast(1)
+            val count = if (DeviceLayout.phone) DeviceLayout.phoneColumns(width) else (width / (cardWidth() + theme.layout.cardGapDp)).coerceAtLeast(1)
             // Flix columns stretch to the full content width, as the Movies and Shows grids do.
             val tileWidth = if (flix) (width - 6 - (count - 1) * theme.layout.cardGapDp) / count else cardWidth()
             val tileHeight = if (flix) tileWidth * 9 / 16 else theme.layout.cardHeightDp
@@ -2423,6 +2424,8 @@ class MainActivity : Activity() {
         const val LIBRARY_FIRST = "sources.library_first"
         /** An actor's rows show their 20 most popular titles of each kind; See all shows every one, newest first. */
         const val PERSON_ROW_TITLES = 20
+        /** Titles per column on the phone's actor page before See all. */
+        const val PERSON_COLUMN_TITLES = 10
         /** Shown once after a restore restarts the app. Never part of a backup (account.* is excluded). */
         const val ACCOUNT_NOTICE = "account.notice"
         /** The app's website. Until the site itself exists it forwards to the GitHub page. */
@@ -2450,7 +2453,9 @@ class MainActivity : Activity() {
         const val SYNOPSIS_MORE_CHARS = 220; const val CONTINUE_LIMIT = 30
         const val PHONE_INLINE_VALUE = 18; const val BOTTOM_BAR_HEIGHT = 56; const val PHONE_BAR_COLOR = 0xFF0B0B0B.toInt()
         /** Where the phone's feature copy starts: over the foot of the 225-unit banner. */
-        const val PHONE_COPY_TOP = 150 }
+        const val PHONE_COPY_TOP = 150
+        /** A landscape screen (car, tablet) starts the feature copy higher, so the shorter banner still frames it. */
+        const val PHONE_WIDE_COPY_TOP = 96 }
 
     private fun searchResults(query: String, filter: String = "all", cached: CatalogApi.SearchResults? = null) {
         current = { searchResults(query, filter, cached) }
@@ -2730,10 +2735,42 @@ class MainActivity : Activity() {
         load(id, { filmography(key, member.personId, PERSON_ROW_TITLES) }) { result ->
             if (result.movies.isEmpty() && result.shows.isEmpty()) body.addView(text("TMDB lists no films or shows for ${member.name}.", 14, muted), margin(-1, -2, top = 12))
             // The rows show the most popular; See all loads the actor's whole list.
-            mediaRow("Movies", result.movies) { navigate { personGrid(member, "movie") } }
-            mediaRow("Shows", result.shows) { navigate { personGrid(member, "series") } }
+            if (flix && DeviceLayout.phone) personColumns(member, result.movies, result.shows)
+            else {
+                mediaRow("Movies", result.movies) { navigate { personGrid(member, "movie") } }
+                mediaRow("Shows", result.shows) { navigate { personGrid(member, "series") } }
+            }
             focusAfterRender(id)
         }
+    }
+
+    /**
+     * Phone: the actor's movies in the left column and shows in the right, scrolling down with the page, each ending
+     * in See all (the full grid). Sideways rows read oddly on a narrow screen.
+     */
+    private fun personColumns(member: TmdbCatalog.CastMember, movies: List<MediaItemData>, shows: List<MediaItemData>) {
+        val width = DeviceLayout.canvasWidth - theme.layout.railWidthDp - theme.layout.contentInsetDp * 2
+        val gap = theme.layout.cardGapDp
+        val columnWidth = (width - 6 - gap) / 2
+        val cardHeight = columnWidth * 9 / 16
+        val columns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; tag = "person-columns" }
+        fun addColumn(title: String, type: String, items: List<MediaItemData>, last: Boolean) {
+            val host = column()
+            host.addView(text(title, theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 14, bottom = 6))
+            if (items.isEmpty()) host.addView(text("None listed", 13, muted), margin(-1, -2, top = 4))
+            items.take(PERSON_COLUMN_TITLES).forEach { item ->
+                host.addView(card(item).apply { tag = "person:$type:${item.imdbId}" }, margin(-1, cardHeight, bottom = gap))
+            }
+            if (items.isNotEmpty()) host.addView(text("See all  ›", 13, ink, true).apply {
+                gravity = Gravity.CENTER; tag = "person-see-all:$type"; contentDescription = "See all $title"
+                isFocusable = true; isClickable = true; background = rounded(withAlpha(Color.WHITE, 22), theme.layout.cornerRadiusDp)
+                setOnClickListener { navigate { personGrid(member, type) } }
+            }.pressable(theme.layout.cornerRadiusDp), margin(-1, 44, top = 2))
+            columns.addView(host, LinearLayout.LayoutParams(0, -2, 1f).apply { if (!last) rightMargin = dp(gap) })
+        }
+        addColumn("Movies", "movie", movies, last = false)
+        addColumn("Shows", "series", shows, last = true)
+        body.addView(columns, margin(-1, -2))
     }
 
     private val filmographyCache = LruCache<String, TmdbCatalog.Filmography>(12)
@@ -3086,7 +3123,7 @@ class MainActivity : Activity() {
         }
         if (Easynews.active(store)) ordered.count { Easynews.isHost(it.directUrl) }.let { count(PlaybackDebrid.EASYNEWS, "$it", "$it Easynews links") }
         // Add-ons with their own logo show their count when they returned links.
-        listOf(PlaybackDebrid.AIOSTREAMS to "AIOStreams", PlaybackDebrid.PENGUPLAY to "PenguPlay", PlaybackDebrid.CNCVERSE to "CNCVerse", PlaybackDebrid.PLAVIO to "PlavioHD").forEach { (addon, name) ->
+        listOf(PlaybackDebrid.AIOSTREAMS to "AIOStreams", PlaybackDebrid.PENGUPLAY to "PenguPlay", PlaybackDebrid.CNCVERSE to "CNCVerse", PlaybackDebrid.PLAVIO to "PlavioHD", AddonBadges.ALTMOUNT to "AltMount", AddonBadges.STREAMNZB to "StreamNZB").forEach { (addon, name) ->
             ordered.count { PlaybackDebrid.addon(it) == addon }
                 .takeIf { it > 0 }?.let { count(addon, "$it", "$it $name links") }
         }
@@ -3111,7 +3148,7 @@ class MainActivity : Activity() {
                     else offerTransfer(source, identity)
                 }
                 else resolve(source, identity)
-            })
+            }.apply { setOnLongClickListener { debridMenu(source, identity, checkOnPlay) } })
         }
         focusAfterRender(id)
         if (animate && flix) sourcesRiseIn(choices)
@@ -3223,6 +3260,17 @@ class MainActivity : Activity() {
         } else resolve(source, identity)
     }
 
+    /**
+     * Hold OK on a torrent link: play it on another debrid service than the preferred one. Lists the services it is
+     * cached on (the preferred one first), then the connected services that can only check when played.
+     */
+    private fun debridMenu(source: SourceItem, identity: PlaybackIdentity, checkOnPlay: List<String>): Boolean {
+        val options = PlaybackDebrid.choices(source, checkOnPlay).map { (service, label) -> label to { resolve(source, identity, service) } }
+        if (options.isEmpty()) return false
+        holdMenu("Play with…", options)
+        return true
+    }
+
     /** Offcloud and TorBox can download a link that isn't cached; the other services cannot. */
     private fun offerTransfer(source: SourceItem, identity: PlaybackIdentity) {
         val service = DebridServices.connected(store).firstOrNull { it in DebridServices.TRANSFERS }
@@ -3295,14 +3343,15 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun resolve(source: SourceItem, identity: PlaybackIdentity) {
+    /** [service] plays the link on that debrid service instead of the preferred one (chosen by holding OK on a link). */
+    private fun resolve(source: SourceItem, identity: PlaybackIdentity, service: String? = null) {
         if (resolvingGeneration == generation || launchingPlayer) { toast("Preparing the selected source…"); return }
         playingSourceText = "${source.title} · ${source.detail}"; playingMedia = playingSourceText to source.sizeBytes
         val request = generation; resolvingGeneration = request
         val progress = text("Preparing your video…", 14, accent); body.addView(progress, margin(-1, -2, top = 14))
         worker.execute {
             try {
-                val prepared = resolver.prepare(source, identity)
+                val prepared = resolver.prepare(source, identity, service)
                 runOnUiThread {
                     if (request == generation && !isFinishing && !isDestroyed) {
                         resolvingGeneration = null; body.removeView(progress)
@@ -3568,7 +3617,7 @@ class MainActivity : Activity() {
     /** Flix library: downloads as landscape cards in the same four-column grid as "See all", with matched artwork. */
     private fun libraryGrid(entries: List<LibraryEntry>) {
         val width = DeviceLayout.canvasWidth - theme.layout.railWidthDp - theme.layout.contentInsetDp * 2
-        val count = if (DeviceLayout.phone) 2 else 4
+        val count = if (DeviceLayout.phone) DeviceLayout.phoneColumns(width) else 4
         val cardWidth = (width - 6 - (count - 1) * theme.layout.cardGapDp) / count
         entries.chunked(count).forEach { chunk ->
             val row = LinearLayout(this).apply { tag = "media-grid-row"; clipChildren = false }
@@ -4809,15 +4858,29 @@ class MainActivity : Activity() {
         val dialog = AlertDialog.Builder(this).setTitle(if (provider == null) "Add source provider" else "Edit source provider")
             .setView(content).setPositiveButton("Save", null).setNegativeButton("Cancel", null).create()
         dialog.show(); dialog.submitOnEnter(name, address)
-        dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
-            try {
-                val config = SourceProviders(store)
-                val updated = if (provider == null) SourceProviders.create(name.text.toString(), address.text.toString())
-                    else provider.copy(name = SourceProviders.name(name.text.toString()), address = SourceProviders.endpoint(address.text.toString()))
-                val existing = config.load()
-                config.save(if (provider == null) existing + updated else existing.map { if (it.id == provider.id) updated else it })
-                dialog.dismiss(); sourceProvidersPage()
-            } catch (error: Exception) { status.text = uiErrorMessage(error) }
+        val save = dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE)
+        save.setOnClickListener {
+            val typedName = name.text.toString(); val typedAddress = address.text.toString()
+            try { SourceProviders.name(typedName); SourceProviders.endpoint(typedAddress) }
+            catch (error: Exception) { status.text = uiErrorMessage(error); return@setOnClickListener }
+            // A bare StremThru server address becomes its Torz torrent search; this needs a quick look at the server.
+            status.text = "Checking the address…"; save.isEnabled = false
+            worker.execute {
+                val resolved = SourceProviders.resolveServer(typedAddress) { Net.json(it) }
+                runOnUiThread {
+                    if (isFinishing || isDestroyed || !dialog.isShowing) return@runOnUiThread
+                    save.isEnabled = true
+                    try {
+                        val config = SourceProviders(store)
+                        val updated = if (provider == null) SourceProviders.create(typedName, resolved)
+                            else provider.copy(name = SourceProviders.name(typedName), address = SourceProviders.endpoint(resolved))
+                        val existing = config.load()
+                        config.save(if (provider == null) existing + updated else existing.map { if (it.id == provider.id) updated else it })
+                        if (resolved.contains("/stremio/torz/")) toast("StremThru found · set up automatically")
+                        dialog.dismiss(); sourceProvidersPage()
+                    } catch (error: Exception) { status.text = uiErrorMessage(error) }
+                }
+            }
         }
     }
 
@@ -5138,7 +5201,7 @@ class MainActivity : Activity() {
     private fun mediaGrid(items: List<MediaItemData>, showType: Boolean = false, host: LinearLayout = body) {
         if (items.isEmpty()) { host.addView(text("No titles found. Try a different search.", 14, muted)); return }
         val width = DeviceLayout.canvasWidth - theme.layout.railWidthDp - theme.layout.contentInsetDp * 2
-        val count = if (flix) (if (DeviceLayout.phone) 2 else 4) else (width / (cardWidth() + theme.layout.cardGapDp)).coerceAtLeast(1)
+        val count = if (flix) (if (DeviceLayout.phone) DeviceLayout.phoneColumns(width) else 4) else (width / (cardWidth() + theme.layout.cardGapDp)).coerceAtLeast(1)
         // Streaming grids stretch their columns to the full content width.
         val gridWidth = if (flix) (width - 6 - (count - 1) * theme.layout.cardGapDp) / count else cardWidth()
         val gridHeight = if (flix) gridWidth * 9 / 16 else theme.layout.cardHeightDp

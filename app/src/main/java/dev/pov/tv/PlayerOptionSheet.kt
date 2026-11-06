@@ -24,6 +24,8 @@ internal data class PlayerSheetChoice(
     val badges: List<SourceBadge> = emptyList(),
     /** Service logos (drawable ids) on the row's right, as in the source list: where a link is cached, or its add-on. */
     val logos: List<Int> = emptyList(),
+    /** Holding OK on the row (e.g. a link: play it on another debrid service). */
+    val hold: (() -> Unit)? = null,
     val action: () -> Unit,
 )
 
@@ -99,6 +101,7 @@ internal object PlayerOptionSheet {
                     setOnFocusChangeListener { _, focused -> style(focused) }
                     // Unavailable formats remain focusable/readable, but cannot request playback.
                     setOnClickListener { if (choice.selectable) { dialog.dismiss(); choice.action() } }
+                    choice.hold?.let { hold -> setOnLongClickListener { if (choice.selectable) { dialog.dismiss(); hold() }; true } }
                 }.also { rows.addView(it, LinearLayout.LayoutParams(-1, dp(49)).apply { bottomMargin = dp(6) }) }
             }
             val scroll = ScrollView(context).apply { isFillViewport = false; addView(rows) }
@@ -186,6 +189,7 @@ internal object PlayerOptionSheet {
             style(false)
             setOnFocusChangeListener { _, focused -> style(focused) }
             setOnClickListener { if (choice.selectable) { dialog.dismiss(); choice.action() } }
+            choice.hold?.let { hold -> setOnLongClickListener { if (choice.selectable) { dialog.dismiss(); hold() }; true } }
         }
     }
 }

@@ -43,8 +43,20 @@ class SourceNameTest {
         val debrid = usenet.copy(usenet = false, indexer = "", newsProvider = "", servedBy = "torbox")
         assertEquals(listOf("aiostreams", "torbox"), SourceBadges.cachedOn(debrid))
         assertEquals("aiostreams|torbox", PlaybackDebrid.tag(debrid))
+        // Through AltMount: AIOStreams, AltMount, the news provider, then the indexer.
+        val altmount = usenet.copy(servedBy = AddonBadges.ALTMOUNT)
+        assertEquals(listOf("aiostreams", "altmount", "easynews", "nzbgeek"), SourceBadges.cachedOn(altmount))
+        assertEquals("aiostreams|altmount,easynews,nzbgeek", PlaybackDebrid.tag(altmount))
+        assertEquals("AltMount", PlaybackDebrid.describe("altmount"))
+        // The AltMount add-on on its own: its logo, the news provider, then the indexer.
+        val standalone = SourceItem("Inception.2010.2160p.UHD.BluRay.REMUX-FraMeSToR", "Meeky AltMount", directUrl = "https://alt.example/play?release=x&indexer=Geek",
+            addon = AddonBadges.ALTMOUNT, usenet = true, indexer = "Geek", newsProvider = "easynews")
+        assertEquals(listOf("altmount", "easynews", "nzbgeek"), SourceBadges.cachedOn(standalone))
+        assertEquals("altmount|easynews,nzbgeek", PlaybackDebrid.tag(standalone))
+        assertEquals("Geek · Meeky AltMount", SourceBadges.origin(standalone))
+        assertEquals(AddonBadges.ALTMOUNT, AddonBadges.of("https://alt.example/stremio/abc", "My AltMount"))
         // Every logo a tag can carry has a name, so the player badge never fails on it (it crashed on "miatrix").
-        val ids = listOf("aiostreams") + AddonBadges.NEWS_PROVIDER_IDS + AddonBadges.INDEXER_LOGOS + listOf("torbox", "offcloud", "unknown-id")
+        val ids = listOf("aiostreams", "altmount") + AddonBadges.NEWS_PROVIDER_IDS + AddonBadges.INDEXER_LOGOS + listOf("torbox", "offcloud", "unknown-id")
         ids.forEach { PlaybackDebrid.describe(it) }
         assertEquals("Miatrix", PlaybackDebrid.describe("miatrix"))
         // A library link carries an In library badge.

@@ -12,7 +12,15 @@ object AddonBadges {
     const val CNCVERSE = "cncverse"
     const val PLAVIO = "plavio"
     const val AIOSTREAMS = "aiostreams"
-    val IDS = setOf(PENGUPLAY, CNCVERSE, PLAVIO, AIOSTREAMS)
+    /** AltMount: the self-hosted Usenet streamer, as its own Stremio add-on ("AltMount Usenet") or behind AIOStreams. */
+    const val ALTMOUNT = "altmount"
+    /** StreamNZB: the self-hosted Usenet streaming add-on ("StreamNZB · …", manifest id community.streamnzb). */
+    const val STREAMNZB = "streamnzb"
+    val IDS = setOf(PENGUPLAY, CNCVERSE, PLAVIO, AIOSTREAMS, ALTMOUNT, STREAMNZB)
+    /** Usenet add-ons on their own (not behind AIOStreams): their logo, the news provider, then the indexer. */
+    fun standaloneUsenet(addon: String?) = addon == ALTMOUNT || addon == STREAMNZB
+    /** Usenet add-ons whose links show their logo, the news provider and the indexer. */
+    fun usenet(addon: String?) = addon == AIOSTREAMS || standaloneUsenet(addon)
 
     /** Usenet logos for AIOStreams links: news providers and indexers. */
     const val NEWSHOSTING = "newshosting"
@@ -41,6 +49,8 @@ object AddonBadges {
             name.contains("cncverse", ignoreCase = true) -> CNCVERSE
             name.contains("plavio", ignoreCase = true) -> PLAVIO
             name.contains("aiostreams", ignoreCase = true) -> AIOSTREAMS
+            name.contains("altmount", ignoreCase = true) -> ALTMOUNT
+            name.contains("streamnzb", ignoreCase = true) -> STREAMNZB
             else -> null
         }
     }

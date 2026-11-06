@@ -90,7 +90,7 @@ internal object SourceBadges {
     fun origin(source: SourceItem): String {
         val addon = PlaybackDebrid.addon(source) ?: return source.provider
         // AIOStreams: the indexer the NZB came from, with the add-on's name.
-        if (addon == PlaybackDebrid.AIOSTREAMS) return listOf(source.indexer, source.provider).filter(String::isNotBlank).joinToString(" · ")
+        if (AddonBadges.usenet(addon)) return listOf(source.indexer, source.provider).filter(String::isNotBlank).joinToString(" · ")
         val found = SOURCE_LINE.find(source.detail)?.groupValues?.get(1) ?: return source.provider
         return found.split('•', '·').map { part ->
             part.trim().removeSuffix("Provider").replace('[', ' ').replace("]", "").replace(Regex("\\s+"), " ").trim()
@@ -115,9 +115,12 @@ internal object SourceBadges {
     fun cachedOn(source: SourceItem): List<String> =
         if (source.directUrl.isNotEmpty()) {
             val addon = PlaybackDebrid.addon(source)
-            // AIOStreams: its logo, then where it streams from (the viewer's news provider, or the debrid), then the indexer.
-            if (addon == PlaybackDebrid.AIOSTREAMS) listOfNotNull(addon,
-                if (source.usenet) source.newsProvider.ifBlank { null } else source.servedBy,
+            // AIOStreams: its logo, then where it streams from (AltMount and the viewer's news provider, or the debrid), then the indexer.
+            // The AltMount and StreamNZB add-ons: their logo, the news provider, then the indexer.
+            if (AddonBadges.standaloneUsenet(addon)) listOfNotNull(addon, source.newsProvider.ifBlank { null }, AddonBadges.indexer(source.indexer)).distinct()
+            else if (addon == PlaybackDebrid.AIOSTREAMS) listOfNotNull(addon,
+                source.servedBy?.takeIf { it == AddonBadges.ALTMOUNT },
+                if (source.usenet || source.servedBy == AddonBadges.ALTMOUNT) source.newsProvider.ifBlank { null } else source.servedBy,
                 AddonBadges.indexer(source.indexer)).distinct()
             else listOfNotNull(PlaybackDebrid.EASYNEWS.takeIf { Easynews.isHost(source.directUrl) } ?: addon)
         }

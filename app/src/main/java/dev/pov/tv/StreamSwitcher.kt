@@ -28,8 +28,9 @@ internal class StreamSwitcher(context: Context) {
         data class Failed(val message: String) : Result
     }
 
-    fun prepare(source: SourceItem, identity: PlaybackIdentity, ordered: List<SourceItem>): Result {
-        val prepared = if (!source.cached && source.directUrl.isEmpty()) {
+    /** [only] plays the link on that debrid service instead of the preferred one. */
+    fun prepare(source: SourceItem, identity: PlaybackIdentity, ordered: List<SourceItem>, only: String? = null): Result {
+        val prepared = if (only != null) resolver.prepare(source, identity, only) else if (!source.cached && source.directUrl.isEmpty()) {
             if (DebridServices.connected(store).none { it in LinkDebrids.CHECK_ON_PLAY })
                 return Result.Failed("This link isn't cached on your debrid services. Pick a cached link.")
             resolver.prepareFirstCached(ordered.dropWhile { it != source }.ifEmpty { listOf(source) }, identity)
