@@ -72,11 +72,13 @@ object SourceMetadata {
  * own direction. The language step only applies when a language rank is given (a preferred language is set).
  */
 data class SourceSortOrder(val qualityDescending: Boolean = true, val sizeAscending: Boolean = true,
-                           val priority: List<String> = DEFAULT_PRIORITY) {
+                           val priority: List<String> = DEFAULT_PRIORITY, val libraryFirst: Boolean = true) {
     fun sorted(sources: List<SourceItem>, languageRank: ((SourceItem) -> Int)? = null): List<SourceItem> = sources.sortedWith { left, right ->
         var result = 0
         for (key in priority) {
             result = when (key) {
+                // Links already in a library (AIOStreams, StreamNZB, AltMount) before the rest, when switched on.
+                LIBRARY -> if (!libraryFirst) 0 else right.inLibrary.compareTo(left.inLibrary)
                 LANGUAGE -> if (languageRank == null) 0 else languageRank(left).compareTo(languageRank(right))
                 QUALITY -> compareKnown(left.qualityHeight?.takeIf { it > 0 }, right.qualityHeight?.takeIf { it > 0 }, !qualityDescending)
                 SIZE -> compareKnown(left.sizeBytes?.takeIf { it > 0 }, right.sizeBytes?.takeIf { it > 0 }, sizeAscending)
@@ -88,11 +90,15 @@ data class SourceSortOrder(val qualityDescending: Boolean = true, val sizeAscend
     }
 
     companion object {
-        const val LANGUAGE = "language"; const val QUALITY = "quality"; const val SIZE = "size"
-        val DEFAULT_PRIORITY = listOf(LANGUAGE, QUALITY, SIZE)
-        /** A saved order, repaired: each key once, unknown keys dropped, missing ones added at the end. */
+        const val LIBRARY = "library"; const val LANGUAGE = "language"; const val QUALITY = "quality"; const val SIZE = "size"
+        val DEFAULT_PRIORITY = listOf(LIBRARY, LANGUAGE, QUALITY, SIZE)
+        /**
+         * A saved order, repaired: each key once, unknown keys dropped, missing ones added at the end. Library joined
+         * the order later; library links always came first before, so an order saved without it gets it on top.
+         */
         fun priority(saved: String?): List<String> {
             val keys = saved.orEmpty().split(',').map(String::trim).filter { it in DEFAULT_PRIORITY }.distinct()
+                .let { if (it.isNotEmpty() && LIBRARY !in it) listOf(LIBRARY) + it else it }
             return keys + DEFAULT_PRIORITY.filterNot { it in keys }
         }
     }

@@ -19,9 +19,13 @@ internal class SourceSortPreferences(private val context: Context) {
     private val prefs = context.getSharedPreferences("pov_sources", Context.MODE_PRIVATE)
     var order: SourceSortOrder
         get() = SourceSortOrder(prefs.getBoolean("quality_descending", true), prefs.getBoolean("size_ascending", true),
-            SourceSortOrder.priority(prefs.getString("priority", null)))
+            SourceSortOrder.priority(prefs.getString("priority", null)), prefs.getBoolean("library_first", true))
         set(value) { prefs.edit().putBoolean("quality_descending", value.qualityDescending).putBoolean("size_ascending", value.sizeAscending)
             .putString("priority", value.priority.joinToString(",")).apply() }
+    /** Links already in a library (AIOStreams, StreamNZB, AltMount) lead everything else, still in this sort order. */
+    var libraryFirst: Boolean
+        get() = prefs.getBoolean("library_first", true)
+        set(value) { prefs.edit().putBoolean("library_first", value).apply() }
     var languageFirst: Boolean
         get() = prefs.getBoolean("language_first", true)
         set(value) { prefs.edit().putBoolean("language_first", value).apply() }
@@ -36,6 +40,7 @@ internal class SourceSortPreferences(private val context: Context) {
     /** The sort in its chosen order, e.g. "Highest quality · English first · Smallest first". */
     val label: String get() = order.priority.mapNotNull { key ->
         when (key) {
+            SourceSortOrder.LIBRARY -> "Library first".takeIf { libraryFirst }
             SourceSortOrder.LANGUAGE -> languageLabel
             SourceSortOrder.QUALITY -> if (order.qualityDescending) "Highest quality" else "Lowest quality"
             else -> if (order.sizeAscending) "Smallest first" else "Largest first"
@@ -48,7 +53,7 @@ internal class SourceSortPreferences(private val context: Context) {
         private fun languageName(code: String) = SubtitlePreferences.LANGUAGES.firstOrNull { it.first == code }?.second ?: code
 
         /**
-         * Link sorting, like Debrid services: Language, Quality and Size as rows in their order. ▲ and ▼ move a row,
+         * Link sorting, like Debrid services: Library, Language, Quality and Size as rows in their order. ▲ and ▼ move a row,
          * the button beside it flips its direction, and the line below shows the result. Closing it re-sorts the links.
          */
         fun show(context: Context, changed: () -> Unit) {
@@ -58,7 +63,7 @@ internal class SourceSortPreferences(private val context: Context) {
             val audio = AudioPreferences(context).language; val subtitle = SubtitlePreferences(context).language.takeUnless { it == "off" }.orEmpty()
             val languageSummary = listOfNotNull(audio.takeIf { it.isNotEmpty() }?.let { "${languageName(it)} audio" },
                 subtitle.takeIf { it.isNotEmpty() }?.let { "${languageName(it)} subtitles" }).joinToString(", ").ifEmpty { "set an audio or subtitle language in Settings" }
-            fun name(key: String) = when (key) { SourceSortOrder.LANGUAGE -> "Language"; SourceSortOrder.QUALITY -> "Quality"; else -> "File size" }
+            fun name(key: String) = when (key) { SourceSortOrder.LIBRARY -> "Library"; SourceSortOrder.LANGUAGE -> "Language"; SourceSortOrder.QUALITY -> "Quality"; else -> "File size" }
             val list = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(6), dp(20), dp(4)) }
             var modified = false
 
@@ -86,18 +91,20 @@ internal class SourceSortPreferences(private val context: Context) {
                         text = "${index + 1}.  ${name(key)}"; setTextColor(Color.WHITE); setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
                         typeface = Typeface.create("sans-serif", Typeface.BOLD)
                     })
-                    if (key == SourceSortOrder.LANGUAGE) words.addView(TextView(context).apply {
-                        text = languageSummary; setTextColor(0xFF9AA3B2.toInt()); setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f); maxLines = 1
+                    if (key == SourceSortOrder.LANGUAGE || key == SourceSortOrder.LIBRARY) words.addView(TextView(context).apply {
+                        text = if (key == SourceSortOrder.LIBRARY) "Links already in your AIOStreams, StreamNZB or AltMount library" else languageSummary; setTextColor(0xFF9AA3B2.toInt()); setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f); maxLines = 1
                         ellipsize = android.text.TextUtils.TruncateAt.END
                     })
                     row.addView(words, LinearLayout.LayoutParams(0, -2, 1f))
                     val direction = when (key) {
+                        SourceSortOrder.LIBRARY -> if (preferences.libraryFirst) "First" else "Off"
                         SourceSortOrder.LANGUAGE -> if (preferences.languageFirst) "Preferred first" else "Off"
                         SourceSortOrder.QUALITY -> if (order.qualityDescending) "Highest first" else "Lowest first"
                         else -> if (order.sizeAscending) "Smallest first" else "Largest first"
                     }
                     row.addView(button(direction, "way:$key", true) {
                         when (key) {
+                            SourceSortOrder.LIBRARY -> preferences.libraryFirst = !preferences.libraryFirst
                             SourceSortOrder.LANGUAGE -> preferences.languageFirst = !preferences.languageFirst
                             SourceSortOrder.QUALITY -> preferences.order = preferences.order.copy(qualityDescending = !order.qualityDescending)
                             else -> preferences.order = preferences.order.copy(sizeAscending = !order.sizeAscending)
@@ -127,10 +134,10 @@ internal class SourceSortPreferences(private val context: Context) {
                 .setPositiveButton("Done", null).setNeutralButton("Reset to default", null).create()
             dialog.setOnDismissListener { if (modified) changed() }
             dialog.show()
-            // Back to the default: language, then quality (highest first), then size (smallest first).
+            // Back to the default: library, language, then quality (highest first), then size (smallest first).
             dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL)?.setOnClickListener {
-                preferences.order = SourceSortOrder(); preferences.languageFirst = true; modified = true
-                render("way:${SourceSortOrder.LANGUAGE}")
+                preferences.order = SourceSortOrder(); preferences.languageFirst = true; preferences.libraryFirst = true; modified = true
+                render("way:${SourceSortOrder.LIBRARY}")
             }
             dialog.window?.setLayout(minOf(dp(720), context.resources.displayMetrics.widthPixels - dp(32)), android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
             list.post { list.findViewWithTag<View>("way:${preferences.order.priority.first()}")?.requestFocus() }

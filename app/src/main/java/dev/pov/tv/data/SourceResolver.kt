@@ -115,13 +115,19 @@ class SourceResolver internal constructor(
                     AddonBadges.AIOSTREAMS -> data?.optString("indexer").orEmpty().take(40)
                     AddonBadges.ALTMOUNT -> altmountIndexer(direct, description)
                     // "🔍 Crawler" on its own line of the description.
-                    AddonBadges.STREAMNZB -> STREAMNZB_INDEXER_LINE.find(description)?.groupValues?.get(1).orEmpty().trim().take(40)
+                    // "🔍 StreamNZB Library - Crawler" for a kept release: the indexer is still Crawler.
+                    AddonBadges.STREAMNZB -> STREAMNZB_INDEXER_LINE.find(description)?.groupValues?.get(1).orEmpty().trim()
+                        .replace(STREAMNZB_LIBRARY_PREFIX, "").trim().take(40)
                     else -> ""
                 },
                 servedBy = data?.optJSONObject("service")?.optString("id")?.takeIf { it in DebridServices.IDS || it == AddonBadges.ALTMOUNT }
                     ?: AddonBadges.ALTMOUNT.takeIf { linkAddon == AddonBadges.AIOSTREAMS && data == null && ALTMOUNT_TITLE.containsMatchIn("${stream.optString("name")} $description") },
                 newsProvider = if (AddonBadges.usenet(linkAddon)) newsProvider else "",
-                inLibrary = data?.optBoolean("library") == true,
+                // AIOStreams says so in its stream data; StreamNZB names its kept releases "StreamNZB Library" in the
+                // indexer line; AltMount labels files it already holds "💾 Local Library".
+                inLibrary = data?.optBoolean("library") == true ||
+                    linkAddon == AddonBadges.STREAMNZB && STREAMNZB_LIBRARY.containsMatchIn(description) ||
+                    linkAddon == AddonBadges.ALTMOUNT && ALTMOUNT_LIBRARY.containsMatchIn("${stream.optString("name")} $description"),
                 detail = listOf(stream.optString("name"), description.lineSequence().drop(1).joinToString(" · "))
                     .filter { it.isNotBlank() }.joinToString(" · ").take(800))
         }
@@ -134,6 +140,9 @@ class SourceResolver internal constructor(
     private val ALTMOUNT_INDEXER_LINE = Regex("🌐\\s*([^\\n]+)")
     private val STREAMNZB_NAME = Regex("(?i)^\\s*streamnzb(?![a-z])")
     private val STREAMNZB_INDEXER_LINE = Regex("🔍\\s*([^\\n]+)")
+    private val STREAMNZB_LIBRARY = Regex("(?i)🔍\\s*streamnzb\\s+library")
+    private val STREAMNZB_LIBRARY_PREFIX = Regex("(?i)^streamnzb\\s+library\\s*[-–:·]?\\s*")
+    private val ALTMOUNT_LIBRARY = Regex("(?i)local\\s+library")
     /** The AltMount add-on names the indexer in its play address ("…/play?release=…&indexer=Geek"), and after 🌐 in the title. */
     private fun altmountIndexer(url: String, description: String): String {
         val query = try { URI(url).rawQuery } catch (_: Exception) { null }.orEmpty()

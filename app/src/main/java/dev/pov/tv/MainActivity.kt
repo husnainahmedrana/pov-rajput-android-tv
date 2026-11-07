@@ -422,7 +422,8 @@ class MainActivity : Activity() {
         if (flix && isHome && event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0 && ::body.isInitialized && body.hasFocus() && event.keyCode in setOf(
                 KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT)) {
             val now = android.os.SystemClock.uptimeMillis()
-            val gap = if (event.keyCode == KeyEvent.KEYCODE_DPAD_UP || event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN) 260 else 140
+            // Up and down step a whole shelf with a short scroll (HOME_ROW_SCROLL_MS), so they can repeat nearly as fast as sideways.
+            val gap = if (event.keyCode == KeyEvent.KEYCODE_DPAD_UP || event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN) 150 else 140
             if (now - lastRepeatAt < gap) return true
             lastRepeatAt = now
         }
@@ -1658,7 +1659,7 @@ class MainActivity : Activity() {
             actions?.animate()?.alpha(1f)?.setDuration(160)?.start()
             flixScrollTarget = -1
             fadeShelvesAbove(Int.MIN_VALUE)
-            scroller.smoothScrollTo(0, 0)
+            scrollHomeTo(0)
             featureHandler.removeCallbacksAndMessages(null)
             (hero.getTag(R.id.pov_feature_item) as? MediaItemData)?.let(::showFeature)
             return true
@@ -1679,8 +1680,25 @@ class MainActivity : Activity() {
         val target = (top - dp(FLIX_ROW_LINE)).coerceIn(0, (body.height - scroller.height).coerceAtLeast(0))
         flixScrollTarget = target
         fadeShelvesAbove(target + featureCopyBottom())
-        scroller.smoothScrollTo(0, target)
+        scrollHomeTo(target)
         return true
+    }
+
+    private var homeScroll: ValueAnimator? = null
+
+    /**
+     * Home's shelves move with one short eased scroll per step. The platform's smooth scroll (about 250 ms, and an
+     * instant jump when presses come faster) made held Up/Down feel slow and uneven.
+     */
+    private fun scrollHomeTo(target: Int) {
+        homeScroll?.cancel()
+        val from = scroller.scrollY
+        if (from == target) return
+        homeScroll = ValueAnimator.ofInt(from, target).apply {
+            duration = HOME_ROW_SCROLL_MS; interpolator = EASE_OUT
+            addUpdateListener { scroller.scrollTo(0, it.animatedValue as Int) }
+            start()
+        }
     }
 
     private var flixScrollTarget = -1
@@ -1699,7 +1717,11 @@ class MainActivity : Activity() {
             val child = body.getChildAt(index)
             if (child.tag == "featured-hero") continue
             val target = if (child.top < cutoff) 0f else 1f
-            if (child.alpha != target) child.animate().alpha(target).setDuration(160).withLayer().start()
+            // A shelf leaving upward hides at once: it already touches the feature artwork, so any fade showed it sliding over it.
+            // A returning one fades in gently, in clear space.
+            if (child.alpha == target) continue
+            child.animate().cancel()
+            if (target == 0f) child.alpha = 0f else child.animate().alpha(1f).setDuration(160).withLayer().start()
         }
     }
     private fun within(view: View, parent: View): Boolean {
@@ -2422,6 +2444,8 @@ class MainActivity : Activity() {
         /** "false" keeps the search-and-details add-on saved but switched off. */
         const val METADATA_ON = "metadata.source.on"
         const val IMDB_YELLOW = 0xFFF5C518.toInt()
+        /** One Home shelf step up or down. */
+        const val HOME_ROW_SCROLL_MS = 200L
         const val CAST_CARD_WIDTH = 132; const val CAST_PHOTO = 112
         /** Room kept for the cast row while it loads, so the details don't move when it arrives. */
         const val CAST_ROW_HEIGHT = 250
@@ -3659,8 +3683,14 @@ class MainActivity : Activity() {
      */
     private fun cachedFirst(sorted: List<SourceItem>): List<SourceItem> {
         val ready = sorted.partition(::playsAtOnce).let { (ready, other) -> ready + other }
-        // With Library links first on, links already in the viewer's library lead, still in sort order.
-        return if (store.get(LIBRARY_FIRST) == "false") ready else ready.partition { it.inLibrary }.let { (library, rest) -> library + rest }
+        // Library links now rank by their own row in Link sorting (SourceSortOrder.LIBRARY).
+        migrateLibraryFirst()
+        return ready
+    }
+
+    /** Library first moved from its own switch into Link sorting; a viewer who had switched it off keeps it off. */
+    private fun migrateLibraryFirst() {
+        if (store.get(LIBRARY_FIRST) == "false") { SourceSortPreferences(this).libraryFirst = false; store.put(LIBRARY_FIRST, "moved") }
     }
 
     /** Cached somewhere, or a direct link: plays at once. */
@@ -3901,19 +3931,23 @@ class MainActivity : Activity() {
     private fun selectedCloud() {
         val services = DebridServices.connected(store).filter { it in DebridServices.TRANSFERS }
         current = { selectedCloud() }; destination = "library"; refreshNavigation()
-        val id = page("Library", "Your debrid clouds and AIOStreams libraries.")
+        val id = page("Library", "Your debrid clouds and add-on libraries.")
         val providers = runCatching { SourceProviders(store).load() }.getOrDefault(emptyList())
+        val nzbLibraries = streamNzbLibraries(providers)
+        val altLibraries = altMountLibraries(providers)
         read(id, { AioLibrary().sources(providers) }) { libraries ->
-            if (services.size + libraries.size == 1) {
+            if (services.size + libraries.size + nzbLibraries.size + altLibraries.size == 1) {
                 // Only one place to browse: open it in place of this page.
                 when {
                     libraries.isNotEmpty() -> aioLibraryPage(libraries.first())
+                    nzbLibraries.isNotEmpty() -> openStreamNzbLibrary(nzbLibraries.first(), replace = true)
+                    altLibraries.isNotEmpty() -> openAltMountLibrary(altLibraries.first(), replace = true)
                     services.first() == "offcloud" -> offcloudCloud()
                     else -> cloud("torrents")
                 }
                 return@read
             }
-            if (services.isEmpty() && libraries.isEmpty()) body.addView(button("Connect a debrid service in Settings") { navigate { debridServicesPage() } }, margin(-1, 44))
+            if (services.isEmpty() && libraries.isEmpty() && nzbLibraries.isEmpty() && altLibraries.isEmpty()) body.addView(button("Connect a debrid service in Settings") { navigate { debridServicesPage() } }, margin(-1, 44))
             services.forEach { service ->
                 body.addView(button("${DebridServices.name(service)} cloud  ›") {
                     navigate { if (service == "offcloud") offcloudCloud() else cloud("torrents") }
@@ -3922,6 +3956,256 @@ class MainActivity : Activity() {
             libraries.forEach { library ->
                 body.addView(button("${library.provider} · AIOStreams library  ›") { navigate { aioLibraryPage(library) } }, margin(-1, 44, bottom = 8))
             }
+            nzbLibraries.forEach { library ->
+                val signedIn = streamNzbToken(library.origin) != null
+                body.addView(button("${library.provider.name} · StreamNZB library${if (signedIn) "" else " · sign in"}  ›") { openStreamNzbLibrary(library) },
+                    margin(-1, 44, bottom = 8))
+            }
+            altLibraries.forEach { library ->
+                val signedIn = altMountLogin(library.origin) != null
+                body.addView(button("${library.provider.name} · AltMount library${if (signedIn) "" else " · sign in"}  ›") { openAltMountLibrary(library) },
+                    margin(-1, 44, bottom = 8))
+            }
+            focusAfterRender(id)
+        }
+    }
+
+    /** A StreamNZB add-on among the source providers, and the server its dashboard (and library) runs on. */
+    private data class StreamNzbSource(val provider: SourceProvider, val endpoint: String, val origin: String)
+
+    private fun isStreamNzb(provider: SourceProvider) =
+        AddonBadges.of(provider.address, provider.name) == AddonBadges.STREAMNZB || provider.address.contains("streamnzb", ignoreCase = true)
+
+    private fun streamNzbLibraries(providers: List<SourceProvider>): List<StreamNzbSource> = providers.filter { it.enabled && isStreamNzb(it) }
+        .mapNotNull { provider ->
+            val endpoint = runCatching { SourceProviders.endpoint(provider.address) }.getOrNull() ?: return@mapNotNull null
+            StreamNzbLibrary.origin(endpoint)?.let { StreamNzbSource(provider, endpoint, it) }
+        }.distinctBy { it.origin }
+
+    /** The saved library token, only for the server it was issued by. */
+    private fun streamNzbToken(origin: String): String? =
+        store.get(StreamNzbLibrary.TOKEN).takeIf { it.isNotBlank() && store.get(StreamNzbLibrary.ORIGIN) == origin }
+
+    private fun openStreamNzbLibrary(library: StreamNzbSource, replace: Boolean = false) {
+        val open = { if (replace) streamNzbLibraryPage(library) else navigate { streamNzbLibraryPage(library) } }
+        if (streamNzbToken(library.origin) != null) open() else signInStreamNzb(library) { navigate { streamNzbLibraryPage(library) } }
+    }
+
+    /**
+     * StreamNZB keeps its library behind the dashboard login (it is shared by every device on that server). The
+     * viewer signs in once; only the token StreamNZB returns is saved, encrypted, never the password.
+     */
+    private fun signInStreamNzb(library: StreamNzbSource, then: () -> Unit = {}) {
+        val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
+        content.addView(text("Sign in with your StreamNZB dashboard login (${library.origin.removePrefix("https://")}). Only the sign-in token is kept on this device.", 13, muted), margin(-1, -2, bottom = 8))
+        val user = TvEditText(this).apply {
+            hint = "StreamNZB username"; setSingleLine()
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        }
+        val password = TvEditText(this).apply {
+            hint = "StreamNZB password"; setSingleLine()
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        }
+        val status = text("", 14, muted)
+        content.addView(user, margin(-1, -2)); content.addView(password, margin(-1, -2, top = 8)); content.addView(status, margin(-1, -2, top = 8))
+        val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val dialog = AlertDialog.Builder(this).setTitle("StreamNZB library").setView(content)
+            .setPositiveButton("Sign in", null).setNegativeButton("Cancel", null).create()
+        dialog.setOnDismissListener { cancelled.set(true); password.setText("") }
+        dialog.show(); dialog.submitOnEnter(password)
+        dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+            val name = user.text.toString().trim(); val secret = password.text.toString()
+            if (name.isBlank()) { user.error = "Enter your StreamNZB username"; return@setOnClickListener }
+            if (secret.isEmpty()) { password.error = "Enter your StreamNZB password"; return@setOnClickListener }
+            val request = generation
+            val connect = dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE)
+            connect.isEnabled = false; status.text = "Signing in to StreamNZB…"
+            worker.execute {
+                try {
+                    val token = StreamNzbLibrary().login(library.origin, name, secret)
+                    if (cancelled.get()) return@execute
+                    store.putAll(mapOf(StreamNzbLibrary.ORIGIN to library.origin, StreamNzbLibrary.TOKEN to token))
+                    runOnUiThread {
+                        if (request == generation && !isFinishing && !isDestroyed) {
+                            if (dialog.isShowing) dialog.dismiss()
+                            toast("Signed in to the StreamNZB library"); then()
+                        }
+                    }
+                } catch (error: Exception) {
+                    runOnUiThread { if (dialog.isShowing) { connect.isEnabled = true; status.text = uiErrorMessage(error) } }
+                }
+            }
+        }
+    }
+
+    /** The releases StreamNZB has kept, newest first; one plays through the StreamNZB add-on. */
+    private fun streamNzbLibraryPage(library: StreamNzbSource, shown: Int = StreamNzbLibrary.PAGE) {
+        current = { streamNzbLibraryPage(library, shown) }; destination = "library"; refreshNavigation()
+        val id = page("${library.provider.name} library", "Releases StreamNZB has kept, newest first. Select one to play it.")
+        val token = streamNzbToken(library.origin)
+        if (token == null) {
+            body.addView(button("Sign in to the StreamNZB library  ›") { signInStreamNzb(library) { streamNzbLibraryPage(library) } }, margin(-1, 44))
+            focusAfterRender(id); return
+        }
+        val api = StreamNzbLibrary()
+        // Null: StreamNZB no longer accepts the saved token (signed out there, or its password changed).
+        read(id, {
+            try {
+                val all = mutableListOf<StreamNzbLibrary.Item>()
+                var offset = 0; var total = Int.MAX_VALUE
+                while (all.size < shown && offset < total) {
+                    val next = api.page(library.origin, token, offset)
+                    total = next.total; offset += StreamNzbLibrary.PAGE
+                    all += next.items.filterNot { item -> all.any { it.id == item.id } }
+                    if (next.total == 0) break
+                }
+                all to (offset < total)
+            } catch (error: ApiException) { if (error.code == 401 || error.code == 403) null else throw error }
+        }) { result ->
+            if (result == null) {
+                store.putAll(mapOf(StreamNzbLibrary.TOKEN to ""))
+                body.addView(text("StreamNZB signed this device out. Sign in again to see the library.", 15, muted), margin(-1, -2, bottom = 10))
+                body.addView(button("Sign in again  ›") { signInStreamNzb(library) { streamNzbLibraryPage(library) } }, margin(-1, 44))
+                focusAfterRender(id); return@read
+            }
+            val (entries, more) = result
+            if (entries.isEmpty()) body.addView(text("Nothing in this library yet. Releases you stream through StreamNZB appear here.", 15, muted))
+            val open: (StreamNzbLibrary.Item) -> Unit = { item ->
+                val request = generation
+                toast("Opening ${item.release.take(60)}…")
+                worker.execute {
+                    val link = runCatching { api.link(library.endpoint, item) }.getOrNull()
+                    runOnUiThread {
+                        if (request != generation || isDestroyed) return@runOnUiThread
+                        when {
+                            link != null -> { playingAddon = AddonBadges.STREAMNZB; play(link.url, item.release, null, "", headers = link.headers) }
+                            // Not offered on its own right now: the title's links, where StreamNZB lists it among the others.
+                            item.contentId.startsWith("tt") -> {
+                                toast("Pick ${item.release.take(50)} from this title's links")
+                                navigate { showSources(PlaybackIdentity(item.contentId, if (item.type == "movie") "movie" else "series", item.release, item.season, item.episode)) }
+                            }
+                            else -> toast("StreamNZB has no playable link for this release right now.")
+                        }
+                    }
+                }
+            }
+            fun caption(item: StreamNzbLibrary.Item) = listOfNotNull(
+                if (item.type != "movie" && item.season > 0 && item.episode > 0) "S${item.season} E${item.episode}" else null,
+                SourceMetadata.sizeLabel(item.sizeBytes).takeIf { it.isNotBlank() }, "StreamNZB library").joinToString(" · ")
+            if (flix) libraryGrid(entries.map { item -> LibraryEntry("snzblib:${item.id}", item.release, caption(item)) { open(item) } })
+            else {
+                val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
+                entries.forEach { item -> choices.addChoice(cloudRow("snzblib:${item.id}", item.release, caption(item)) { open(item) }) }
+            }
+            if (more) body.addView(button("Show more") { streamNzbLibraryPage(library, shown + StreamNzbLibrary.PAGE) }.apply { gravity = Gravity.CENTER },
+                margin(200, 44, top = 12))
+            focusAfterRender(id)
+        }
+    }
+
+    /** An AltMount add-on among the source providers, and the server its WebDAV library runs on. */
+    private data class AltMountSource(val provider: SourceProvider, val origin: String)
+
+    private fun isAltMount(provider: SourceProvider) =
+        AddonBadges.of(provider.address, provider.name) == AddonBadges.ALTMOUNT || provider.address.contains("altmount", ignoreCase = true)
+
+    private fun altMountLibraries(providers: List<SourceProvider>): List<AltMountSource> = providers.filter { it.enabled && isAltMount(it) }
+        .mapNotNull { provider ->
+            val endpoint = runCatching { SourceProviders.endpoint(provider.address) }.getOrNull() ?: return@mapNotNull null
+            AltMountLibrary.origin(endpoint)?.let { AltMountSource(provider, it) }
+        }.distinctBy { it.origin }
+
+    /** The saved WebDAV login, only for the server it was entered for. */
+    private fun altMountLogin(origin: String): Pair<String, String>? {
+        if (store.get(AltMountLibrary.ORIGIN) != origin) return null
+        val user = store.get(AltMountLibrary.USER); val password = store.get(AltMountLibrary.PASSWORD)
+        return if (user.isBlank() || password.isEmpty()) null else user to password
+    }
+
+    private fun openAltMountLibrary(library: AltMountSource, replace: Boolean = false) {
+        if (altMountLogin(library.origin) != null) { if (replace) altMountLibraryPage(library) else navigate { altMountLibraryPage(library) } }
+        else signInAltMount(library) { navigate { altMountLibraryPage(library) } }
+    }
+
+    /** AltMount's library is its WebDAV folders: the viewer enters the WebDAV login once (it is needed to play files). */
+    private fun signInAltMount(library: AltMountSource, then: () -> Unit = {}) {
+        val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
+        content.addView(text("Enter AltMount's WebDAV login (${library.origin.removePrefix("https://")}${AltMountLibrary.ROOT}). It is kept encrypted on this device and used to play library files.", 13, muted), margin(-1, -2, bottom = 8))
+        val user = TvEditText(this).apply {
+            hint = "WebDAV username"; setSingleLine()
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        }
+        val password = TvEditText(this).apply {
+            hint = "WebDAV password"; setSingleLine()
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        }
+        val status = text("", 14, muted)
+        content.addView(user, margin(-1, -2)); content.addView(password, margin(-1, -2, top = 8)); content.addView(status, margin(-1, -2, top = 8))
+        val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val dialog = AlertDialog.Builder(this).setTitle("AltMount library").setView(content)
+            .setPositiveButton("Connect", null).setNegativeButton("Cancel", null).create()
+        dialog.setOnDismissListener { cancelled.set(true); password.setText("") }
+        dialog.show(); dialog.submitOnEnter(password)
+        dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+            val name = user.text.toString().trim(); val secret = password.text.toString()
+            if (name.isBlank()) { user.error = "Enter the WebDAV username"; return@setOnClickListener }
+            if (secret.isEmpty()) { password.error = "Enter the WebDAV password"; return@setOnClickListener }
+            val request = generation
+            val connect = dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE)
+            connect.isEnabled = false; status.text = "Checking AltMount's WebDAV…"
+            worker.execute {
+                try {
+                    AltMountLibrary().verify(library.origin, name, secret)
+                    if (cancelled.get()) return@execute
+                    store.putAll(mapOf(AltMountLibrary.ORIGIN to library.origin, AltMountLibrary.USER to name, AltMountLibrary.PASSWORD to secret))
+                    runOnUiThread {
+                        if (request == generation && !isFinishing && !isDestroyed) {
+                            if (dialog.isShowing) dialog.dismiss()
+                            toast("AltMount library connected"); then()
+                        }
+                    }
+                } catch (error: Exception) {
+                    runOnUiThread { if (dialog.isShowing) { connect.isEnabled = true; status.text = uiErrorMessage(error) } }
+                }
+            }
+        }
+    }
+
+    /** AltMount's imported files, newest first; one plays straight from WebDAV. */
+    private fun altMountLibraryPage(library: AltMountSource, shown: Int = AIO_LIBRARY_PAGE) {
+        current = { altMountLibraryPage(library, shown) }; destination = "library"; refreshNavigation()
+        val id = page("${library.provider.name} library", "Files AltMount has imported, newest first. Select one to play it.")
+        val login = altMountLogin(library.origin)
+        if (login == null) {
+            body.addView(button("Connect the AltMount library  ›") { signInAltMount(library) { altMountLibraryPage(library) } }, margin(-1, 44))
+            focusAfterRender(id); return
+        }
+        read(id, {
+            try { AltMountLibrary().files(library.origin, login.first, login.second) }
+            catch (error: ApiException) { if (error.code == 401 || error.code == 403) null else throw error }
+        }) { files ->
+            if (files == null) {
+                store.putAll(mapOf(AltMountLibrary.PASSWORD to ""))
+                body.addView(text("AltMount no longer accepts the saved WebDAV login. Connect again to see the library.", 15, muted), margin(-1, -2, bottom = 10))
+                body.addView(button("Connect again  ›") { signInAltMount(library) { altMountLibraryPage(library) } }, margin(-1, 44))
+                focusAfterRender(id); return@read
+            }
+            if (files.isEmpty()) body.addView(text("Nothing in this library yet. Files AltMount imports appear here.", 15, muted))
+            val headers = mapOf("Authorization" to AltMountLibrary.authorization(login.first, login.second))
+            val open: (AltMountLibrary.File) -> Unit = { file ->
+                playingAddon = AddonBadges.ALTMOUNT
+                play(AltMountLibrary.url(library.origin, file), file.name, null, "", headers = headers)
+            }
+            fun caption(file: AltMountLibrary.File) = listOfNotNull(file.folder.takeIf { it.isNotBlank() },
+                SourceMetadata.sizeLabel(file.sizeBytes).takeIf { it.isNotBlank() }, "AltMount library").joinToString(" · ")
+            val page = files.take(shown)
+            if (flix) libraryGrid(page.map { file -> LibraryEntry("altlib:${file.path}", file.name, caption(file)) { open(file) } })
+            else {
+                val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
+                page.forEach { file -> choices.addChoice(cloudRow("altlib:${file.path}", file.name, caption(file)) { open(file) }) }
+            }
+            if (files.size > shown) body.addView(button("Show more") { altMountLibraryPage(library, shown + AIO_LIBRARY_PAGE) }.apply { gravity = Gravity.CENTER },
+                margin(200, 44, top = 12))
             focusAfterRender(id)
         }
     }
@@ -4962,15 +5246,13 @@ class MainActivity : Activity() {
             }
             "links" -> {
             settingsRow(playback, "Link sorting", SourceSortPreferences(this).label,
-                "Choose what comes first (language, quality or size) and each one's direction. Auto-play follows this order.") {
+                "Library links on top (or off), then what comes next (language, quality or size) and each one's direction. Auto-play follows this order.") {
                 SourceSortPreferences.show(this) { refreshSettings() }
             }
             val badgeStyle = BadgeStyle.current(this)
             settingsRow(playback, "Badge style", badgeStyle.label, "How the quality, HDR, audio and source tags on links look. ${badgeStyle.description}") { chooseBadgeStyle() }
             settingsToggle(playback, "Compact link list", "One-line link names (the selected link shows its full name), the source at the end of the badges, and smaller badges, so about twice as many links fit. On by default.",
                 LinkListPreferences.compact(this)) { on -> LinkListPreferences.setCompact(this, on) }
-            settingsToggle(playback, "Library links first", "Links already in your library (AIOStreams marks them) come before everything else, still in your sort order, with an In library badge. On by default.",
-                store.get(LIBRARY_FIRST) != "false") { on -> store.put(LIBRARY_FIRST, on.toString()) }
             settingsToggle(playback, "Hide uncached links", "Show only links that play at once (cached or direct) in the link list and the player's Streams. Real-Debrid, AllDebrid and Debrid-Link can't tell in advance, so their links stay.",
                 store.get(HIDE_UNCACHED) == "true") { on -> store.put(HIDE_UNCACHED, on.toString()) }
             settingsToggle(playback, "Hide cam & low-quality releases", "Leave out theatre recordings and early copies: CAM, HDCAM, TS/telesync, TC/telecine, screeners, workprints and HDRip. On by default.",
@@ -5270,12 +5552,29 @@ class MainActivity : Activity() {
     }
 
     private fun sourceProviderActions(provider: SourceProvider) {
+        val library = if (isStreamNzb(provider)) streamNzbLibraries(listOf(provider.copy(enabled = true))).firstOrNull() else null
+        val signedIn = library != null && streamNzbToken(library.origin) != null
+        val altLibrary = if (isAltMount(provider)) altMountLibraries(listOf(provider.copy(enabled = true))).firstOrNull() else null
+        val altConnected = altLibrary != null && altMountLogin(altLibrary.origin) != null
+        val options = listOfNotNull("Edit name and address", "Usenet news provider",
+            library?.let { if (signedIn) "Sign out of the StreamNZB library" else "Sign in to the StreamNZB library" },
+            altLibrary?.let { if (altConnected) "Disconnect the AltMount library" else "Connect the AltMount library" }, "Remove")
         AlertDialog.Builder(this).setTitle(provider.name)
-            .setItems(arrayOf("Edit name and address", "Usenet news provider", "Remove")) { _, index ->
-                when (index) {
-                    0 -> editSourceProvider(provider)
-                    1 -> chooseNewsProvider(provider)
-                    2 -> confirm("Remove ${provider.name} from source providers?") {
+            .setItems(options.toTypedArray()) { _, index ->
+                when (options[index]) {
+                    "Edit name and address" -> editSourceProvider(provider)
+                    "Usenet news provider" -> chooseNewsProvider(provider)
+                    "Sign in to the StreamNZB library" -> library?.let { signInStreamNzb(it) { sourceProvidersPage() } }
+                    "Connect the AltMount library" -> altLibrary?.let { signInAltMount(it) { sourceProvidersPage() } }
+                    "Disconnect the AltMount library" -> {
+                        store.putAll(mapOf(AltMountLibrary.ORIGIN to "", AltMountLibrary.USER to "", AltMountLibrary.PASSWORD to ""))
+                        toast("AltMount library disconnected on this device"); sourceProvidersPage()
+                    }
+                    "Sign out of the StreamNZB library" -> {
+                        store.putAll(mapOf(StreamNzbLibrary.TOKEN to "", StreamNzbLibrary.ORIGIN to ""))
+                        toast("Signed out of the StreamNZB library on this device"); sourceProvidersPage()
+                    }
+                    "Remove" -> confirm("Remove ${provider.name} from source providers?") {
                         try {
                             val config = SourceProviders(store); config.save(config.load().filterNot { it.id == provider.id }); sourceProvidersPage()
                         } catch (error: Exception) { toast(uiErrorMessage(error)) }
