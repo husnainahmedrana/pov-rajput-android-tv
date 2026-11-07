@@ -275,12 +275,13 @@ object InAppPlaybackSession {
                     .build()
                 return object : ForwardingAudioSink(sink) {
                     private var encodedRoute = false
-                    // While a speed other than 1x is chosen, refuse passthrough so the renderer decodes to PCM.
-                    override fun supportsFormat(format: Format) =
-                        (!decodeForSpeed || format.sampleMimeType == MimeTypes.AUDIO_RAW) && super.supportsFormat(format)
+                    // While a speed other than 1x is chosen, or for a format whose passthrough this device advertised
+                    // but then refused to open, refuse passthrough so the renderer decodes to PCM.
+                    private fun decode(format: Format) = format.sampleMimeType != MimeTypes.AUDIO_RAW &&
+                        (decodeForSpeed || format.sampleMimeType in refusedPassthrough)
+                    override fun supportsFormat(format: Format) = !decode(format) && super.supportsFormat(format)
                     override fun getFormatSupport(format: Format) =
-                        if (decodeForSpeed && format.sampleMimeType != MimeTypes.AUDIO_RAW) AudioSink.SINK_FORMAT_UNSUPPORTED
-                        else super.getFormatSupport(format)
+                        if (decode(format)) AudioSink.SINK_FORMAT_UNSUPPORTED else super.getFormatSupport(format)
                     override fun configure(audioSinkConfig: AudioSink.AudioSinkConfig) {
                         super.configure(audioSinkConfig)
                         // Keep device-supported encoded passthrough playable; it bypasses PCM DSP.
@@ -391,6 +392,19 @@ object InAppPlaybackSession {
             }
             override fun onPlayerError(failure: PlaybackException) {
                 if (!isCurrent(exo)) return
+                // The TV (or its sound bar) advertised passthrough for this audio, such as DTS-HD, then refused to open
+                // it. Decode that format in the app instead, for the rest of this app session, and carry on at the
+                // same spot: the device's own decoder or the built-in FFmpeg decoder takes over.
+                val audioFormat = (failure as? androidx.media3.exoplayer.ExoPlaybackException)?.rendererFormat?.sampleMimeType
+                if (failure.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED && error == null &&
+                    audioFormat != null && audioFormat != MimeTypes.AUDIO_RAW && refusedPassthrough.add(audioFormat)) {
+                    android.util.Log.w("PovPlayer", "Passthrough of $audioFormat could not be opened; decoding it in the app instead")
+                    val parameters = exo.trackSelectionParameters
+                    exo.trackSelectionParameters = parameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true).build()
+                    exo.prepare()
+                    handler.post { if (isCurrent(exo)) { exo.trackSelectionParameters = parameters; exo.play() } }
+                    return
+                }
                 val justBack = android.os.SystemClock.elapsedRealtime() - foregroundAt < QUIET_RETRY_WINDOW_MS
                 if (isNetworkFailure(failure) && error == null && quietRetries < MAX_QUIET_RETRIES && (inBackground || justBack)) {
                     // The network was cut while the app was away (or is still coming back): retry the same link quietly.
@@ -547,6 +561,12 @@ object InAppPlaybackSession {
         notifyChanged()
         return result
     }
+
+    /**
+     * Encoded audio formats (MIME types) whose passthrough this device advertised but then failed to open. Kept for the
+     * app's lifetime, so the next video with that audio decodes at once instead of failing first. Read on the playback thread.
+     */
+    private val refusedPassthrough: MutableSet<String> = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap())
 
     /** Read on the playback thread by the audio sink: while true, encoded passthrough is refused so audio decodes to PCM. */
     @Volatile private var decodeForSpeed = false
