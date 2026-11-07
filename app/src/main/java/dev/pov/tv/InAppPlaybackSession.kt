@@ -107,6 +107,8 @@ object InAppPlaybackSession {
     private const val MAX_QUIET_RETRIES = 3
     private const val SOURCE_RETRY_DELAY_MS = 1_000L
     private const val MAX_SOURCE_RETRIES = 2
+    /** Device recoveries (decoders, audio output) per video before the error is shown. */
+    private const val MAX_DEVICE_RECOVERIES = 5
     private const val AIO_SOURCE_RETRIES = 6
     private const val AIO_RETRY_DELAY_MS = 2_000L
     private val surfaceAttachment = SurfaceReadyAttachment<ExoPlayer, PlayerView>(
@@ -213,6 +215,7 @@ object InAppPlaybackSession {
         stopInternal(notify = false)
         sourceUrl = address
         easynewsSingle = false
+        failedDecoders.clear(); deviceRecoveries = 0
         skipSegments = emptyList(); skipLookupFor = ""
         sourceKey = intent.getStringExtra("key").orEmpty()
         sourceHeaders = runCatching { JSONObject(intent.getStringExtra("headers") ?: "{}").let { json ->
@@ -244,6 +247,7 @@ object InAppPlaybackSession {
         VolumeBoostPreferences(application!!).defaultDb.takeIf { it > 0 }?.let { volumeBoost.setGain(it) }
         val renderers = object : DefaultRenderersFactory(application!!) {
             init {
+                setMediaCodecSelector(skipFailedDecoders)
                 setEnableDecoderFallback(true)
                 // Software audio decoders (FFmpeg) are tried only after the device's own
                 // decoders and passthrough, so links that already play are unaffected.
@@ -392,6 +396,7 @@ object InAppPlaybackSession {
             }
             override fun onPlayerError(failure: PlaybackException) {
                 if (!isCurrent(exo)) return
+                if (recoverOnDevice(exo, failure)) return
                 // The TV (or its sound bar) advertised passthrough for this audio, such as DTS-HD, then refused to open
                 // it. Decode that format in the app instead, for the rest of this app session, and carry on at the
                 // same spot: the device's own decoder or the built-in FFmpeg decoder takes over.
@@ -560,6 +565,76 @@ object InAppPlaybackSession {
         val result = volumeBoost.setGain(db)
         notifyChanged()
         return result
+    }
+
+    /**
+     * Decoders (by codec name) that failed during this video. They are left out when the player picks a decoder again,
+     * so the next one takes over: another hardware decoder, the device's software decoder, or, for audio with no
+     * decoder left, the built-in FFmpeg decoder. Cleared for every new video: a failure can be a one-off.
+     */
+    private val failedDecoders: MutableSet<String> = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap())
+    private val skipFailedDecoders = androidx.media3.exoplayer.mediacodec.MediaCodecSelector { mime, secure, tunneling ->
+        androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT.getDecoderInfos(mime, secure, tunneling)
+            .filterNot { it.name in failedDecoders }
+    }
+    /** Recoveries in this video from device failures (decoders, audio output); a cap keeps a broken file from looping. */
+    private var deviceRecoveries = 0
+
+    /** The codec named in a decoder failure, when the player says which one it was. */
+    private fun failedCodec(failure: Throwable?): String? {
+        var cause = failure
+        while (cause != null) {
+            when (cause) {
+                is androidx.media3.exoplayer.mediacodec.MediaCodecRenderer.DecoderInitializationException -> cause.codecInfo?.name?.let { return it }
+                is androidx.media3.exoplayer.mediacodec.MediaCodecDecoderException -> cause.codecInfo?.name?.let { return it }
+            }
+            cause = cause.cause
+        }
+        return null
+    }
+
+    /**
+     * Device failures that a second try usually gets past, handled at the same spot without an error:
+     * - a video or audio decoder that failed to start or failed mid-video: that decoder is skipped and the next one
+     *   (a software decoder, or FFmpeg for audio) takes over;
+     * - audio output that failed mid-video (a sound bar switched off, the HDMI audio route changed, plain PCM that
+     *   would not open): the audio is opened again.
+     * Encoded passthrough the device refuses to open is handled after this, by decoding that format in the app.
+     */
+    private fun recoverOnDevice(exo: ExoPlayer, failure: PlaybackException): Boolean {
+        if (error != null || deviceRecoveries >= MAX_DEVICE_RECOVERIES) return false
+        val playback = failure as? androidx.media3.exoplayer.ExoPlaybackException ?: return false
+        if (playback.type != androidx.media3.exoplayer.ExoPlaybackException.TYPE_RENDERER) return false
+        val type = runCatching { exo.getRendererType(playback.rendererIndex) }.getOrDefault(C.TRACK_TYPE_UNKNOWN)
+        val code = failure.errorCode
+        val decoderFailure = code in setOf(PlaybackException.ERROR_CODE_DECODER_INIT_FAILED, PlaybackException.ERROR_CODE_DECODING_FAILED,
+            PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED, PlaybackException.ERROR_CODE_DECODING_RESOURCES_RECLAIMED)
+        val reason = when {
+            decoderFailure && (type == C.TRACK_TYPE_VIDEO || type == C.TRACK_TYPE_AUDIO) -> {
+                val codec = failedCodec(failure)
+                // A reclaimed decoder (another app took it) is fine to use again; any other failure skips it.
+                if (codec != null && code != PlaybackException.ERROR_CODE_DECODING_RESOURCES_RECLAIMED) failedDecoders += codec
+                else if (codec == null && code != PlaybackException.ERROR_CODE_DECODING_RESOURCES_RECLAIMED) return false
+                "${if (type == C.TRACK_TYPE_VIDEO) "video" else "audio"} decoder ${codec ?: ""} ${failure.errorCodeName}".trim()
+            }
+            type == C.TRACK_TYPE_AUDIO && code == PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED -> "audio output write failed"
+            // PCM that would not open, or an encoded format already switched to in-app decoding: open the audio again.
+            type == C.TRACK_TYPE_AUDIO && code == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED &&
+                playback.rendererFormat?.sampleMimeType.let { it == null || it == MimeTypes.AUDIO_RAW || it in refusedPassthrough } ->
+                "audio output could not open"
+            else -> return false
+        }
+        deviceRecoveries++
+        android.util.Log.w("PovPlayer", "Recovering from $reason ($deviceRecoveries of $MAX_DEVICE_RECOVERIES)", failure)
+        // Turning the track type off and on makes the player choose its decoder and audio route again.
+        val trackType = if (type == C.TRACK_TYPE_VIDEO) C.TRACK_TYPE_VIDEO else C.TRACK_TYPE_AUDIO
+        val parameters = exo.trackSelectionParameters
+        exo.trackSelectionParameters = parameters.buildUpon().setTrackTypeDisabled(trackType, true).build()
+        exo.prepare()
+        handler.postDelayed({ if (isCurrent(exo)) { exo.trackSelectionParameters = parameters; exo.play() } },
+            if (code == PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED || code == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED) 800L else 0L)
+        notifyChanged()
+        return true
     }
 
     /**
