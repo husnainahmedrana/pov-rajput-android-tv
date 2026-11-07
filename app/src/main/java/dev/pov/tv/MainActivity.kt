@@ -94,6 +94,8 @@ class MainActivity : Activity() {
     // Feature artwork never waits behind a page full of shelf thumbnails.
     private val featureImages = Executors.newFixedThreadPool(2, backgroundThreads)
     private val metadataWorker = Executors.newSingleThreadExecutor()
+    /** IMDb scores have their own thread: a slow IMDb answer never holds up the cast or other details work. */
+    private val imdbWorker = Executors.newSingleThreadExecutor()
     private val cloudArtwork = mutableMapOf<String, MediaItemData?>()
     private val bitmapCache = object : LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 6).toInt().coerceIn(18 * 1024 * 1024, 64 * 1024 * 1024)) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
@@ -289,7 +291,7 @@ class MainActivity : Activity() {
         InAppPlaybackSession.removeListener(playbackChanged)
         StreamChoices.searcher = null
         rotationHandler.removeCallbacksAndMessages(null); featureHandler.removeCallbacksAndMessages(null)
-        worker.shutdownNow(); metadataWorker.shutdownNow(); images.shutdownNow(); featureImages.shutdownNow(); authWorker.shutdownNow(); bitmapCache.evictAll()
+        worker.shutdownNow(); metadataWorker.shutdownNow(); imdbWorker.shutdownNow(); images.shutdownNow(); featureImages.shutdownNow(); authWorker.shutdownNow(); bitmapCache.evictAll()
         super.onDestroy()
     }
     @Deprecated("Android TV Back handling") override fun onBackPressed() {
@@ -1420,13 +1422,17 @@ class MainActivity : Activity() {
         rotationHandler.postDelayed(step, FEATURE_INTERVAL_MS)
     }
 
-    /** Details badges: an IMDb-style rating, year, runtime and type chips, then genre pills. */
+    /** Details badges: the IMDb score (live from IMDb when it answers), year, runtime and type chips, then genre pills. */
     private fun metaChips(item: MediaItemData): View {
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         fun chip(label: String, fill: Int, ink: Int, outline: Int = Color.TRANSPARENT) = text(label, 11, ink, true).apply {
             gravity = Gravity.CENTER; setPadding(dp(9), dp(4), dp(9), dp(4)); background = rounded(fill, 4, outline)
         }
-        item.rating.takeIf { it.isNotBlank() && it != "0" }?.let { row.addView(chip("IMDb  $it", 0xFFF5C518.toInt(), Color.BLACK), margin(-2, -2, right = 8)) }
+        val imdb = imdbChip()
+        row.addView(imdb, margin(-2, -2, right = 8))
+        item.rating.takeIf { it.isNotBlank() && it != "0" }?.let { setImdbBase(imdb, it, "") }
+        // A show's live score arrives with its season's episode scores (seasonPicker).
+        if (item.type == "movie") loadTitleImdb(item)
         listOf(item.year, item.runtime, if (item.type == "series") "Series" else "Movie").filter(String::isNotBlank).forEach {
             row.addView(chip(it, Color.TRANSPARENT, ink, withAlpha(Color.WHITE, 90)), margin(-2, -2, right = 8))
         }
@@ -2415,12 +2421,17 @@ class MainActivity : Activity() {
         const val TVDB_KEY = "tvdb.key"; const val TVDB_SHOWS = "tvdb.shows"
         /** "false" keeps the search-and-details add-on saved but switched off. */
         const val METADATA_ON = "metadata.source.on"
-        const val CAST_CARD_WIDTH = 112; const val CAST_PHOTO = 92
+        const val IMDB_YELLOW = 0xFFF5C518.toInt()
+        const val CAST_CARD_WIDTH = 132; const val CAST_PHOTO = 112
         /** Room kept for the cast row while it loads, so the details don't move when it arrives. */
-        const val CAST_ROW_HEIGHT = 202
+        const val CAST_ROW_HEIGHT = 250
         /** AIOStreams library files loaded per step (its catalog page size). */
         const val AIO_LIBRARY_PAGE = 100
-        const val CAST_CARD_WIDTH_PHONE = 80; const val CAST_PHOTO_PHONE = 62; const val CAST_ROW_HEIGHT_PHONE = 158
+        const val CAST_CARD_WIDTH_PHONE = 108; const val CAST_PHOTO_PHONE = 96; const val CAST_ROW_HEIGHT_PHONE = 210
+        /** "round" brings back the 0.3.19 round portraits (sizes below); anything else is the large portraits. */
+        const val CAST_STYLE = "ui.cast_style"
+        const val ROUND_CAST_WIDTH = 112; const val ROUND_CAST_PHOTO = 92; const val ROUND_CAST_ROW = 202
+        const val ROUND_CAST_WIDTH_PHONE = 80; const val ROUND_CAST_PHOTO_PHONE = 62; const val ROUND_CAST_ROW_PHONE = 158
         const val LIBRARY_FIRST = "sources.library_first"
         /** An actor's rows show their 20 most popular titles of each kind; See all shows every one, newest first. */
         const val PERSON_ROW_TITLES = 20
@@ -2489,8 +2500,15 @@ class MainActivity : Activity() {
             body.removeAllViews(); hero(result, false, if (flix && result.type == "series") 3 else 0); mediaActions(result, episode)
             // Shows: on TV the cast sits under the episode row and season tabs; the phone's episodes are a long
             // vertical list, so there the cast comes first.
-            if (result.type == "series" && DeviceLayout.phone) { castRow(id, result); seasonPicker(result) }
-            else { if (result.type == "series") seasonPicker(result); castRow(id, result) }
+            // The cast loads first; the keywords and About request (it also carries the credits) waits for it, so the
+            // two never download the same credits side by side.
+            var startDiscovery: (() -> Unit)? = null
+            var castDone = false
+            val afterCast = { castDone = true; startDiscovery?.invoke(); Unit }
+            if (result.type == "series" && DeviceLayout.phone) { castRow(id, result, afterCast); seasonPicker(result) }
+            else { if (result.type == "series") seasonPicker(result); castRow(id, result, afterCast) }
+            startDiscovery = detailsDiscovery(id, result)
+            if (castDone) startDiscovery()
             if (result.type == "series") { if (flix) body.post { if (id == generation) riseIn() } }
             else if (flix && DeviceLayout.tv) alignToBottom(id, reveal = ::riseIn)
             else if (flix) body.post { if (id == generation) riseIn() }
@@ -2607,9 +2625,37 @@ class MainActivity : Activity() {
         }, margin(110, 44, right = 8))
         val tracker = weTrakrClient()
         if (tracker.connected()) {
-            actions.addView(button(if (flix) "＋  Watchlist" else "Add to watchlist") { load(generation, { tracker.setWatchlist(identity, true) }) { toast("Added to your ${tracker.name} watchlist") } }.apply { if (flix) gravity = Gravity.CENTER }, margin(155, 44, right = 8))
-            actions.addView(button(if (flix) "－  Watchlist" else "Remove from watchlist") { confirm("Remove ${result.title} from your ${tracker.name} watchlist?") { load(generation, { tracker.setWatchlist(identity, false) }) { removeFromListViews("watchlist:${identity.type}", identity); toast("Removed from your ${tracker.name} watchlist") } } }.apply { if (flix) gravity = Gravity.CENTER }, margin(if (flix) 155 else 190, 44, right = 8))
-            if (tracker.supportsLists) actions.addView(button(if (flix) "☰  Remove from playlist" else "Remove from playlist") {
+            actions.addView(button("Manage  ▾") { mediaManagement(result, episode) }.apply {
+                gravity = Gravity.CENTER; tag = "details-manage"
+            }, margin(150, 44, right = 8))
+        }
+        if (!publicPreview && store.get(TMDB_KEY).isNotBlank()) actions.addView(button("Similar titles  ›") {
+            navigate { similarTitlesPage(result) }
+        }.apply { gravity = Gravity.CENTER; tag = "details-similar" }, margin(170, 44, right = 8))
+        if (DeviceLayout.phone) fitActionsToPhone(actions)
+    }
+
+    /** One menu preserves the existing tracker actions and confirmations without crowding details. */
+    private fun mediaManagement(result: MediaItemData, episode: PlaybackIdentity?) {
+        val identity = PlaybackIdentity(result.imdbId, result.type, result.title)
+        val tracker = weTrakrClient()
+        if (!tracker.connected()) return
+        val options = mutableListOf<Pair<String, () -> Unit>>(
+            "Add to watchlist" to { load(generation, { tracker.setWatchlist(identity, true) }) { toast("Added to your ${tracker.name} watchlist") } },
+            "Remove from watchlist" to { confirm("Remove ${result.title} from your ${tracker.name} watchlist?") {
+                load(generation, { tracker.setWatchlist(identity, false) }) {
+                    removeFromListViews("watchlist:${identity.type}", identity); toast("Removed from your ${tracker.name} watchlist")
+                }
+            } }
+        )
+        if (result.type == "movie" || episode != null) options += "Mark watched" to {
+            confirm("Mark ${result.title}${episode?.let { " S${it.season} E${it.episode}" }.orEmpty()} as watched?") {
+                load(generation, { tracker.markWatched(episode ?: identity) }) {
+                    hideContinue(identityKey(episode ?: identity)); markedWatched(episode ?: identity); toast("${tracker.name} history updated")
+                }
+            }
+        }
+        if (tracker.supportsLists) options += "Remove from playlist" to {
                 read(generation, { tracker.lists() }) { lists ->
                     if (lists.isEmpty()) toast("No personal playlists on ${tracker.name}") else AlertDialog.Builder(this).setTitle("Choose your playlist")
                         .setItems(lists.map { it.second }.toTypedArray()) { _, index ->
@@ -2618,10 +2664,8 @@ class MainActivity : Activity() {
                             }
                         }.setNegativeButton("Cancel", null).show()
                 }
-            }, margin(190, 44, right = 8))
-            if (result.type == "movie" || episode != null) actions.addView(button(if (flix) "✓  Watched" else "Mark watched") { confirm("Mark ${result.title}${episode?.let { " S${it.season} E${it.episode}" }.orEmpty()} as watched?") { load(generation, { tracker.markWatched(episode ?: identity) }) { hideContinue(identityKey(episode ?: identity)); markedWatched(episode ?: identity); toast("${tracker.name} history updated") } } }, margin(150, 44))
         }
-        if (DeviceLayout.phone) fitActionsToPhone(actions)
+        holdMenu(result.title, options)
     }
 
     /**
@@ -2656,10 +2700,14 @@ class MainActivity : Activity() {
      * the page shows so it never slows it down. Its room is kept from the start, so it shows on the first screen under
      * the buttons and the details don't move when it arrives; with no cast the room closes.
      */
-    private fun castRow(id: Int, result: MediaItemData) {
+    private fun castRow(id: Int, result: MediaItemData, then: () -> Unit = {}) {
         val key = if (publicPreview) "" else store.get(TMDB_KEY)
-        if (key.isBlank() || !result.imdbId.startsWith("tt")) return
-        val slot = column().apply { minimumHeight = dp(if (DeviceLayout.phone) CAST_ROW_HEIGHT_PHONE else CAST_ROW_HEIGHT) }
+        if (key.isBlank() || !result.imdbId.startsWith("tt")) { then(); return }
+        val round = roundCast()
+        val slot = column().apply { minimumHeight = dp(when {
+            round -> if (DeviceLayout.phone) ROUND_CAST_ROW_PHONE else ROUND_CAST_ROW
+            else -> if (DeviceLayout.phone) CAST_ROW_HEIGHT_PHONE else CAST_ROW_HEIGHT
+        }) }
         body.addView(slot, margin(-1, -2))
         fun show(cast: List<TmdbCatalog.CastMember>) {
             if (id != generation || !slot.isAttachedToWindow) return
@@ -2667,22 +2715,33 @@ class MainActivity : Activity() {
             slot.addView(text("Cast", theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 10, bottom = 4))
             val row = horizontalRow(slot)
             // The phone shows smaller cards, four and a half at a time, so the row clearly scrolls for more.
-            cast.forEach { member -> row.addView(castCard(member), margin(if (DeviceLayout.phone) CAST_CARD_WIDTH_PHONE else CAST_CARD_WIDTH, -2, right = if (DeviceLayout.phone) 8 else 12)) }
+            val width = if (round) (if (DeviceLayout.phone) ROUND_CAST_WIDTH_PHONE else ROUND_CAST_WIDTH)
+                else if (DeviceLayout.phone) CAST_CARD_WIDTH_PHONE else CAST_CARD_WIDTH
+            cast.forEach { member -> row.addView(castCard(member, round), margin(width, -2, right = if (DeviceLayout.phone) 8 else 12)) }
         }
         val cacheKey = detailsKey(result)
-        castCache.get(cacheKey)?.let { show(it); return }
+        castCache.get(cacheKey)?.let { show(it); then(); return }
         val region = tmdbRegion()
         worker.execute {
             val cast = runCatching { TmdbCatalog(this, key, region).cast(result.imdbId, result.type) }.getOrNull()
-            runOnUiThread { if (isFinishing || isDestroyed) return@runOnUiThread; if (cast != null) castCache.put(cacheKey, cast); show(cast.orEmpty()) }
+            runOnUiThread { if (isFinishing || isDestroyed) return@runOnUiThread; if (cast != null) castCache.put(cacheKey, cast); show(cast.orEmpty()); then() }
         }
     }
 
     private fun oval(color: Int) = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
 
-    /** A round portrait with the actor's name and part; focused, a white ring. Opens the actor's page. */
-    private fun castCard(member: TmdbCatalog.CastMember): View {
-        val size = dp(if (DeviceLayout.phone) CAST_PHOTO_PHONE else CAST_PHOTO)
+    private fun roundCast() = store.get(CAST_STYLE) == "round"
+
+    /**
+     * Large portrait cards keep faces recognizable on phones and TVs; [round] is the 0.3.19 round portrait with a
+     * one-line name (Settings → Home & appearance → Cast cards). Either opens the actor's page.
+     */
+    private fun castCard(member: TmdbCatalog.CastMember, round: Boolean = roundCast()): View {
+        val size = dp(when {
+            round -> if (DeviceLayout.phone) ROUND_CAST_PHOTO_PHONE else ROUND_CAST_PHOTO
+            else -> if (DeviceLayout.phone) CAST_PHOTO_PHONE else CAST_PHOTO
+        })
+        val portraitHeight = if (round) size else dp(if (DeviceLayout.phone) 128 else 140)
         val card = LinearLayout(this).apply {
             // Room above the portrait: the focused one grows a little with its white ring, and the row clips at its top.
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(0, dp(10), 0, dp(4))
@@ -2693,25 +2752,345 @@ class MainActivity : Activity() {
         }
         val ring = FrameLayout(this).apply { setPadding(dp(3), dp(3), dp(3), dp(3)) }
         val photo = FixedSizeImageView(this).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP; background = oval(panel)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            background = if (round) oval(panel) else rounded(panel, if (DeviceLayout.phone) 8 else 10)
             outlineProvider = android.view.ViewOutlineProvider.BACKGROUND; clipToOutline = true
         }
-        ring.addView(photo, FrameLayout.LayoutParams(size, size))
+        ring.addView(photo, FrameLayout.LayoutParams(size, portraitHeight))
         if (member.photo.isNotBlank()) image(photo, member.photo)
         else ring.addView(text(member.name.split(' ').filter(String::isNotBlank).take(2).joinToString("") { it.take(1).uppercase() }, 26, muted, true)
-            .apply { gravity = Gravity.CENTER }, FrameLayout.LayoutParams(size, size).apply { gravity = Gravity.CENTER })
+            .apply { gravity = Gravity.CENTER }, FrameLayout.LayoutParams(size, portraitHeight).apply { gravity = Gravity.CENTER })
         card.addView(ring, LinearLayout.LayoutParams(-2, -2))
-        val name = text(member.name, 12, ink, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+        val name = text(member.name, if (round || DeviceLayout.phone) 12 else 14, ink, true).apply {
+            gravity = Gravity.CENTER; ellipsize = TextUtils.TruncateAt.END
+            if (round) maxLines = 1 else { maxLines = 2; minHeight = dp(if (DeviceLayout.phone) 30 else 34) }
+        }
         card.addView(name, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
-        if (member.character.isNotBlank()) card.addView(text(member.character, 11, muted).apply {
+        if (member.character.isNotBlank()) card.addView(text(member.character, if (round || DeviceLayout.phone) 11 else 12, muted).apply {
             gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END
         }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(3) })
         card.setOnFocusChangeListener { _, focused ->
-            ring.background = if (focused) oval(Color.WHITE) else null
-            ring.animate().scaleX(if (focused) 1.06f else 1f).scaleY(if (focused) 1.06f else 1f).setDuration(120).start()
+            ring.background = if (!focused) null else if (round) oval(Color.WHITE) else rounded(Color.WHITE, if (DeviceLayout.phone) 11 else 13)
+            val grow = if (round) 1.06f else 1.04f
+            ring.animate().scaleX(if (focused) grow else 1f).scaleY(if (focused) grow else 1f).setDuration(120).start()
         }
         card.setOnClickListener { navigate { personPage(member) } }
         return card
+    }
+
+    private data class TimedDetails<T>(val value: T, val at: Long = android.os.SystemClock.elapsedRealtime())
+    private val discoveryCache = LruCache<String, TimedDetails<TmdbCatalog.DetailExtras>>(40)
+
+    /** Optional TMDB discovery alongside the title's existing genres and cast. */
+    /** Lays out the genres now; returns the keywords and About fetch for the caller to start once the cast is in. */
+    private fun detailsDiscovery(id: Int, item: MediaItemData): () -> Unit {
+        val key = if (publicPreview) "" else store.get(TMDB_KEY)
+        val host = column().apply { tag = "details-discovery" }
+        body.addView(host, margin(-1, -2, bottom = 16))
+        val available = if (key.isNotBlank()) TmdbCatalog.discoverGenres(item.type).keys else CatalogApi.discoverGenres(item.type)
+        val genres = item.genres.distinct().mapNotNull { genre ->
+            val aliases = when (genre.lowercase()) {
+                "sci-fi", "science fiction" -> listOf("Science Fiction", "Sci-Fi & Fantasy", "Sci-Fi")
+                "fantasy" -> listOf("Fantasy", "Sci-Fi & Fantasy")
+                "action", "adventure" -> listOf(genre, "Action & Adventure")
+                else -> listOf(genre)
+            }
+            val filter = aliases.firstNotNullOfOrNull { alias -> available.firstOrNull { it.equals(alias, true) } } ?: return@mapNotNull null
+            genre to { navigate { catalogPage(item.type, genre = filter, sort = if (key.isNotBlank()) TmdbCatalog.SORT_POPULAR else CatalogApi.SORT_POPULAR) } }
+        }
+        if (genres.isNotEmpty()) {
+            host.addView(text("Genres", theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 14, bottom = 8))
+            topicChips(host, genres, "genre")
+        }
+        val topics = column()
+        host.addView(topics)
+        fun renderExtra(extra: TmdbCatalog.DetailExtras) {
+            topics.removeAllViews()
+            if (extra.keywords.isNotEmpty()) {
+                topics.addView(text("Keywords", theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 14, bottom = 8))
+                topicChips(topics, extra.keywords.map { topic -> topic.name to { navigate { keywordPage(item.type, topic) } } }, "keyword")
+            }
+            if (extra.facts.isNotEmpty()) aboutSection(topics, extra.facts)
+        }
+        if (key.isBlank() || !item.imdbId.matches(Regex("tt\\d{5,12}"))) return {}
+        var started = false
+        return start@{
+            if (started) return@start
+            started = true
+            val region = tmdbRegion(); val fullKey = "${key.hashCode()}:$region:${detailsKey(item)}"; val cacheKey = "keywords:$fullKey"
+            // A full result cached by the Similar titles page already holds the keywords.
+            val cached = (discoveryCache.get(fullKey) ?: discoveryCache.get(cacheKey))
+                ?.takeIf { android.os.SystemClock.elapsedRealtime() - it.at < 6 * 60 * 60_000L }
+            if (cached != null) renderExtra(cached.value) else worker.execute {
+                val extra = runCatching { TmdbCatalog(this, key, region).detailExtras(item.imdbId, item.type, withSimilar = false) }.getOrNull()
+                runOnUiThread {
+                    if (!isDestroyed && id == generation && host.isAttachedToWindow && extra != null) {
+                        discoveryCache.put(cacheKey, TimedDetails(extra)); renderExtra(extra)
+                    }
+                }
+            }
+        }
+    }
+
+    private val imdbTitleScores = LruCache<String, TimedDetails<ImdbRatings.Score>>(80)
+    private val imdbSeasonScores = LruCache<String, TimedDetails<ImdbRatings.SeasonScores>>(60)
+    private fun <T> TimedDetails<T>?.fresh(): T? = this?.takeIf { android.os.SystemClock.elapsedRealtime() - it.at < 6 * 60 * 60_000L }?.value
+    private val imdbIdPattern = Regex("tt\\d{5,12}")
+
+    /** IMDb's yellow mark, then the score and a muted vote count; hidden until there is a score. */
+    private fun imdbChip() = LinearLayout(this).apply {
+        tag = "imdb-chip"; gravity = Gravity.CENTER_VERTICAL; visibility = View.GONE
+        background = rounded(withAlpha(Color.BLACK, 110), 4, withAlpha(IMDB_YELLOW, 150))
+        setPadding(dp(2), dp(2), dp(8), dp(2))
+        addView(text("IMDb", 11, Color.BLACK, true).apply {
+            setPadding(dp(5), dp(1), dp(5), dp(1)); background = rounded(IMDB_YELLOW, 3)
+        }, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(7) })
+        addView(text("", 13, Color.WHITE, true).apply { tag = "imdb-score" })
+        addView(text("", 11, muted).apply { tag = "imdb-votes" }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(6) })
+    }
+
+    private fun paintImdb(chip: View, score: String, votes: String) {
+        chip.findViewWithTag<TextView>("imdb-score")?.text = score
+        chip.findViewWithTag<TextView>("imdb-votes")?.apply { text = votes; visibility = if (votes.isBlank()) View.GONE else View.VISIBLE }
+        chip.contentDescription = "IMDb $score" + if (votes.isBlank()) "" else ", $votes votes"
+        chip.visibility = if (score.isBlank()) View.GONE else View.VISIBLE
+    }
+
+    /** The title's own score: shown now, and again whenever focus is not on an episode that has one. */
+    private fun setImdbBase(chip: View, score: String, votes: String) {
+        chip.setTag(R.id.pov_imdb_base, score to votes)
+        val target = episodeTarget
+        val onEpisode = target != null && body.findViewWithTag<View>("episode:${target.imdbId}:${target.season}:${target.episode}")?.hasFocus() == true
+        if (!onEpisode || target?.let(::cachedEpisodeScore) == null) paintImdb(chip, score, votes)
+    }
+
+    /** On a show page the chip near the title follows the focused episode, as the rest of the header does. */
+    private fun paintFocusedImdb(identity: PlaybackIdentity) {
+        val chip = body.findViewWithTag<View>("imdb-chip") ?: return
+        val episode = cachedEpisodeScore(identity)
+        if (episode != null) paintImdb(chip, episode.label, episode.votesLabel)
+        else (chip.getTag(R.id.pov_imdb_base) as? Pair<*, *>)?.let { (score, votes) -> paintImdb(chip, score as String, votes as String) }
+    }
+
+    private fun cachedEpisodeScore(identity: PlaybackIdentity): ImdbRatings.Score? =
+        imdbSeasonScores.get("${identity.imdbId}:${identity.season}").fresh()?.episodes?.get(identity.episode)
+
+    /** A small yellow star and score beside an episode's number; filled in when the season's scores arrive. */
+    private fun episodeScoreView(identity: PlaybackIdentity): TextView = text("", 11, IMDB_YELLOW, true).apply {
+        tag = "imdb-ep:${identity.imdbId}:${identity.season}:${identity.episode}"
+        val score = cachedEpisodeScore(identity)
+        if (score != null) { text = "★ ${score.label}"; contentDescription = "IMDb ${score.label}" } else visibility = View.GONE
+    }
+
+    private fun loadTitleImdb(item: MediaItemData) {
+        if (publicPreview || !item.imdbId.matches(imdbIdPattern)) return
+        fun show(score: ImdbRatings.Score) { body.findViewWithTag<View>("imdb-chip")?.let { setImdbBase(it, score.label, score.votesLabel) } }
+        imdbTitleScores.get(item.imdbId).fresh()?.let { show(it); return }
+        val page = generation
+        imdbWorker.execute {
+            val score = ImdbRatings().title(item.imdbId)
+            runOnUiThread {
+                if (isDestroyed || score == null) return@runOnUiThread
+                imdbTitleScores.put(item.imdbId, TimedDetails(score))
+                if (page == generation) show(score)
+            }
+        }
+    }
+
+    /** One request brings the show's live score and every episode score of [season]. Specials have no IMDb season. */
+    private fun loadSeasonImdb(show: MediaItemData, season: Int) {
+        if (publicPreview || !show.imdbId.matches(imdbIdPattern)) return
+        if (season <= 0) { loadTitleImdb(show); return }
+        val key = "${show.imdbId}:$season"
+        imdbSeasonScores.get(key).fresh()?.let { applySeasonImdb(show, season, it); return }
+        val page = generation
+        imdbWorker.execute {
+            val scores = ImdbRatings().season(show.imdbId, season)
+            runOnUiThread {
+                if (isDestroyed || scores == null) return@runOnUiThread
+                imdbSeasonScores.put(key, TimedDetails(scores))
+                scores.title?.let { imdbTitleScores.put(show.imdbId, TimedDetails(it)) }
+                if (page == generation) applySeasonImdb(show, season, scores)
+            }
+        }
+    }
+
+    private fun applySeasonImdb(show: MediaItemData, season: Int, scores: ImdbRatings.SeasonScores) {
+        val prefix = "${show.imdbId}:$season:"
+        fun visit(view: View) {
+            val tag = view.tag as? String
+            if (view is TextView && tag?.startsWith("imdb-ep:$prefix") == true) {
+                scores.episodes[tag.substringAfterLast(':').toIntOrNull()]?.let {
+                    view.text = "★ ${it.label}"; view.contentDescription = "IMDb ${it.label}"; view.visibility = View.VISIBLE
+                }
+            }
+            (view.getTag(R.id.pov_imdb_text) as? Pair<*, *>)?.let { (key, base) ->
+                if (view is TextView && key is String && key.startsWith(prefix))
+                    scores.episodes[key.substringAfterLast(':').toIntOrNull()]?.let { view.text = "$base  ·  ★ ${it.label}" }
+            }
+            if (view is TextView && tag?.startsWith("imdb-date:$prefix") == true) {
+                scores.airDates[tag.substringAfterLast(':').toIntOrNull()]?.let { date ->
+                    view.text = listOf(view.getTag(R.id.pov_episode_number) as? String, EpisodePresentation.shortAirDate(date))
+                        .filterNot { it.isNullOrBlank() }.joinToString("  ·  ")
+                }
+            }
+            if (view is ViewGroup) (0 until view.childCount).forEach { visit(view.getChildAt(it)) }
+        }
+        visit(body)
+        val target = episodeTarget; val episode = focusedEpisode
+        if (target != null && episode != null && target.imdbId == show.imdbId && target.season == season) paintEpisodeDate(target, episode)
+        val chip = body.findViewWithTag<View>("imdb-chip") ?: return
+        scores.title?.let { setImdbBase(chip, it.label, it.votesLabel) }
+        episodeTarget?.takeIf { it.imdbId == show.imdbId && it.season == season }
+            ?.takeIf { body.findViewWithTag<View>("episode:${it.imdbId}:${it.season}:${it.episode}")?.hasFocus() == true }
+            ?.let(::paintFocusedImdb)
+    }
+
+
+    /**
+     * The page's closing facts (director or creators, dates, runtime, studio, money) in a label-over-value grid,
+     * three across on TV and two on the phone. On TV the block takes focus as one quiet target, so Down from the
+     * keywords scrolls it into view.
+     */
+    private fun aboutSection(host: LinearLayout, facts: List<Pair<String, String>>) {
+        host.addView(text("About", theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 18, bottom = 6))
+        val panel = column().apply {
+            tag = "details-about"; setPadding(dp(12), dp(10), dp(12), dp(4))
+            if (DeviceLayout.tv) {
+                isFocusable = true; isFocusableInTouchMode = true
+                contentDescription = facts.joinToString(". ") { "${it.first}: ${it.second}" }
+                setOnFocusChangeListener { view, focused ->
+                    view.background = if (focused) rounded(withAlpha(Color.WHITE, 14), 10, withAlpha(Color.WHITE, 90)) else null
+                }
+            }
+        }
+        val across = if (DeviceLayout.phone) 2 else 3
+        facts.chunked(across).forEach { line ->
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            line.forEach { (label, value) ->
+                val cell = column()
+                cell.addView(text(label, 12, muted))
+                cell.addView(text(value, 14, ink).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 2))
+                row.addView(cell, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = dp(16) })
+            }
+            // Keep the last row's cells the same width as the rows above.
+            repeat(across - line.size) { row.addView(View(this), LinearLayout.LayoutParams(0, 0, 1f)) }
+            panel.addView(row, margin(-1, -2, bottom = 12))
+        }
+        host.addView(panel, margin(-1, -2, bottom = 8))
+    }
+
+    private fun similarTitlesPage(item: MediaItemData, loaded: List<MediaItemData>? = null, nextPage: Int? = 1, tmdbId: Long = 0) {
+        current = { similarTitlesPage(item, loaded, nextPage, tmdbId) }
+        val id = page("Similar titles", "Related to ${item.title}")
+        val key = store.get(TMDB_KEY); val region = tmdbRegion()
+        if (key.isBlank()) { body.addView(text("Connect TMDB in Settings to find similar titles.", 14, muted)); return }
+        val cacheKey = "${key.hashCode()}:$region:${detailsKey(item)}"
+        val grid = column(); val controls = column()
+        body.addView(grid); body.addView(controls)
+        val items = loaded.orEmpty().toMutableList()
+        var cursor = nextPage; var knownId = tmdbId
+        fun remember() { val snapshot = items.toList(); val page = cursor; val ref = knownId
+            current = { similarTitlesPage(item, snapshot, page, ref) }
+        }
+        fun moreButton() {
+            controls.removeAllViews()
+            if (cursor == null) {
+                controls.addView(text("All available similar titles loaded.", 13, muted), margin(-1, -2, top = 12)); return
+            }
+            val more = button("More titles  ›") {}.apply { tag = "similar-more" }
+            controls.addView(more, margin(if (DeviceLayout.phone) -1 else 180, 44, top = 16))
+            more.setOnClickListener {
+                val start = cursor ?: return@setOnClickListener
+                if (!more.isEnabled) return@setOnClickListener
+                more.isEnabled = false; more.text = "Loading…"
+                val excluded = items.map { it.imdbId }.toSet() + item.imdbId
+                val scroll = scroller.scrollY
+                worker.execute {
+                    val result = runCatching {
+                        val api = TmdbCatalog(this, key, region)
+                        var page: Int? = start
+                        var batch = TmdbCatalog.RelatedPage(emptyList(), page)
+                        // Skip a few duplicate-only or unmappable pages without requiring repeated presses.
+                        var attempts = 0
+                        while (page != null && batch.items.isEmpty() && attempts++ < 3) {
+                            batch = api.relatedTitles(item.type, knownId, page, excluded); page = batch.nextPage
+                        }
+                        batch
+                    }
+                    runOnUiThread {
+                        if (isDestroyed) return@runOnUiThread
+                        more.isEnabled = true; more.text = "More titles  ›"
+                        if (id != generation || !grid.isAttachedToWindow) return@runOnUiThread
+                        result.fold(onSuccess = { batch ->
+                            val additions = batch.items.filterNot { it.imdbId in excluded }.distinctBy { it.imdbId }
+                            val firstRow = grid.childCount
+                            if (additions.isNotEmpty()) { items += additions; mediaGrid(additions, host = grid) }
+                            cursor = batch.nextPage; remember(); moreButton()
+                            grid.post {
+                                if (id != generation) return@post
+                                if (DeviceLayout.tv) {
+                                    val row = grid.getChildAt(if (additions.isNotEmpty()) firstRow else grid.childCount - 1) as? ViewGroup
+                                    row?.getChildAt(if (additions.isNotEmpty()) 0 else row.childCount - 1)?.requestFocus()
+                                    focusController.revealCurrent()
+                                } else scroller.scrollTo(0, scroll)
+                            }
+                        }, onFailure = { toast("Could not load more titles. Please try again.") })
+                    }
+                }
+            }
+        }
+        fun render(extra: TmdbCatalog.DetailExtras) {
+            items.clear(); items += extra.similar.distinctBy { it.imdbId }
+            knownId = extra.relatedTmdbId; cursor = if (extra.hasMoreRelated && knownId > 0) 1 else null
+            if (items.isEmpty()) grid.addView(text("No related titles are available for this title yet.", 14, muted), margin(-1, -2, top = 16))
+            else mediaGrid(items, host = grid)
+            remember(); moreButton()
+        }
+        if (loaded != null) { mediaGrid(items, host = grid); moreButton(); remember(); focusAfterRender(id); return }
+        val cached = discoveryCache.get(cacheKey)?.takeIf { android.os.SystemClock.elapsedRealtime() - it.at < 6 * 60 * 60_000L }
+        if (cached != null) { render(cached.value); focusAfterRender(id) }
+        else read(id, { TmdbCatalog(this, key, region).detailExtras(item.imdbId, item.type) }) { extra ->
+            discoveryCache.put(cacheKey, TimedDetails(extra)); render(extra)
+        }
+    }
+
+    /** Wrap at the actual screen width, with touch-sized chips and normal D-pad focus targets. */
+    private fun topicChips(host: LinearLayout, topics: List<Pair<String, () -> Unit>>, kind: String) {
+        val width = dp(DeviceLayout.canvasWidth - theme.layout.railWidthDp - theme.layout.contentInsetDp * 2 - 8)
+        var row = LinearLayout(this); var used = 0
+        host.addView(row, margin(-1, -2, bottom = 6))
+        topics.forEach { (label, action) ->
+            val chip = button(label, action).apply {
+                tag = "topic:$kind:$label"; maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+                background = rounded(withAlpha(Color.WHITE, 18), 18, withAlpha(Color.WHITE, 70))
+                setOnFocusChangeListener { _, focused ->
+                    background = rounded(if (focused) Color.WHITE else withAlpha(Color.WHITE, 18), 18, withAlpha(Color.WHITE, 70))
+                    setTextColor(if (focused) Color.BLACK else ink)
+                }
+            }
+            chip.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.AT_MOST), View.MeasureSpec.makeMeasureSpec(dp(44), View.MeasureSpec.EXACTLY))
+            val chipWidth = chip.measuredWidth.coerceAtMost(width)
+            if (used > 0 && used + chipWidth + dp(8) > width) {
+                row = LinearLayout(this); host.addView(row, margin(-1, -2, bottom = 6)); used = 0
+            }
+            row.addView(chip, LinearLayout.LayoutParams(chipWidth, dp(44)).apply { rightMargin = dp(8) })
+            used += chipWidth + dp(8)
+        }
+    }
+
+    private fun keywordPage(type: String, topic: TmdbCatalog.Topic, number: Int = 1) {
+        current = { keywordPage(type, topic, number) }
+        val id = page(topic.name, "${if (type == "movie") "Movies" else "TV shows"} with this keyword · TMDB")
+        val key = store.get(TMDB_KEY)
+        if (key.isBlank()) { body.addView(text("Connect TMDB in Settings to browse keywords.", 14, muted)); return }
+        val region = tmdbRegion()
+        read(id, { TmdbCatalog(this, key, region).keywordTitles(type, topic.id, number) }) { items ->
+            if (items.isEmpty()) body.addView(text(if (number == 1) "No titles found for this keyword." else "No more titles found for this keyword.", 14, muted), margin(-1, -2, top = 16))
+            mediaGrid(items)
+            if (number > 1) body.addView(button("Previous page") { keywordPage(type, topic, number - 1) }, margin(180, 44, top = 12))
+            if (items.isNotEmpty() && number < 500) body.addView(button("More titles  ›") { keywordPage(type, topic, number + 1) }, margin(180, 44, top = 12))
+        }
     }
 
     /** An actor's page: their portrait and name, then a row of their films and a row of their shows. */
@@ -2817,8 +3196,9 @@ class MainActivity : Activity() {
             }, episodeTarget), margin(-1, -2))
             else episodes.forEach { episode ->
                 val identity = PlaybackIdentity(result.imdbId, "series", result.title, episode.season, episode.episode)
-                host.addView(episodeButton(identity, episode.title, episode.released, episode.released.take(10)), margin(-1, 62, bottom = 7))
+                host.addView(episodeButton(identity, episode.title, episode.released, EpisodePresentation.shortAirDate(airDate(identity, episode))), margin(-1, 62, bottom = 7))
             }
+            loadSeasonImdb(result, season)
             // A later season slides in from the right, an earlier one from the left.
             if (flix && previous != null) {
                 host.animate().cancel(); host.alpha = 0f; host.translationX = dp(if (season > previous) 36 else -36).toFloat()
@@ -2834,6 +3214,9 @@ class MainActivity : Activity() {
                 dialog.dismiss(); render(seasons[index]); selector.requestFocus()
             }.setNegativeButton("Cancel", null).show()
         }
+        selector.setOnLongClickListener {
+            selectedSeasons[result.imdbId]?.let { seasonWatchMenu(result, it) }; true
+        }
         if (flix) {
             // The episode row comes first, right under the buttons (no heading, so whole cards fit on the first screen);
             // the seasons sit in a row of tabs beneath it.
@@ -2848,6 +3231,7 @@ class MainActivity : Activity() {
                 tab.setOnFocusChangeListener { view, focused -> paintSeasonTab(tab, selectedSeasons[result.imdbId] == season, focused)
                     view.animate().scaleX(if (focused) 1.06f else 1f).scaleY(if (focused) 1.06f else 1f).setDuration(120).start() }
                 tab.setOnClickListener { if (selectedSeasons[result.imdbId] != season) render(season) }
+                tab.setOnLongClickListener { seasonWatchMenu(result, season); true }
                 tabs += season to tab
                 row.addView(tab, margin(-2, 36, right = 8))
             }
@@ -2855,6 +3239,50 @@ class MainActivity : Activity() {
             if (DeviceLayout.phone) body.addView(host, margin(-1, -2, top = 8))
         } else { body.addView(selector, margin(370, 44, top = 15)); body.addView(host) }
         render(EpisodePresentation.selectedSeason(result.episodes, selectedSeasons[result.imdbId])!!)
+    }
+
+    private fun seasonWatchMenu(show: MediaItemData, season: Int) {
+        val tracker = weTrakrClient()
+        if (!tracker.connected()) { toast("Connect your tracking service in Settings to mark a season watched."); return }
+        val label = if (season == 0) "Specials" else "Season $season"
+        holdMenu("${show.title} · $label", listOf("Mark season watched" to {
+            val pending = SeasonWatchedSelection.pending(show, season, watched)
+            if (pending.isEmpty()) toast("No unwatched available episodes in $label")
+            else confirm("Mark ${pending.size} ${if (pending.size == 1) "episode" else "episodes"} of ${show.title} · $label watched on ${tracker.name}? Future and already watched episodes are skipped.") {
+                val identity = PlaybackIdentity(show.imdbId, "series", show.title)
+                load(generation, { tracker.markSeasonWatched(identity, season, pending.map { it.episode }) }) {
+                    watched = pending.fold(watched) { state, episode -> state.with(episode) }
+                    val markers = pending.map(::identityKey).toSet()
+                    fun hide(root: View) {
+                        if (root.getTag(R.id.pov_continue_identity) in markers) root.visibility = View.GONE
+                        if (root is ViewGroup) (0 until root.childCount).forEach { hide(root.getChildAt(it)) }
+                    }
+                    retainedRoots().forEach(::hide)
+                    markers.forEach { remoteProgress.remove(it) }
+                    refreshBadges(); scheduleContinueRefresh()
+                    toast("$label marked watched on ${tracker.name}")
+                }
+            }
+        }))
+    }
+
+    private var focusedEpisode: EpisodeData? = null
+
+    /** The air date to show: IMDb's original date when this season's scores are in, else Cinemeta's. */
+    private fun airDate(identity: PlaybackIdentity, episode: EpisodeData): java.time.LocalDate? =
+        imdbSeasonScores.get("${identity.imdbId}:${identity.season}").fresh()?.airDates?.get(identity.episode)
+            ?: EpisodePresentation.releaseDate(episode.released)
+
+    /** A quiet line under the focused episode's title in the header: when it aired, or when it airs. */
+    private fun paintEpisodeDate(identity: PlaybackIdentity, episode: EpisodeData) {
+        val copy = body.findViewWithTag<LinearLayout>("feature-copy") ?: return
+        val line = copy.findViewWithTag<TextView>("episode-line") ?: return
+        val date = copy.findViewWithTag<TextView>("episode-date") ?: text("", 12, 0xFFD0D0D0.toInt()).apply {
+            tag = "episode-date"; maxLines = 1
+            setShadowLayer(dp(4).toFloat(), 0f, 0f, 0xB0000000.toInt())
+        }.also { copy.addView(it, copy.indexOfChild(line) + 1, margin(-1, -2, top = 3)) }
+        date.text = EpisodePresentation.airLine(airDate(identity, episode))
+        date.visibility = if (date.text.isNullOrBlank()) View.GONE else View.VISIBLE
     }
 
     /** The episode the show page's Play and Streams buttons act on: the focused one in the episode row. */
@@ -2926,7 +3354,10 @@ class MainActivity : Activity() {
             intArrayOf(Color.TRANSPARENT, Color.TRANSPARENT, 0xD9000000.toInt())) }, FrameLayout.LayoutParams(-1, -1))
         val copy = column().apply { setPadding(dp(10), 0, dp(10), dp(8)) }
         copy.addView(text(episode.title.ifBlank { label }, 13, Color.WHITE, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2))
-        copy.addView(text(if (future) "$label · Not yet released" else label, 11, 0xFFD0D0D0.toInt()), margin(-1, -2, top = 2))
+        val labelLine = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        labelLine.addView(text(if (future) "$label · Not yet released" else label, 11, 0xFFD0D0D0.toInt()))
+        if (!future) labelLine.addView(episodeScoreView(identity), LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
+        copy.addView(labelLine, margin(-1, -2, top = 2))
         artFrame.addView(copy, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         frame.addView(artFrame, FrameLayout.LayoutParams(-1, -1))
         if (future) artFrame.alpha = 0.55f
@@ -2951,11 +3382,14 @@ class MainActivity : Activity() {
             setShadowLayer(dp(4).toFloat(), 0f, 0f, 0xB0000000.toInt())
         }.also { copy.addView(it, (if (description != null) copy.indexOfChild(description) else copy.childCount), margin(-1, -2, top = 10)) }
         line.text = "S${identity.season} · E${identity.episode}" + if (episode.title.isNotBlank()) "   ${episode.title}" else ""
+        focusedEpisode = episode
+        paintEpisodeDate(identity, episode)
         description?.text = episode.overview.ifBlank { show.description }
         if (animate) listOfNotNull<View>(line, description).forEach { view ->
             view.animate().cancel(); view.alpha = 0.35f; view.animate().alpha(1f).setDuration(140).start()
         }
         detailsPlayButton?.takeIf { it.isAttachedToWindow }?.text = "▶  Play S${identity.season} E${identity.episode}"
+        paintFocusedImdb(identity)
     }
 
     private fun paintSeasonTab(tab: TextView, selected: Boolean, focused: Boolean) {
@@ -2969,7 +3403,7 @@ class MainActivity : Activity() {
         val tracker = weTrakrClient()
         val future = EpisodePresentation.future(episode.released)
         val number = label.ifBlank { if (identity.season == 0) "Special ${identity.episode}" else "Episode ${identity.episode}" }
-        val detail = if (future) "Not yet released" else note.ifBlank { episode.released.take(10) }
+        val detail = if (future) "Not yet released" else note.ifBlank { EpisodePresentation.shortAirDate(airDate(identity, episode)) }
         val row = LinearLayout(this).apply {
             gravity = Gravity.TOP; minimumHeight = dp(if (DeviceLayout.phone) 80 else 107); setPadding(dp(6), dp(6), dp(12), dp(6)); background = rounded(withAlpha(Color.WHITE, 14), 6)
             isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true
@@ -2988,7 +3422,12 @@ class MainActivity : Activity() {
         if (DeviceLayout.phone) row.addView(still, LinearLayout.LayoutParams(dp(120), dp(68)))
         else row.addView(still, LinearLayout.LayoutParams(dp(168), dp(95)))
         val copy = column().apply { setPadding(dp(if (DeviceLayout.phone) 10 else 14), dp(2), 0, 0) }
-        copy.addView(text(listOf(number, detail).filter(String::isNotBlank).joinToString("  ·  "), 11, muted, true))
+        val numberLine = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        numberLine.addView(text(listOf(number, detail).filter(String::isNotBlank).joinToString("  ·  "), 11, muted, true).apply {
+            if (!future && note.isBlank()) { tag = "imdb-date:${identity.imdbId}:${identity.season}:${identity.episode}"; setTag(R.id.pov_episode_number, number) }
+        })
+        if (!future) numberLine.addView(episodeScoreView(identity), LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
+        copy.addView(numberLine)
         copy.addView(text(episode.title, 15, ink, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 4))
         // Every episode's synopsis is visible in the list, as in a TV guide.
         if (episode.overview.isNotBlank() && !future) copy.addView(text(episode.overview, 12, 0xFFD2D2D2.toInt()).apply {
@@ -3010,10 +3449,15 @@ class MainActivity : Activity() {
         val tracker = weTrakrClient()
         val future = EpisodePresentation.future(released)
         val number = if (identity.season == 0) "Special ${identity.episode}" else "S${identity.season} · E${identity.episode}"
-        return button("$number   $title\n${if (future) "Not yet released" else detail}") {
+        val base = "$number   $title\n${if (future) "Not yet released" else detail}"
+        return button(base) {
             if (future) toast("This episode has not been released yet") else navigate { showSources(identity) }
         }.apply {
             tag = "episode:${identity.imdbId}:${identity.season}:${identity.episode}"
+            if (!future) {
+                setTag(R.id.pov_imdb_text, "${identity.imdbId}:${identity.season}:${identity.episode}" to base)
+                cachedEpisodeScore(identity)?.let { text = "$base  ·  ★ ${it.label}" }
+            }
             contentDescription = "$number. $title. ${if (future) "Not yet released" else detail}"
             if (!future) setOnLongClickListener { episodeMenu(identity, number); true }
         }
@@ -3101,9 +3545,12 @@ class MainActivity : Activity() {
         val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
         // The title's runtime (from details already loaded) turns each file size into an estimated bitrate.
         val minutes = AutoplayLimit.runtimeMinutes(cachedDetails(MediaItemData(identity.imdbId, identity.type, identity.title))?.runtime)
-        // Sources taller than this TV can decode (such as 8K on a 4K TV) go last and are never auto-played.
-        val limit = DecoderLimits.maxHeight()
-        fun tooTall(source: SourceItem) = (source.qualityHeight ?: 0) > limit
+        // Links this device likely can't decode (too tall for its decoder, Dolby Vision without DV support, 4K 10-bit
+        // on a chip without hardware Main 10, a codec it lacks) go last, are marked, and are never auto-played.
+        val fit = DeviceVideoSupport.caps()
+        val problems = HashMap<SourceItem, String?>()
+        fun problem(source: SourceItem) = problems.getOrPut(source) { DeviceVideoSupport.problem(source, fit) }
+        fun tooTall(source: SourceItem) = problem(source) != null
         val languages = sorting.languages
         val ordered = playable.distinctBy(TvChoiceKeys::source).let { unique -> languages?.sorted(unique, sorting.order) ?: sorting.order.sorted(unique) }.let(::cachedFirst).let { all -> all.filterNot(::tooTall) + all.filter(::tooTall) }
         // The player's Streams panel offers the same links in the same order.
@@ -3138,7 +3585,7 @@ class MainActivity : Activity() {
                 checkOnPlay.isNotEmpty() -> "CHECK ON PLAY · ${checkOnPlay.joinToString(" + ") { DebridServices.name(it) }}"
                 else -> "TRANSFER MAY BE NEEDED"
             }
-            val limitNote = if (tooTall(source)) " · ABOVE THIS TV'S ${DecoderLimits.label(limit)} LIMIT" else ""
+            val limitNote = problem(source)?.let { " · $it" }.orEmpty()
             // Only the badges, the release name and the source's own name: the scrapers' extra lines are left out.
             choices.addChoice(TvChoiceRow(this, TvChoiceKeys.source(source), SourceBadges.name(source), SourceBadges.origin(source),
                 limitNote.removePrefix(" · "), theme.palette, SourceBadges.forRow(source, languages, minutes, checkOnPlay, logos = true),
@@ -3227,8 +3674,8 @@ class MainActivity : Activity() {
             .let { all -> if (hideUncached) all.filter(::playsAtOnce) else all }
             .let { all -> if (LowQualityReleases.hidden(store)) all.filterNot(LowQualityReleases::matches) else all }
         val sorting = SourceSortPreferences(this)
-        val limit = DecoderLimits.maxHeight()
-        fun tooTall(source: SourceItem) = (source.qualityHeight ?: 0) > limit
+        val fit = DeviceVideoSupport.caps()
+        fun tooTall(source: SourceItem) = DeviceVideoSupport.problem(source, fit) != null
         return playable.distinctBy(TvChoiceKeys::source).let { unique -> sorting.languages?.sorted(unique, sorting.order) ?: sorting.order.sorted(unique) }
             .let(::cachedFirst).let { all -> all.filterNot(::tooTall) + all.filter(::tooTall) }
     }
@@ -4112,9 +4559,17 @@ class MainActivity : Activity() {
                     TvContinueWatching.setEnabled(this,enabled)
                 }
             }
+            settingsRow(home, "Cast cards", if (roundCast()) "Round" else "Large portraits",
+                "How the cast looks on details pages: large portrait photos, or the smaller round ones.") {
+                val styles = listOf("large" to "Large portraits", "round" to "Round")
+                AlertDialog.Builder(this).setTitle("Cast cards")
+                    .setSingleChoiceItems(styles.map { it.second }.toTypedArray(), if (roundCast()) 1 else 0) { dialog, index ->
+                        store.put(CAST_STYLE, styles[index].first); dialog.dismiss(); refreshSettings()
+                    }.setNegativeButton("Cancel", null).show()
+            }
             val tmdbKey = store.get(TMDB_KEY)
             settingsRow(home, "TMDB", if (tmdbKey.isBlank()) "Not set" else "Connected",
-                "Your own free TMDB key adds TMDB catalogs, and makes artwork load faster: TMDB backdrops are a fraction of the size.",
+                "Your own free TMDB key adds catalogs, cast, keywords and similar titles.",
                 status = tmdbKey.isNotBlank()) {
                 inputSetting("TMDB API key", "TMDB API key or API Read Access Token", "", secret = true) { key ->
                     load(generation, { TmdbCatalog(this, key, tmdbRegion()).validate() }) { store.put(TMDB_KEY, key); toast("TMDB connected. Home now uses TMDB catalogs."); refreshSettings() }

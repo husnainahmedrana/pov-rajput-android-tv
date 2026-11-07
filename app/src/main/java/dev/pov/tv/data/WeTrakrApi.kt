@@ -311,6 +311,26 @@ class WeTrakrApi internal constructor(
 
     override fun setWatchlist(identity: PlaybackIdentity, add: Boolean) { tracking(identity, "planning", remove = !add) }
     override fun markWatched(identity: PlaybackIdentity) { tracking(identity, "watched") }
+    override fun markSeasonWatched(show: PlaybackIdentity, season: Int, episodes: List<Int>) = synchronized(refreshLock) {
+        val body = SeasonWatchedUpdate.body(show, season, episodes, weTrakr = true)
+        val result = parseObject(request("/sync/tracking", "POST", body))
+        var alreadyWatched = false
+        for (key in listOf("notFound", "errored")) {
+            val errors = result.optJSONObject(key) ?: continue
+            val rows = errors.keys().asSequence().flatMap { name ->
+                val list = errors.optJSONArray(name) ?: JSONArray()
+                (0 until list.length()).map { list.optJSONObject(it) }
+            }.toList()
+            if (rows.isNotEmpty()) {
+                if (key == "errored" && rows.all { it?.optString("error")?.let { reason ->
+                    reason == "Already watched!" || reason.startsWith("Already added!")
+                } == true }) alreadyWatched = true
+                else throw ApiException(0, "WeTrakr could not mark every episode. Refresh your library before retrying.")
+            }
+        }
+        if (!alreadyWatched && result.optJSONObject("added") == null && result.optJSONObject("existing") == null) malformed()
+        cache.clear()
+    }
     private fun tracking(identity: PlaybackIdentity, status: String, remove: Boolean = false, percent: Double? = null, timestamp: String? = null, replay: Boolean = false) = synchronized(refreshLock) {
         val item = JSONObject().put("ids", JSONObject().put("imdb", identity.imdbId)).put("status", status)
         val body = trackingBody(identity, item, status, percent, timestamp).put("allow_rewatch", false)

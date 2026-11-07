@@ -145,4 +145,14 @@ class VideoPlaybackCompatibilityTest {
         assertFalse(result.message.contains("-1"))
         assertTrue(result.message.contains("video format"))
     }
+
+    @Test fun `phones try a track the decoder says exceeds its capabilities, but never one it cannot decode`() {
+        val exceeds = group(hevc, support = intArrayOf(C.FORMAT_EXCEEDS_CAPABILITIES))
+        assertNull(VideoPlaybackCompatibility.issue(Tracks(listOf(exceeds)), Player.STATE_READY, strict = false))
+        assertEquals(VideoCompatibilityReason.EXCEEDS_CAPABILITIES,
+            VideoPlaybackCompatibility.issue(Tracks(listOf(exceeds)), Player.STATE_READY, strict = true)?.reason)
+        val unsupported = group(hevc, support = intArrayOf(C.FORMAT_UNSUPPORTED_SUBTYPE))
+        assertEquals(VideoCompatibilityReason.UNSUPPORTED,
+            VideoPlaybackCompatibility.issue(Tracks(listOf(unsupported)), Player.STATE_READY, strict = false)?.reason)
+    }
 }

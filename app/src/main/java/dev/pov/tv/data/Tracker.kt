@@ -42,6 +42,9 @@ interface Tracker {
     fun watchlist(type: String): List<MediaItemData>
     fun setWatchlist(identity: PlaybackIdentity, add: Boolean)
     fun markWatched(identity: PlaybackIdentity)
+    fun markSeasonWatched(show: PlaybackIdentity, season: Int, episodes: List<Int>) {
+        episodes.distinct().forEach { markWatched(show.copy(type = "series", season = season, episode = it)) }
+    }
 
     /** A cheap stamp that moves whenever watched history changes, so the full history is only fetched when needed. */
     fun watchedStamp(): String

@@ -1,12 +1,17 @@
-# POV Rajput 0.3.19
+# POV Rajput 0.3.20
 
 ## New
 
-- **Choose the debrid service for a link.** Hold OK on a link, in the link list or in the player's Streams panel, and pick which service plays it: any service it is cached on, or a service that checks when played. The player switches without closing and continues from the same spot.
-- **AltMount and StreamNZB add-ons.** Links from the AltMount and StreamNZB add-ons show their logo, the news provider and the indexer they came from, like AIOStreams links. AIOStreams links that stream through AltMount show the AltMount logo too. To show the news provider, hold OK on the add-on in Settings → Source providers and choose "Usenet news provider".
-- **StremThru server addresses.** A StremThru server address added in Source providers is now set up automatically.
-- **Actor pages on the phone.** Movies and shows sit in two columns, each with See all at the end.
+- **Mark a whole season watched.** On a show page, hold OK on a season tab (or the season selector) and choose "Mark season watched". Only episodes that have aired and aren't watched yet are marked, in one update to your tracking service.
+- **Episode scores.** Every episode shows its own IMDb score, and on TV the score near the title follows the episode you're on. Scores now show their vote count too.
+- **Real air dates.** The focused episode shows when it aired ("Aired 20 January 2008") or when it airs. The phone's episode list shows the same dates.
+- **Larger cast cards.** Bigger portrait photos with the full actor name. Prefer the old round cards? Settings → Home & appearance → Cast cards.
+- **Genres and keywords.** Under the cast, genres and TMDB keywords open matching titles.
+- **Similar titles.** A Similar titles button on details pages opens related movies and shows, with More titles to keep going.
+- **About.** Details pages end with director or creators, release and air dates, runtime, studio or network, language, and budget and box office when known.
+- **Manage menu.** Watchlist, playlist and mark-watched actions on details pages are now in one Manage menu.
 
-## Experimental
+## Fixed
 
-- **Tablet and landscape screens (phone app).** On a landscape screen such as a tablet or a car head unit, the phone app keeps phone-sized posters and shows more of them per row, instead of stretching everything across the screen. This is untested on real tablets and may change.
+- **Phone playback.** Many links that phones refused with a decoder error now play: the phone app no longer stops videos the decoder reports as "above its limits" when it can actually play them, and Dolby Vision Profile 7/8 links play their HDR picture on phones without an HDR screen. Links a phone really can't play (too high a resolution for its chip, Dolby Vision-only copies, a missing codec) move to the end of the list with a short note and are skipped by auto-play.
+- **Faster cast.** The cast loads first on details pages.

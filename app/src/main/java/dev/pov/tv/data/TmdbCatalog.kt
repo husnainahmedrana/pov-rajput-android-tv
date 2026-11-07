@@ -84,6 +84,99 @@ class TmdbCatalog internal constructor(
     /** An actor's films and shows, each most popular first. */
     data class Filmography(val movies: List<MediaItemData>, val shows: List<MediaItemData>)
 
+    data class Topic(val id: Long, val name: String)
+    data class DetailExtras(val keywords: List<Topic>, val similar: List<MediaItemData>,
+                            val relatedTmdbId: Long = 0, val hasMoreRelated: Boolean = false,
+                            val facts: List<Pair<String, String>> = emptyList())
+    data class RelatedPage(val items: List<MediaItemData>, val nextPage: Int?)
+
+    /**
+     * Keywords and similar titles share one details request. Missing IMDb mappings are omitted.
+     * [withSimilar] false (the details page) stops after the keywords, skipping the discover call and
+     * the per-title IMDb lookups that only the Similar titles page needs.
+     */
+    fun detailExtras(imdbId: String, type: String, withSimilar: Boolean = true): DetailExtras {
+        require(type in listOf("movie", "series") && imdbId.matches(Regex("tt\\d{5,12}")))
+        val kind = if (type == "movie") "movie" else "tv"
+        val found = json("/find/$imdbId?external_source=imdb_id").optJSONArray("${kind}_results")
+        val id = found?.optJSONObject(0)?.optLong("id", -1)?.takeIf { it > 0 }
+            ?: return DetailExtras(emptyList(), emptyList())
+        ids.put(mapOf("$kind:$id" to imdbId))
+        val data = json("/$kind/$id?append_to_response=" + (if (withSimilar) "keywords,recommendations,similar" else "keywords") +
+            // A movie's director (About section) is in its crew; a show's creators are in the details themselves.
+            if (type == "movie") ",credits" else "")
+        val keywords = data.optJSONObject("keywords")?.let { it.optJSONArray("keywords") ?: it.optJSONArray("results") }
+        val topics = (0 until (keywords?.length() ?: 0)).mapNotNull { index ->
+            val entry = keywords?.optJSONObject(index) ?: return@mapNotNull null
+            val topicId = entry.optLong("id").takeIf { it > 0 } ?: return@mapNotNull null
+            val name = entry.optString("name").trim().takeIf { it.isNotBlank() && it != "null" } ?: return@mapNotNull null
+            Topic(topicId, name)
+        }.distinctBy { it.id }.take(20)
+        val facts = runCatching { DetailFacts.from(data, type) }.getOrDefault(emptyList())
+        if (!withSimilar) return DetailExtras(topics, emptyList(), id, facts = facts)
+        val today = java.time.LocalDate.now(java.time.ZoneOffset.UTC)
+        val genres = data.optJSONArray("genres")?.let { list ->
+            (0 until list.length()).mapNotNull { list.optJSONObject(it)?.optLong("id")?.takeIf { it > 0 } }.take(3)
+        }.orEmpty()
+        // A bounded, topical recent pool complements recommendations dominated by older classics.
+        val recent = if (topics.isNotEmpty() && genres.isNotEmpty()) runCatching {
+            val date = if (type == "movie") "primary_release_date" else "first_air_date"
+            val excluded = listOf(16L, 10751L, 10762L).filterNot { it in genres }
+            json("/discover/$kind?include_adult=false&sort_by=popularity.desc&vote_average.gte=7&vote_count.gte=${if (type == "movie") 100 else 50}" +
+                "&$date.gte=${today.minusYears(5)}&$date.lte=$today&with_genres=${genres.joinToString(",")}" +
+                (if (excluded.isEmpty()) "" else "&without_genres=${excluded.joinToString(",")}") +
+                "&with_keywords=${Net.encode(topics.take(5).joinToString("|") { it.id.toString() })}").optJSONArray("results")
+        }.getOrNull() else null
+        val related = RelatedTitleSelection.select(data.optJSONObject("recommendations")?.optJSONArray("results"), recent,
+            data.optJSONObject("similar")?.optJSONArray("results"), type, id, today)
+        val similar = resolveEntries(related, type)
+            .filterNot { it.imdbId == imdbId }
+        val selectedIds = (0 until related.length()).map { related.getJSONObject(it).optLong("id") }.toSet()
+        val sources = listOfNotNull(data.optJSONObject("recommendations"), data.optJSONObject("similar"))
+        val more = sources.any { source -> source.optInt("total_pages", 1) > 1 || source.optJSONArray("results")?.let { list ->
+            (0 until list.length()).any { list.optJSONObject(it)?.optLong("id")?.let { candidate -> candidate > 0 && candidate != id && candidate !in selectedIds } == true }
+        } == true }
+        return DetailExtras(topics, similar, id, more, facts)
+    }
+
+    /** Page 1 also recovers candidates displaced by the initial fresh-title selection. */
+    fun relatedTitles(type: String, tmdbId: Long, page: Int, excluded: Set<String>): RelatedPage {
+        require(type in listOf("movie", "series") && tmdbId > 0 && page in 1..500)
+        val kind = if (type == "movie") "movie" else "tv"
+        val recommendations = json("/$kind/$tmdbId/recommendations?page=$page")
+        val similar = json("/$kind/$tmdbId/similar?page=$page")
+        val entries = RelatedTitleSelection.select(recommendations.optJSONArray("results"), null,
+            similar.optJSONArray("results"), type, tmdbId, java.time.LocalDate.now(java.time.ZoneOffset.UTC), limit = 40)
+        val items = resolveEntries(entries, type, limit = 40).filterNot { it.imdbId in excluded }.distinctBy { it.imdbId }
+        val total = maxOf(recommendations.optInt("total_pages", 1), similar.optInt("total_pages", 1)).coerceIn(1, 500)
+        return RelatedPage(items, (page + 1).takeIf { it <= total })
+    }
+
+    /** A keyword is a structured discover filter, not a title-text search. */
+    fun keywordTitles(type: String, keywordId: Long, page: Int = 1): List<MediaItemData> {
+        require(type in listOf("movie", "series") && keywordId > 0 && page in 1..500)
+        val kind = if (type == "movie") "movie" else "tv"
+        return resolveEntries(json("/discover/$kind?include_adult=false&with_keywords=$keywordId&sort_by=popularity.desc&page=$page")
+            .optJSONArray("results"), type)
+    }
+
+    private fun resolveEntries(list: org.json.JSONArray?, type: String, limit: Int = 20): List<MediaItemData> {
+        val kind = if (type == "movie") "movie" else "tv"
+        val entries = (0 until minOf(list?.length() ?: 0, limit)).mapNotNull { index ->
+            val entry = list?.optJSONObject(index) ?: return@mapNotNull null
+            val id = entry.optLong("id", -1).takeIf { it > 0 } ?: return@mapNotNull null
+            if (!entry.optString("poster_path").startsWith('/')) return@mapNotNull null
+            item(entry, type)?.let { "$kind:$id" to it }
+        }.distinctBy { it.first }
+        val pool = Executors.newFixedThreadPool(4)
+        try {
+            val missing = entries.map { it.first }.filter { ids.get(it) == null }
+            ids.put(missing.map { ref -> pool.submit(Callable { ref to runCatching { imdbId(ref) }.getOrNull() }) }
+                .mapNotNull { task -> task.get().let { (ref, imdb) -> imdb?.let { ref to it } } }.toMap())
+        } finally { pool.shutdownNow() }
+        return entries.mapNotNull { (ref, media) -> ids.get(ref)?.takeIf { it.matches(Regex("tt\\d{5,12}")) }?.let { media.copy(imdbId = it) } }
+    }
+
     /** The first [limit] billed actors of an IMDb title; for shows the whole run's cast (aggregate credits). */
     fun cast(imdbId: String, type: String, limit: Int = 7): List<CastMember> {
         val tv = type == "series"

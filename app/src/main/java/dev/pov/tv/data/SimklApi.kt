@@ -160,6 +160,11 @@ class SimklApi internal constructor(
     }
 
     override fun markWatched(identity: PlaybackIdentity) { validate(identity); history(identity, watchedAt = null); cache.clear() }
+    override fun markSeasonWatched(show: PlaybackIdentity, season: Int, episodes: List<Int>) {
+        val body = SeasonWatchedUpdate.body(show, season, episodes, weTrakr = false)
+        checkFound(parseObject(request("POST", "/sync/history", body)), "shows")
+        cache.clear()
+    }
 
     override fun refreshCaches() = cache.clear()
 

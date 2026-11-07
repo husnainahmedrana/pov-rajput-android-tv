@@ -18,18 +18,19 @@ internal data class VideoCompatibilityIssue(
     val dolbyProfile: Int? = null,
 ) {
     val message: String get() {
+        val device = if (DeviceLayout.tv) "TV" else "device"
         val format = listOfNotNull(codec,
             if (width > 0 && height > 0) "${width}×${height}" else null).joinToString(" at ")
         val explanation = when (reason) {
             VideoCompatibilityReason.EXCEEDS_CAPABILITIES ->
-                "The video format (${format.ifBlank { "unknown" }}) exceeds this TV's reported decoder capabilities."
+                "The video format (${format.ifBlank { "unknown" }}) exceeds this $device's reported decoder capabilities."
             VideoCompatibilityReason.UNSUPPORTED ->
-                "This TV cannot decode the video format (${format.ifBlank { "unknown" }})."
+                "This $device cannot decode the video format (${format.ifBlank { "unknown" }})."
             VideoCompatibilityReason.NO_VIDEO -> "This copy has no video track available for playback."
             VideoCompatibilityReason.NO_SELECTED_VIDEO -> "This copy has no video track selected for playback."
         }
         val detail = if (dolbyProfile == 5) " Dolby Vision Profile 5 has no HDR10 base picture; this copy requires compatible Dolby Vision decoding." else ""
-        return "$explanation$detail Playback was paused to avoid playing only audio. Choose a compatible copy, such as 1080p H.264 (AVC), or another format supported by this TV."
+        return "$explanation$detail Playback was paused to avoid playing only audio. Choose a compatible copy, such as 1080p H.264 (AVC), or another format supported by this $device."
     }
 }
 
@@ -45,7 +46,13 @@ internal class VideoCompatibilityException(val issue: VideoCompatibilityIssue) :
 internal object VideoPlaybackCompatibility {
     private data class Candidate(val format: Format, val support: Int, val selected: Boolean)
 
-    fun issue(tracks: Tracks, playbackState: Int, actualVideoFormat: Format? = null): VideoCompatibilityIssue? {
+    /**
+     * [strict] (the TV) stops on a track the decoder says exceeds its capabilities: the TCL kills the app on those.
+     * Phone decoders report "exceeds" for many files they play well (4K, high levels), so there only a format with no
+     * decoder at all stops playback; a real decoder failure still ends in the player's error.
+     */
+    fun issue(tracks: Tracks, playbackState: Int, actualVideoFormat: Format? = null, strict: Boolean = DeviceLayout.tv): VideoCompatibilityIssue? {
+        fun playable(support: Int) = support == C.FORMAT_HANDLED || (!strict && support == C.FORMAT_EXCEEDS_CAPABILITIES)
         if (playbackState == Player.STATE_IDLE || playbackState == Player.STATE_ENDED) return null
         val video = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }.flatMap { group ->
             (0 until group.length).map { index ->
@@ -60,10 +67,10 @@ internal object VideoPlaybackCompatibility {
         // An adaptive selection can contain several representations. Only an actual matching
         // unsupported format proves that its handled alternatives aren't currently being used.
         val actual = actualVideoFormat?.let { format -> selected.firstOrNull { it.format == format } }
-        if (actual != null && actual.support != C.FORMAT_HANDLED) return failure(actual)
-        if (selected.any { it.support == C.FORMAT_HANDLED }) return null
+        if (actual != null && !playable(actual.support)) return failure(actual)
+        if (selected.any { playable(it.support) }) return null
         if (selected.isNotEmpty()) return failure(selected.first())
-        if (video.none { it.support == C.FORMAT_HANDLED }) {
+        if (video.none { playable(it.support) }) {
             return failure(video.firstOrNull { it.support == C.FORMAT_EXCEEDS_CAPABILITIES } ?: video.first())
         }
         return if (playbackState == Player.STATE_READY) VideoCompatibilityIssue(VideoCompatibilityReason.NO_SELECTED_VIDEO) else null

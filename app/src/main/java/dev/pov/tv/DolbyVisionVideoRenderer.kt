@@ -27,6 +27,9 @@ internal class DolbyVisionVideoRenderer(builder: Builder, private val appContext
         val transfers = buildSet {
             if (Display.HdrCapabilities.HDR_TYPE_HDR10 in hdr) add(C.COLOR_TRANSFER_ST2084)
             if (Display.HdrCapabilities.HDR_TYPE_HLG in hdr) add(C.COLOR_TRANSFER_HLG)
+            // Most phone screens report no HDR at all. Their decoders still play the HDR10/HLG picture inside a
+            // Profile 7/8 file (Android tone-maps it for the screen), which beats refusing the link outright.
+            if (DeviceLayout.phone && isEmpty()) { add(C.COLOR_TRANSFER_ST2084); add(C.COLOR_TRANSFER_HLG) }
         }
         val native = if (mode == DolbyVisionMode.AUTO && format.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION && Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION in hdr) {
             try { selector.getDecoderInfos(MimeTypes.VIDEO_DOLBY_VISION, false, false).any { it.isFormatSupported(appContext, format) } }

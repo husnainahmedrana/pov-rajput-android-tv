@@ -498,7 +498,7 @@ class PlayerActivity : Activity() {
         in PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED..PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED ->
             "This file couldn't be read. It may be damaged or in an unsupported format: pick another source."
         in PlaybackException.ERROR_CODE_DECODER_INIT_FAILED..PlaybackException.ERROR_CODE_DECODING_RESOURCES_RECLAIMED ->
-            "This TV couldn't decode this video or audio. Pick another source."
+            "This ${if (DeviceLayout.tv) "TV" else "device"} couldn't decode this video or audio. Pick another source."
         else -> "The video stream stopped unexpectedly, even after retrying. Try again, or pick another source."
     }
 
