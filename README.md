@@ -9,7 +9,7 @@
 
 **A native Android TV app for streaming your Offcloud and TorBox cloud, with a cinematic *Flix* interface, TMDB or Cinemeta catalogs, WeTrakr or Simkl tracking and a fast Media3 player.** Kodi is not required.
 
-![Flix home: a living backdrop, rotating feature and Top 10 shelves](docs/screenshots/home.jpg)
+![Flix home: a living backdrop, rotating feature and Top 10 shelves](docs/screenshots/tv-home.jpg)
 
 **[⬇ Download the latest APK](https://github.com/husnainahmedrana/pov-rajput-android-tv/releases/latest)** · [Setup guide](docs/OFFCLOUD.md) · [Release notes](docs/RELEASE_NOTES.md) · [Build and release](docs/BUILD_AND_RELEASE.md)
 
@@ -30,23 +30,35 @@ This is **Rajput's Android TV edition**, forked from [MM-482/pov-android-tv](htt
 
 ## Screenshots
 
-Captured on a 55" TV in the app's public preview mode, which shows public catalogs only.
+Captured on an onn 4K box and an Android phone. Every link, file and watch progress here is a made-up example; the catalogs, artwork and cast are real.
 
-| Shelves follow your focus | Movie details |
+| Links with every service's logo | Player badges |
 | --- | --- |
-| ![Focused shelf with the feature showing the focused title](docs/screenshots/home-shelves.jpg) | ![Movie details pinned to the bottom with the backdrop open above](docs/screenshots/details-movie.jpg) |
+| ![Link list with service and add-on logos, quality, size and bitrate badges](docs/screenshots/tv-links.jpg) | ![Player controls with 4K, size, WEB-DL, HEVC, Dolby Vision and HDR10+ badges](docs/screenshots/tv-player.jpg) |
 
-| Show details and episodes | Hidden menu |
+| Dolby Vision and HDR10+ | Atmos, TrueHD and 7.1 |
 | --- | --- |
-| ![Show details with IMDb badge, genre chips, season tabs and episode stills](docs/screenshots/details-show.jpg) | ![Menu opened from the left edge over Home](docs/screenshots/menu.jpg) |
+| ![Player badges for HEVC, Dolby Vision and HDR10+](docs/screenshots/tv-player-hdr.jpg) | ![Player badges for Atmos, TrueHD and 7.1](docs/screenshots/tv-player-audio.jpg) |
 
-| Search | Settings |
+| Continue Watching | Movie details with cast |
 | --- | --- |
-| ![Full-screen search with voice search](docs/screenshots/search.jpg) | ![Settings grouped into cards with values on the right](docs/screenshots/settings.jpg) |
+| ![Home with Continue Watching cards](docs/screenshots/tv-home-continue.jpg) | ![Movie details with cast](docs/screenshots/tv-details-movie.jpg) |
 
-| Playback, subtitles and services |
+| Show details and episodes | Search |
+| --- | --- |
+| ![Show details with episodes](docs/screenshots/tv-details-show.jpg) | ![Search results](docs/screenshots/tv-search.jpg) |
+
+| Settings |
 | --- |
-| ![Playback, subtitle, audio and streaming-service settings](docs/screenshots/settings-services.jpg) |
+| ![Settings with section tabs](docs/screenshots/tv-settings.jpg) |
+
+### On a phone
+
+| Home | Links | Movie details | Show details | Search |
+| --- | --- | --- | --- | --- |
+| ![Phone home with Continue Watching](docs/screenshots/phone-home-continue.jpg) | ![Phone link list with logos and badges](docs/screenshots/phone-links.jpg) | ![Phone movie details with cast](docs/screenshots/phone-details-movie.jpg) | ![Phone show details with cast](docs/screenshots/phone-details-show.jpg) | ![Phone search results](docs/screenshots/phone-search.jpg) |
+
+![Phone player in landscape with logos and badges](docs/screenshots/phone-player.jpg)
 
 ![Animated POV launch splash](docs/screenshots/splash.jpg)
 

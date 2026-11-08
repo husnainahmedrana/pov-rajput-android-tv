@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#141414">
 <meta property="og:title" content="POV Rajput">
 <meta property="og:description" content="Free, open-source streaming app for Android TV and phones.">
-<meta property="og:image" content="https://pov.rajput.cc/img/home.jpg">
+<meta property="og:image" content="https://pov.rajput.cc/img/tv-home.jpg">
 <link rel="icon" href="/img/favicon.png">
 <style>
 :root{--bg:#141414;--panel:#1e1e21;--line:#2c2c31;--ink:#f4f4f5;--muted:#a1a1aa;--red:#e50914;--green:#46d369}
@@ -26,7 +26,7 @@ nav .links{margin-left:auto;display:flex;gap:18px;font-size:15px}
 nav .links a{text-decoration:none;color:var(--muted)}
 nav .links a:hover{color:var(--ink)}
 .hero{position:relative;overflow:hidden;padding:72px 0 40px}
-.hero:before{content:"";position:absolute;inset:0;background:url(/img/home.jpg) center/cover;opacity:.2;filter:blur(6px);transform:scale(1.05)}
+.hero:before{content:"";position:absolute;inset:0;background:url(/img/tv-home.jpg) center/cover;opacity:.2;filter:blur(6px);transform:scale(1.05)}
 .hero:after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(20,20,20,.35),var(--bg) 92%)}
 .hero .wrap{position:relative;z-index:1}
 .hero img.logo{width:84px;height:84px;border-radius:20px;box-shadow:0 10px 40px rgba(0,0,0,.5)}
@@ -51,6 +51,11 @@ h2{font-size:clamp(26px,3.6vw,34px);margin:0 0 8px;letter-spacing:-.01em}
 .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));gap:14px}
 .shots figure{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
 .shots figcaption{padding:10px 14px;color:var(--muted);font-size:14px}
+.shots img,.phones img{display:block;width:100%;height:auto}
+.phones{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:14px;margin-top:14px}
+.phones figure{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:18px;overflow:hidden}
+.phones figcaption{padding:8px 12px;color:var(--muted);font-size:13px}
+.wide{margin:14px 0 0}
 .steps{counter-reset:s;list-style:none;padding:0;margin:0;display:grid;gap:12px}
 .steps li{counter-increment:s;position:relative;padding:14px 16px 14px 56px;background:var(--panel);border:1px solid var(--line);border-radius:14px}
 .steps li:before{content:counter(s);position:absolute;left:16px;top:14px;width:28px;height:28px;border-radius:50%;background:var(--red);color:#fff;font-weight:800;display:grid;place-items:center;font-size:14px}
@@ -104,13 +109,31 @@ footer a{color:var(--muted)}
 
 <section id="screenshots"><div class="wrap">
   <h2>Made for the TV</h2>
-  <p class="sub">Captured on a 55" TV in the app's public preview mode, which shows public catalogs only.</p>
+  <p class="sub">Captured on an onn 4K box. Every link, file and watch progress here is a made-up example; the catalogs, artwork and cast are real.</p>
   <div class="shots">
-    <figure><img loading="lazy" src="/img/home-shelves.jpg" alt="Home with Top 10 shelves" width="1920" height="1080"><figcaption>Shelves follow your focus</figcaption></figure>
-    <figure><img loading="lazy" src="/img/details-movie.jpg" alt="Movie details" width="1920" height="1080"><figcaption>Movie details</figcaption></figure>
-    <figure><img loading="lazy" src="/img/details-show.jpg" alt="Show details and episodes" width="1920" height="1080"><figcaption>Show details and episodes</figcaption></figure>
-    <figure><img loading="lazy" src="/img/search.jpg" alt="Search with voice" width="1920" height="1080"><figcaption>Search, with voice</figcaption></figure>
+    <figure><img loading="lazy" src="/img/tv-links.jpg" alt="Link list with service and add-on logos, quality, size and bitrate badges" width="1920" height="1080"><figcaption>Every service and add-on shows its own logo</figcaption></figure>
+    <figure><img loading="lazy" src="/img/tv-player.jpg" alt="Player controls with 4K, size, WEB-DL, HEVC, Dolby Vision and HDR10+ badges" width="1920" height="1080"><figcaption>Player badges: quality, size, source and codec</figcaption></figure>
+    <figure><img loading="lazy" src="/img/tv-player-hdr.jpg" alt="Player badges for HEVC, Dolby Vision and HDR10+" width="1920" height="1080"><figcaption>Dolby Vision and HDR10+</figcaption></figure>
+    <figure><img loading="lazy" src="/img/tv-player-audio.jpg" alt="Player badges for Atmos, TrueHD and 7.1" width="1920" height="1080"><figcaption>Atmos, TrueHD and 7.1</figcaption></figure>
+    <figure><img loading="lazy" src="/img/tv-home-continue.jpg" alt="Home with Continue Watching cards" width="1920" height="1080"><figcaption>Continue Watching</figcaption></figure>
+    <figure><img loading="lazy" src="/img/tv-details-movie.jpg" alt="Movie details with cast" width="1920" height="1080"><figcaption>Movie details with cast</figcaption></figure>
+    <figure><img loading="lazy" src="/img/tv-details-show.jpg" alt="Show details with episodes" width="1920" height="1080"><figcaption>Show details and episodes</figcaption></figure>
+    <figure><img loading="lazy" src="/img/tv-search.jpg" alt="Search results" width="1920" height="1080"><figcaption>Movies and shows in one search</figcaption></figure>
+    <figure><img loading="lazy" src="/img/tv-settings.jpg" alt="Settings with section tabs" width="1920" height="1080"><figcaption>Settings</figcaption></figure>
   </div>
+</div></section>
+
+<section id="phone"><div class="wrap">
+  <h2>And on your phone</h2>
+  <p class="sub">The same app for Android phones, with a bottom bar and touch controls. Install <a href="/phone">POV-Rajput-Mobile.apk</a>.</p>
+  <div class="phones">
+    <figure><img loading="lazy" src="/img/phone-home-continue.jpg" alt="Phone home with Continue Watching" width="720" height="1473"><figcaption>Home</figcaption></figure>
+    <figure><img loading="lazy" src="/img/phone-links.jpg" alt="Phone link list with logos and badges" width="720" height="1473"><figcaption>Links</figcaption></figure>
+    <figure><img loading="lazy" src="/img/phone-details-movie.jpg" alt="Phone movie details with cast" width="720" height="1473"><figcaption>Movie details</figcaption></figure>
+    <figure><img loading="lazy" src="/img/phone-details-show.jpg" alt="Phone show details with cast" width="720" height="1473"><figcaption>Show details</figcaption></figure>
+    <figure><img loading="lazy" src="/img/phone-search.jpg" alt="Phone search results" width="720" height="1473"><figcaption>Search</figcaption></figure>
+  </div>
+  <div class="shots wide"><figure><img loading="lazy" src="/img/phone-player.jpg" alt="Phone player in landscape with logos and badges" width="1920" height="877"><figcaption>The player on a phone</figcaption></figure></div>
 </div></section>
 
 <section id="install"><div class="wrap">
