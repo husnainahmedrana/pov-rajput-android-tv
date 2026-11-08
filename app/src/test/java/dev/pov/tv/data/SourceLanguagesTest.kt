@@ -146,6 +146,6 @@ class SourceLanguagesTest {
         // Size first: smallest first.
         assertEquals(listOf(0, 1, 2), english.sorted(items, SourceSortOrder(priority = listOf("size", "quality", "language"))).map(items::indexOf))
         // A saved order is repaired: duplicates dropped, missing keys added.
-        assertEquals(listOf("library", "quality", "language", "size"), SourceSortOrder.priority("quality,quality,bogus"))
+        assertEquals(listOf("library", "quality", "language", "preferred", "size"), SourceSortOrder.priority("quality,quality,bogus"))
     }
 }

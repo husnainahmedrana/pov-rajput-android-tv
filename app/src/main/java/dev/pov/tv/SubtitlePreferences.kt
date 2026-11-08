@@ -17,7 +17,51 @@ internal class SubtitlePreferences(private val context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences("pov_subtitles", Context.MODE_PRIVATE)
     var transparentBackground: Boolean
         get() = preferences.getBoolean("transparent_background", true)
-        set(value) { preferences.edit().putBoolean("transparent_background", value).apply() }
+        set(value) { preferences.edit().putBoolean("transparent_background", value).remove("bg_opacity").apply() }
+
+    /** Font: "" keeps the device's caption font; otherwise one of [FONTS]. Lato until the viewer picks another. */
+    var font: String
+        get() = preferences.getString("font", DEFAULT_FONT).orEmpty().takeIf { value -> value.isEmpty() || FONTS.any { it.id == value } } ?: DEFAULT_FONT
+        set(value) { require(value.isEmpty() || FONTS.any { it.id == value }); preferences.edit().putString("font", value).apply() }
+    val fontLabel: String get() = FONTS.firstOrNull { it.id == font }?.label ?: "Device default"
+    /** Text and outline colors (white on a black edge until changed); null keeps the device's caption colors. */
+    var textColor: Int?
+        get() = preferences.getInt("text_color", Color.WHITE).takeIf { it != DEVICE_COLOR }
+        set(value) { preferences.edit().putInt("text_color", value ?: DEVICE_COLOR).apply() }
+    var edgeColor: Int?
+        get() = preferences.getInt("edge_color", Color.BLACK).takeIf { it != DEVICE_COLOR }
+        set(value) { preferences.edit().putInt("edge_color", value ?: DEVICE_COLOR).apply() }
+    /** A CaptionStyleCompat EDGE_TYPE_* (drop shadow until changed), or -1 for the device default. */
+    var edgeType: Int
+        get() = preferences.getInt("edge_type", CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW).takeIf { it == -1 || it in EDGE_TYPES.map { type -> type.first } } ?: -1
+        set(value) { require(value == -1 || value in EDGE_TYPES.map { it.first }); preferences.edit().putInt("edge_type", value).apply() }
+    val edgeLabel: String get() = EDGE_TYPES.firstOrNull { it.first == edgeType }?.second ?: "Device default"
+    /** Background box opacity in percent (0 = none), or -1 for the device default. The older "Transparent background" is 0. */
+    var backgroundOpacity: Int
+        get() = if (preferences.contains("bg_opacity")) preferences.getInt("bg_opacity", 0).takeIf { it == -1 || it in OPACITIES } ?: 0
+            else if (transparentBackground) 0 else -1
+        set(value) { require(value == -1 || value in OPACITIES)
+            preferences.edit().putInt("bg_opacity", value).putBoolean("transparent_background", value == 0).apply() }
+    val backgroundLabel: String get() = when (backgroundOpacity) { -1 -> "Device default"; 0 -> "None"; else -> "${colorName(backgroundColor)} · $backgroundOpacity%" }
+    var backgroundColor: Int
+        get() = preferences.getInt("bg_color", Color.BLACK)
+        set(value) { preferences.edit().putInt("bg_color", value).apply() }
+    private val custom: Boolean get() = font.isNotEmpty() || textColor != null || edgeColor != null || edgeType != -1 || preferences.contains("bg_opacity")
+
+    /** One-tap looks: font, colors, outline and background together. */
+    fun applyPreset(id: String) {
+        val edit = preferences.edit()
+        listOf("font", "text_color", "edge_color", "edge_type", "bg_opacity", "bg_color").forEach(edit::remove)
+        edit.apply()
+        when (id) {
+            "netflix" -> { font = "inter"; textColor = Color.WHITE; edgeType = CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW; edgeColor = Color.BLACK; backgroundOpacity = 0; boldText = false }
+            "prime" -> { font = "arimo"; textColor = Color.WHITE; edgeType = CaptionStyleCompat.EDGE_TYPE_OUTLINE; edgeColor = 0xFF1A1A1A.toInt(); backgroundOpacity = 0; boldText = true }
+            "youtube" -> { font = "roboto"; textColor = Color.WHITE; edgeType = CaptionStyleCompat.EDGE_TYPE_NONE; backgroundColor = Color.BLACK; backgroundOpacity = 75; boldText = false }
+            "classic" -> { font = "open-sans"; textColor = 0xFFFFE600.toInt(); edgeType = CaptionStyleCompat.EDGE_TYPE_OUTLINE; edgeColor = Color.BLACK; backgroundOpacity = 0; boldText = true }
+            // Back to the app's defaults: bold white Lato, medium, black drop shadow, no box.
+            else -> { transparentBackground = true; boldText = true; sizePercent = 100 }
+        }
+    }
     /** Find subtitles online when a video has none in the chosen language. */
     /**
      * English subtitles when none are in the chosen language. Its own switch since the audio one split off; until it is
@@ -76,20 +120,45 @@ internal class SubtitlePreferences(private val context: Context) {
         }
     }
 
-    internal fun style(base: CaptionStyleCompat): CaptionStyleCompat = CaptionStyleCompat(
-        base.foregroundColor,
-        if (transparentBackground) Color.TRANSPARENT else base.backgroundColor,
-        if (transparentBackground) Color.TRANSPARENT else base.windowColor,
-        if (transparentBackground && base.edgeType == CaptionStyleCompat.EDGE_TYPE_NONE)
-            CaptionStyleCompat.EDGE_TYPE_OUTLINE else base.edgeType,
-        base.edgeColor,
-        if (boldText) Typeface.create(base.typeface ?: Typeface.DEFAULT, Typeface.BOLD) else base.typeface,
-    )
+    internal fun style(base: CaptionStyleCompat): CaptionStyleCompat {
+        val opacity = backgroundOpacity
+        val background = when (opacity) { -1 -> base.backgroundColor; 0 -> Color.TRANSPARENT
+            else -> (backgroundColor and 0x00FFFFFF) or ((opacity * 255 / 100) shl 24) }
+        val edge = when {
+            edgeType != -1 -> edgeType
+            // No box: keep the text readable with an outline unless the device already draws an edge.
+            opacity == 0 && base.edgeType == CaptionStyleCompat.EDGE_TYPE_NONE -> CaptionStyleCompat.EDGE_TYPE_OUTLINE
+            else -> base.edgeType
+        }
+        val face = if (font.isNotEmpty()) typeface(context, font, boldText)
+            else if (boldText) Typeface.create(base.typeface ?: Typeface.DEFAULT, Typeface.BOLD) else base.typeface
+        return CaptionStyleCompat(textColor ?: base.foregroundColor, background,
+            if (opacity == -1) base.windowColor else Color.TRANSPARENT, edge, edgeColor ?: base.edgeColor, face)
+    }
+
+    /** A sample line drawn exactly as the player draws subtitles, for the Subtitle style page. */
+    fun preview(): android.view.View {
+        val frame = android.widget.FrameLayout(context).apply {
+            background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xFF3A5A78.toInt(), 0xFF8C7A5B.toInt(), 0xFF22262E.toInt())).apply { cornerRadius = 12 * context.resources.displayMetrics.density }
+            clipToOutline = true
+        }
+        val subtitles = androidx.media3.ui.SubtitleView(context)
+        val captions = context.getSystemService(Context.CAPTIONING_SERVICE) as? CaptioningManager
+        val base = captions?.userStyle?.let(CaptionStyleCompat::createFromCaptionStyle) ?: CaptionStyleCompat.DEFAULT
+        subtitles.setApplyEmbeddedStyles(false)
+        subtitles.setStyle(if (transparentBackground || boldText || custom) style(base) else base)
+        subtitles.setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 22f * sizePercent / 100f)
+        subtitles.setCues(listOf(Cue.Builder().setText("This is how your subtitles will look.").setLine(0.82f, Cue.LINE_TYPE_FRACTION)
+            .setLineAnchor(Cue.ANCHOR_TYPE_END).build()))
+        frame.addView(subtitles, android.widget.FrameLayout.LayoutParams(-1, -1))
+        return frame
+    }
 
     fun applyTo(view: PlayerView) {
         val subtitles = view.subtitleView ?: return
         view.player?.let { subtitles.setCues(positionedCues(it.currentCues.cues)) }
-        val override = transparentBackground || boldText
+        val override = transparentBackground || boldText || custom
         // Embedded cue spans/windows can override background and font weight. Restore them
         // when both options are off, keeping the original rendering as the default.
         subtitles.setApplyEmbeddedStyles(!override)
@@ -111,7 +180,46 @@ internal class SubtitlePreferences(private val context: Context) {
                 .distinctBy { it.first }.sortedBy { it.second }
         val COMMON_LANGUAGES = listOf("", "off", "en", "ur", "hi", "ar", "es", "fr", "de", "pt", "zh", "ja", "ko")
         val SIZES = listOf(80, 100, 130)
-        /** New installs: bold text on a transparent background, 3% above the bottom, English. */
+        const val DEFAULT_FONT = "lato"
+        /** Stored for "Device default" colors; nearly invisible, so it is never a real choice. */
+        private const val DEVICE_COLOR = 0x00000001
+        data class Font(val id: String, val label: String, val description: String)
+        /** Free fonts only: Netflix Sans and Amazon Ember are private, so look-alikes stand in. Built-in ones ship with Android. */
+        val FONTS = listOf(
+            Font("roboto", "Roboto", "YouTube's captions on Android"),
+            Font("arimo", "Arimo", "The Arial style of Netflix's subtitle rules"),
+            Font("inter", "Inter", "Clean and modern, like Netflix Sans and Amazon Ember"),
+            Font("open-sans", "Open Sans", "Very readable on TVs"),
+            Font("noto-sans", "Noto Sans", "Very readable on TVs"),
+            Font("lato", "Lato", "Rounder and friendly"),
+            Font("mono", "Mono", "Typewriter style (YouTube's monospaced)"),
+            Font("serif", "Serif", "Book style (YouTube's serif)"),
+            Font("casual", "Casual", "Handwritten feel (YouTube's casual)"),
+            Font("cursive", "Cursive", "Joined-up script (YouTube's cursive)"),
+            Font("smallcaps", "Small caps", "Capital letters only (YouTube's small capitals)"),
+        )
+        private val BUILT_IN = mapOf("roboto" to "sans-serif", "mono" to "monospace", "serif" to "serif",
+            "casual" to "casual", "cursive" to "cursive", "smallcaps" to "sans-serif-smallcaps")
+        private val loaded = HashMap<String, Typeface>()
+        fun typeface(context: Context, id: String, bold: Boolean): Typeface {
+            BUILT_IN[id]?.let { family -> return Typeface.create(family, if (bold) Typeface.BOLD else Typeface.NORMAL) }
+            val file = "subtitle-fonts/$id-${if (bold) "bold" else "regular"}.ttf"
+            return synchronized(loaded) { loaded.getOrPut(file) {
+                runCatching { Typeface.createFromAsset(context.applicationContext.assets, file) }.getOrDefault(Typeface.DEFAULT)
+            } }
+        }
+        val EDGE_TYPES = listOf(CaptionStyleCompat.EDGE_TYPE_NONE to "None", CaptionStyleCompat.EDGE_TYPE_OUTLINE to "Outline",
+            CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW to "Drop shadow", CaptionStyleCompat.EDGE_TYPE_RAISED to "Raised",
+            CaptionStyleCompat.EDGE_TYPE_DEPRESSED to "Depressed")
+        val OPACITIES = listOf(0, 25, 50, 75, 100)
+        val COLORS = listOf(Color.WHITE to "White", 0xFFFFE600.toInt() to "Yellow", 0xFF00E5FF.toInt() to "Cyan", 0xFF00E676.toInt() to "Green",
+            0xFFFF80AB.toInt() to "Pink", 0xFFFFAB40.toInt() to "Orange", 0xFFCCCCCC.toInt() to "Light grey", 0xFF555555.toInt() to "Dark grey",
+            0xFF1A1A1A.toInt() to "Near black", Color.BLACK to "Black")
+        fun colorName(color: Int?) = if (color == null) "Device default" else COLORS.firstOrNull { it.first == color }?.second ?: "Custom"
+        val PRESETS = listOf("netflix" to "Netflix-style · white Inter with a drop shadow", "prime" to "Prime-style · white Arimo with a soft outline",
+            "youtube" to "YouTube-style · white Roboto on a 75% black box", "classic" to "Classic yellow · yellow Open Sans with a black outline",
+            "default" to "App default · bold white Lato, medium, black drop shadow, no box")
+        /** New installs: bold white Lato, medium, black drop shadow, no box, 3% above the bottom, English. */
         const val DEFAULT_POSITION = 3
         val SIZE_LABELS = listOf("Small", "Medium", "Large")
     }

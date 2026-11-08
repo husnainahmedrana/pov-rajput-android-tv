@@ -83,7 +83,8 @@ internal class TvFocusController(
     }
 
     fun restore(snapshot: TvFocusSnapshot?): Boolean {
-        val target = snapshot?.key?.let(::find) ?: if (snapshot?.key == null) leaves().firstOrNull() else null
+        // A page opens on its first target, skipping helpers above the main action (a synopsis' More sits above Play).
+        val target = snapshot?.key?.let(::find) ?: if (snapshot?.key == null) leaves().let { all -> all.firstOrNull { (it.tag as? String)?.startsWith(SKIP_FIRST) != true } ?: all.firstOrNull { (it.tag as? String)?.startsWith(SKIP_SOURCE) != true } ?: all.firstOrNull() } else null
         if (target == null) return false
         target.requestFocus(); lastKey = key(target)
         if (snapshot != null) scroll.scrollTo(0, snapshot.scrollY)
@@ -135,5 +136,11 @@ internal class TvFocusController(
         }
         visit(body)
         return found
+    }
+    companion object {
+        /** Tag for a target the page should not open on (it stays reachable with the D-pad). */
+        const val SKIP_FIRST = "skip-first-focus"
+        /** Link-list source logos: never the target a page opens on (landing on one filters the list). */
+        const val SKIP_SOURCE = "$SKIP_FIRST:source:"
     }
 }

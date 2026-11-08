@@ -17,7 +17,9 @@ object BackupSnapshot {
 
     /** Plain preference files that belong in the settings layer. */
     val SETTINGS_FILES = listOf("pov_home_rows", "pov_appearance", "pov_playback", "pov_subtitles", "pov_audio",
-        "pov_sources", "pov_skip", "pov_player", "pov_seek_previews", "pov_video", PLAYBACK_FILE)
+        "pov_sources", "pov_skip", "pov_player", "pov_seek_previews", "pov_video", PLAYBACK_FILE,
+        // Search goal, max search time (all and per add-on), auto-play mode; badge style and compact list; trailer switches.
+        "pov_source_search", "pov_ui", "pov_hero_trailers")
     private const val PLAYBACK_FILE = "playback"
     /** From the playback file only local progress and hidden Continue Watching items; tracker outboxes stay per device. */
     private val PLAYBACK_KEYS = setOf("recent", "hiddenContinue")

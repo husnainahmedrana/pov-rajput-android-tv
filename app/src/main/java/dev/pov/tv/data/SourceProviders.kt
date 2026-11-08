@@ -16,7 +16,6 @@ internal class SourceProviders(private val get: (String) -> String, private val 
         val saved = get(KEY)
         if (saved.isNotBlank()) return try {
             val array = JSONArray(saved)
-            check(array.length() <= MAX)
             (0 until array.length()).map { index ->
                 val item = array.getJSONObject(index)
                 SourceProvider(item.getString("id"), item.getString("name"), item.getString("address"), item.getBoolean("enabled"), item.optString("newsProvider"))
@@ -36,7 +35,6 @@ internal class SourceProviders(private val get: (String) -> String, private val 
     }
 
     private fun validate(providers: List<SourceProvider>) {
-        require(providers.size <= MAX) { "You can add up to $MAX source providers." }
         require(providers.map { it.id }.distinct().size == providers.size && providers.none { it.id.isBlank() }) { "Invalid source provider identifiers." }
         providers.forEach { name(it.name); endpoint(it.address) }
         require(providers.map { endpoint(it.address) }.distinct().size == providers.size) { "This source address is already saved." }
@@ -44,7 +42,6 @@ internal class SourceProviders(private val get: (String) -> String, private val 
 
     companion object {
         const val KEY = "sources.providers.v1"
-        const val MAX = 12
         fun create(name: String, address: String) = SourceProvider(UUID.randomUUID().toString(), name(name), endpoint(address))
         fun name(value: String): String {
             val clean = value.trim()

@@ -107,6 +107,7 @@ object InAppPlaybackSession {
     private const val MAX_QUIET_RETRIES = 3
     private const val SOURCE_RETRY_DELAY_MS = 1_000L
     private const val MAX_SOURCE_RETRIES = 2
+    private const val CACHED_CONNECT_TIMEOUT_MS = 8_000
     /** Device recoveries (decoders, audio output) per video before the error is shown. */
     private const val MAX_DEVICE_RECOVERIES = 5
     private const val AIO_SOURCE_RETRIES = 6
@@ -178,6 +179,8 @@ object InAppPlaybackSession {
     private val aioStreams get() = sourceAddon?.startsWith(dev.pov.tv.data.AddonBadges.AIOSTREAMS) == true
     /** Set when parallel Easynews downloads keep failing for the current video; cleared when another video starts. */
     @Volatile private var easynewsSingle = false
+    /** A saved Continue Watching link on its first try: fail fast so a dead one falls through to a fresh search. */
+    @Volatile private var cachedReplay = false
     private fun isNetworkFailure(failure: PlaybackException) =
         failure.errorCode in PlaybackException.ERROR_CODE_IO_UNSPECIFIED..PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
             failure.errorCode == PlaybackException.ERROR_CODE_TIMEOUT
@@ -218,6 +221,7 @@ object InAppPlaybackSession {
         failedDecoders.clear(); deviceRecoveries = 0
         skipSegments = emptyList(); skipLookupFor = ""
         sourceKey = intent.getStringExtra("key").orEmpty()
+        cachedReplay = saved == null && intent.getBooleanExtra("cached_playback", false)
         sourceHeaders = runCatching { JSONObject(intent.getStringExtra("headers") ?: "{}").let { json ->
             json.keys().asSequence().associateWith { json.getString(it) } } }.getOrDefault(emptyMap())
         playbackAccount = saved?.getString("playback_account") ?: intent.getStringExtra("playback_account")
@@ -309,7 +313,7 @@ object InAppPlaybackSession {
         // Debrid and Usenet-backed links can take well over the default 8 s to send their first bytes.
         // AIOStreams (Usenet especially) fetches a seek's new spot from the news server first: it gets twice as long.
         val http = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15_000).setReadTimeoutMs(if (aioStreams) 60_000 else 30_000)
+            .setConnectTimeoutMs(if (cachedReplay) CACHED_CONNECT_TIMEOUT_MS else 15_000).setReadTimeoutMs(if (aioStreams) 60_000 else 30_000)
             .setTransferListener(sizeFromServer(playing))
             .setDefaultRequestProperties(sourceHeaders)
         val exo = ExoPlayer.Builder(application!!, renderers)
@@ -372,7 +376,7 @@ object InAppPlaybackSession {
             override fun onPlaybackStateChanged(state: Int) {
                 if (!isCurrent(exo)) return
                 if (state != Player.STATE_ENDED && enforceVideoCompatibility(exo)) return
-                if (state == Player.STATE_READY) { quietRetries = 0; sourceRetries = 0; lookUpSkips(exo) }
+                if (state == Player.STATE_READY) { cachedReplay = false; quietRetries = 0; sourceRetries = 0; lookUpSkips(exo) }
                 if (state == Player.STATE_READY && !lastLinkSaved) {
                     lastLinkSaved = true
                     val media = identity; val account = playbackAccount
@@ -431,7 +435,7 @@ object InAppPlaybackSession {
                 val sourceFailure = failureType == androidx.media3.exoplayer.ExoPlaybackException.TYPE_SOURCE ||
                     (aioStreams && failureType == androidx.media3.exoplayer.ExoPlaybackException.TYPE_UNEXPECTED)
                 val maxRetries = if (aioStreams) AIO_SOURCE_RETRIES else MAX_SOURCE_RETRIES
-                if (sourceFailure && error == null && sourceRetries < maxRetries &&
+                if (sourceFailure && !cachedReplay && error == null && sourceRetries < maxRetries &&
                     failure.errorCode !in setOf(PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS, PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
                         PlaybackException.ERROR_CODE_IO_NO_PERMISSION)) {
                     sourceRetries++

@@ -13,8 +13,8 @@ android {
         manifestPlaceholders["appLabel"] = providers.gradleProperty("povAppLabel").orElse("POV Rajput").get()
         minSdk = 26
         targetSdk = 35
-        versionCode = 56
-        versionName = "0.3.23-rajput"
+        versionCode = 57
+        versionName = "0.3.24-rajput"
         testInstrumentationRunner = providers.gradleProperty("povTestRunner")
             .orElse("dev.pov.tv.PlaybackAuditInstrumentation").get()
     }

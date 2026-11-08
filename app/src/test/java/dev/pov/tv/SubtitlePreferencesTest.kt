@@ -32,8 +32,18 @@ class SubtitlePreferencesTest {
         assertTrue(third.transparentBackground); assertFalse(third.boldText)
     }
 
+    @Test fun `new installs get bold white Lato, medium, with a black drop shadow and no box`() {
+        val preferences = SubtitlePreferences(context)
+        val style = preferences.style(CaptionStyleCompat(Color.YELLOW, Color.BLUE, Color.RED, CaptionStyleCompat.EDGE_TYPE_NONE, Color.GREEN, Typeface.SERIF))
+        assertEquals("lato", preferences.font); assertEquals(100, preferences.sizePercent)
+        assertEquals(Color.WHITE, style.foregroundColor); assertEquals(Color.BLACK, style.edgeColor)
+        assertEquals(CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW, style.edgeType)
+        assertEquals(Color.TRANSPARENT, style.backgroundColor); assertEquals(Color.TRANSPARENT, style.windowColor)
+    }
+
     @Test fun `transparent bold captions remove both boxes while retaining foreground and readable edge`() {
-        val preferences = SubtitlePreferences(context).apply { transparentBackground = true; boldText = true }
+        val preferences = SubtitlePreferences(context).apply { transparentBackground = true; boldText = true
+            font = ""; textColor = null; edgeColor = null; edgeType = -1 }
         val base = CaptionStyleCompat(Color.YELLOW, Color.BLACK, Color.BLUE,
             CaptionStyleCompat.EDGE_TYPE_NONE, Color.BLACK, Typeface.SERIF)
         val style = preferences.style(base)
@@ -45,7 +55,8 @@ class SubtitlePreferencesTest {
     }
 
     @Test fun `bold only preserves user caption colors and edge preferences`() {
-        val preferences = SubtitlePreferences(context).apply { boldText = true; transparentBackground = false }
+        val preferences = SubtitlePreferences(context).apply { boldText = true; transparentBackground = false
+            font = ""; textColor = null; edgeColor = null; edgeType = -1 }
         val base = CaptionStyleCompat(Color.YELLOW, Color.BLUE, Color.RED,
             CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW, Color.GREEN, Typeface.SERIF)
         val style = preferences.style(base)

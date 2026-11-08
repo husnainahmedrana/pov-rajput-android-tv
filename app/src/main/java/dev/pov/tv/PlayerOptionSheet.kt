@@ -26,6 +26,8 @@ internal data class PlayerSheetChoice(
     val logos: List<Int> = emptyList(),
     /** Holding OK on the row (e.g. a link: play it on another debrid service). */
     val hold: (() -> Unit)? = null,
+    /** The link now playing: a green "Now playing" mark, and choosing it just closes the panel. */
+    val playing: Boolean = false,
     val action: () -> Unit,
 )
 
@@ -147,7 +149,7 @@ internal object PlayerOptionSheet {
      * A source-list style row: badges, the name, and a muted detail line. The badges have dark fills, so focus is a
      * light tint with a white outline rather than a white fill.
      */
-    private fun richRow(context: Context, dialog: Dialog, choice: PlayerSheetChoice, id: String): View {
+    internal fun richRow(context: Context, dialog: Dialog, choice: PlayerSheetChoice, id: String): View {
         fun dp(value: Int) = (value * context.resources.displayMetrics.density).toInt()
         // The text column; logos (when any) sit on the right, centred, as on the source list's cards.
         val column = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
@@ -167,6 +169,10 @@ internal object PlayerOptionSheet {
                     }, LinearLayout.LayoutParams(-2, dp(22)).apply { leftMargin = dp(8) })
                 }
             }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
+            if (choice.playing) column.addView(TextView(context).apply {
+                text = "▶  NOW PLAYING"; textSize = 12f; setTextColor(0xFF46D369.toInt()); letterSpacing = 0.08f
+                typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
+            }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
             if (choice.badges.isNotEmpty()) column.addView(SourceBadgeStrip(context, choice.badges), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(7) })
             column.addView(TextView(context).apply {
                 text = if (choice.checked) "✓  ${choice.label}" else choice.label
@@ -183,7 +189,8 @@ internal object PlayerOptionSheet {
                     setColor(if (focused) 0xD93A3A40.toInt() else if (choice.checked) 0xB33A3A40.toInt()
                         else (ThemeSpec.FLIX.palette.panel and 0x00FFFFFF) or (0x99 shl 24))
                     cornerRadius = dp(10).toFloat()
-                    if (focused) setStroke(dp(2), Color.WHITE) else if (choice.checked) setStroke(dp(1), 0x80FFFFFF.toInt())
+                    if (focused) setStroke(dp(2), Color.WHITE) else if (choice.playing) setStroke(dp(2), 0xFF46D369.toInt())
+                    else if (choice.checked) setStroke(dp(1), 0x80FFFFFF.toInt())
                 }
             }
             style(false)

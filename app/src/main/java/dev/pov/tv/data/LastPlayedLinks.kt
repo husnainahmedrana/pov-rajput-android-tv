@@ -32,7 +32,7 @@ class LastPlayedLinks internal constructor(
                 it.optString("service").ifBlank { null }, it.getString("account"), it.getLong("savedAt"),
                 it.optString("name"), it.optLong("size").takeIf { size -> size > 0 },
                 it.optJSONObject("headers")?.let { json -> json.keys().asSequence().associateWith { name -> json.getString(name) } }.orEmpty())
-        } }.filter { it.savedAt <= now() && now() - it.savedAt < DAY && secure(it.url) }
+        } }.filter { it.savedAt <= now() && now() - it.savedAt < KEEP_FOR && secure(it.url) }
     }.getOrDefault(emptyList())
     fun find(identity: PlaybackIdentity): Link? = synchronized(lock) {
         entries().firstOrNull { token(it.identity) == token(identity) && it.account.isNotBlank() && it.account == account(it.service) }
@@ -47,7 +47,7 @@ class LastPlayedLinks internal constructor(
     fun remove(identity: PlaybackIdentity) = synchronized(lock) { write(entries().filterNot { token(it.identity) == token(identity) }) }
     private fun write(items: List<Link>) {
         val array = JSONArray()
-        items.take(40).forEach { array.put(JSONObject().put("identity", it.identity.toJson()).put("url", it.url).put("key", it.key)
+        items.take(MAX_LINKS).forEach { array.put(JSONObject().put("identity", it.identity.toJson()).put("url", it.url).put("key", it.key)
             .put("service", it.service.orEmpty()).put("account", it.account).put("savedAt", it.savedAt)
             .put("name", it.name).also { item -> it.size?.let { size -> item.put("size", size) } }
             .also { item -> if (it.headers.isNotEmpty()) item.put("headers", JSONObject(it.headers)) }) }
@@ -55,5 +55,8 @@ class LastPlayedLinks internal constructor(
     }
     // Add-on direct links may be plain HTTP (debrid links are always HTTPS); embedded credentials and local files never replay.
     private fun secure(value: String) = runCatching { URI(value).let { (it.scheme == "https" || it.scheme == "http") && !it.host.isNullOrBlank() && it.userInfo == null } }.getOrDefault(false)
-    companion object { private const val STORAGE = "playback.last_links"; private const val DAY = 24 * 60 * 60 * 1000L; private val lock = Any() }
+    companion object {
+        private const val STORAGE = "playback.last_links"
+        // A week covers a show watched every few days; a dead link only costs one failed try before a fresh search.
+        internal const val KEEP_FOR = 7 * 24 * 60 * 60 * 1000L; internal const val MAX_LINKS = 60; private val lock = Any() }
 }

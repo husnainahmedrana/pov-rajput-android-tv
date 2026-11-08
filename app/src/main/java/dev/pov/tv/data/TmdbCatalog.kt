@@ -80,14 +80,14 @@ class TmdbCatalog internal constructor(
     fun validate() { json("/configuration") }
 
     /** One actor of a title: TMDB person id, name, the part they play and a portrait (blank when TMDB has none). */
-    data class CastMember(val personId: Long, val name: String, val character: String, val photo: String)
+    data class CastMember(val personId: Long, val name: String, val character: String, val photo: String, val crew: Boolean = false)
     /** An actor's films and shows, each most popular first. */
     data class Filmography(val movies: List<MediaItemData>, val shows: List<MediaItemData>)
 
     data class Topic(val id: Long, val name: String)
     data class DetailExtras(val keywords: List<Topic>, val similar: List<MediaItemData>,
                             val relatedTmdbId: Long = 0, val hasMoreRelated: Boolean = false,
-                            val facts: List<Pair<String, String>> = emptyList())
+                            val facts: List<Pair<String, String>> = emptyList(), val crew: List<CastMember> = emptyList())
     data class RelatedPage(val items: List<MediaItemData>, val nextPage: Int?)
 
     /**
@@ -103,8 +103,9 @@ class TmdbCatalog internal constructor(
             ?: return DetailExtras(emptyList(), emptyList())
         ids.put(mapOf("$kind:$id" to imdbId))
         val data = json("/$kind/$id?append_to_response=" + (if (withSimilar) "keywords,recommendations,similar" else "keywords") +
-            // A movie's director (About section) is in its crew; a show's creators are in the details themselves.
             if (type == "movie") ",credits" else "")
+        // A show's crew comes from the same whole-run credits the Cast row already downloaded: read it from the cache.
+        if (type == "series") runCatching { aggregateCredits(id) }.getOrNull()?.let { data.put("aggregate_credits", it) }
         val keywords = data.optJSONObject("keywords")?.let { it.optJSONArray("keywords") ?: it.optJSONArray("results") }
         val topics = (0 until (keywords?.length() ?: 0)).mapNotNull { index ->
             val entry = keywords?.optJSONObject(index) ?: return@mapNotNull null
@@ -113,7 +114,8 @@ class TmdbCatalog internal constructor(
             Topic(topicId, name)
         }.distinctBy { it.id }.take(20)
         val facts = runCatching { DetailFacts.from(data, type) }.getOrDefault(emptyList())
-        if (!withSimilar) return DetailExtras(topics, emptyList(), id, facts = facts)
+        val crew = DetailCrew.from(data, type)
+        if (!withSimilar) return DetailExtras(topics, emptyList(), id, facts = facts, crew = crew)
         val today = java.time.LocalDate.now(java.time.ZoneOffset.UTC)
         val genres = data.optJSONArray("genres")?.let { list ->
             (0 until list.length()).mapNotNull { list.optJSONObject(it)?.optLong("id")?.takeIf { it > 0 } }.take(3)
@@ -136,7 +138,7 @@ class TmdbCatalog internal constructor(
         val more = sources.any { source -> source.optInt("total_pages", 1) > 1 || source.optJSONArray("results")?.let { list ->
             (0 until list.length()).any { list.optJSONObject(it)?.optLong("id")?.let { candidate -> candidate > 0 && candidate != id && candidate !in selectedIds } == true }
         } == true }
-        return DetailExtras(topics, similar, id, more, facts)
+        return DetailExtras(topics, similar, id, more, facts, crew)
     }
 
     /** Page 1 also recovers candidates displaced by the initial fresh-title selection. */
@@ -183,7 +185,7 @@ class TmdbCatalog internal constructor(
         val found = json("/find/$imdbId?external_source=imdb_id").optJSONArray(if (tv) "tv_results" else "movie_results")
         val id = found?.optJSONObject(0)?.optLong("id", -1)?.takeIf { it > 0 } ?: return emptyList()
         ids.put(mapOf("${if (tv) "tv" else "movie"}:$id" to imdbId))
-        val list = json(if (tv) "/tv/$id/aggregate_credits" else "/movie/$id/credits").optJSONArray("cast") ?: return emptyList()
+        val list = (if (tv) aggregateCredits(id) else json("/movie/$id/credits")).optJSONArray("cast") ?: return emptyList()
         return (0 until list.length()).mapNotNull { list.optJSONObject(it) }
             .sortedBy { it.optInt("order", Int.MAX_VALUE) }
             .mapNotNull { entry ->
@@ -200,8 +202,8 @@ class TmdbCatalog internal constructor(
      * appear as themselves), up to [limit] of each, most popular first, or with [byRelease] newest release first.
      * Titles without an IMDb id drop out.
      */
-    fun filmography(personId: Long, limit: Int = 30, byRelease: Boolean = false): Filmography {
-        val list = json("/person/$personId/combined_credits").optJSONArray("cast") ?: return Filmography(emptyList(), emptyList())
+    fun filmography(personId: Long, limit: Int = 30, byRelease: Boolean = false, crew: Boolean = false): Filmography {
+        val list = json("/person/$personId/combined_credits").optJSONArray(if (crew) "crew" else "cast") ?: return Filmography(emptyList(), emptyList())
         val entries = (0 until list.length()).mapNotNull { list.optJSONObject(it) }
             .filter { it.optString("poster_path").startsWith('/') }
             .filterNot { entry -> entry.optJSONArray("genre_ids")?.let { genres -> (0 until genres.length()).any { genres.optInt(it) in NOT_ACTING } } == true }
@@ -263,6 +265,10 @@ class TmdbCatalog internal constructor(
         return json("/$type/$id/external_ids").optString("imdb_id").takeIf { it.matches(Regex("tt\\d{5,12}")) } ?: "-"
     }
 
+    /** A show's whole-run credits (large for long shows), kept for the last few shows so Cast and Crew share one download. */
+    private fun aggregateCredits(id: Long): JSONObject = synchronized(AGGREGATE_CREDITS) { AGGREGATE_CREDITS[id] }
+        ?: json("/tv/$id/aggregate_credits").also { credits -> synchronized(AGGREGATE_CREDITS) { AGGREGATE_CREDITS[id] = credits } }
+
     private fun json(path: String): JSONObject {
         val bearer = key.startsWith("eyJ")
         val separator = if ('?' in path) '&' else '?'
@@ -283,6 +289,9 @@ class TmdbCatalog internal constructor(
 
     companion object {
         private const val BASE = "https://api.themoviedb.org/3"
+        private val AGGREGATE_CREDITS = object : LinkedHashMap<Long, JSONObject>(8, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, JSONObject>?) = size > 3
+        }
         const val SORT_POPULAR = "popular"
         const val SORT_TOP_RATED = "top_rated"
         const val SORT_NEWEST = "newest"

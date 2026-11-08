@@ -236,6 +236,8 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume(); resumed = true; launchingPlayer = false
+        // Links that arrived while the player was in front: the list catches up once, now that it is seen.
+        activeSearch?.let { search -> if (search.needsRender && search.rendered && generation == search.generation) { search.needsRender = false; renderSearch(search) } }
         if (!publicPreview) { TvContinueWatching.schedule(this); TvContinueWatching.request(this) }
         // Back from approving a sign-in code in the browser: check for it straight away.
         authorization?.takeIf { it.isShowing }?.pollNow()
@@ -408,7 +410,21 @@ class MainActivity : Activity() {
         settings(); refreshNavigation()
         if (flix) body.post { if (!focusController.first()) wantsContentFocus = true }
     }
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        // A tap during the auto-play countdown stops it (the tapped link, if any, still opens).
+        if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN && autoplayCountdown != null && cancelAutoplayCountdown()) toast("Auto-play stopped · choose a link")
+        return super.dispatchTouchEvent(event)
+    }
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val back = event.keyCode == KeyEvent.KEYCODE_BACK || event.keyCode == KeyEvent.KEYCODE_ESCAPE
+        if (swallowBackUp && back && event.action == KeyEvent.ACTION_UP) { swallowBackUp = false; return true }
+        // Any key during the auto-play countdown stops it; Back stops it without leaving the link list.
+        if (event.action == KeyEvent.ACTION_DOWN && autoplayCountdown != null && cancelAutoplayCountdown()) {
+            toast("Auto-play stopped · choose a link")
+            if (back) { swallowBackUp = true; return true }
+        }
+        if (back && event.action == KeyEvent.ACTION_DOWN && clearSourceFilter?.invoke() == true) { swallowBackUp = true; return true }
         if (detailsTrailerChrome.key(event)) return true
         if (backHold.intercept(event)) return true
         // Show page: one Down from the buttons goes to the next episode's card (and brings the season tabs into view).
@@ -754,6 +770,8 @@ class MainActivity : Activity() {
         }
     }
     private fun page(title: String, subtitle: String = ""): Int {
+        // Leaving the link list stops its auto-play countdown; the list re-rendering itself keeps it.
+        if (!renderingSearch) cancelAutoplayCountdown()
         homeTrailerFocus = null
         heroTrailer?.stop()
         generation = ++pageSequence; resolvingGeneration = null; isHome = false; wantsContentFocus = true; flixScrollTarget = -1
@@ -1350,7 +1368,7 @@ class MainActivity : Activity() {
         if (!showAction && synopsisLines > 0 && item.description.length > SYNOPSIS_MORE_CHARS) copy.addView(button("More") {
             // Whatever the header shows now: the show's synopsis, or the focused episode's.
             synopsisDialog(item.title, copy.findViewWithTag<TextView>("feature-description")?.text?.toString()?.ifBlank { null } ?: item.description)
-        }.apply { gravity = Gravity.CENTER }, margin(90, 34, top = 10))
+        }.apply { gravity = Gravity.CENTER; tag = TvFocusController.SKIP_FIRST }, margin(90, 34, top = 10))
         if (DeviceLayout.phone) frame.addView(copy, FrameLayout.LayoutParams(if (DeviceLayout.wide) dp(DeviceLayout.PHONE_SHORT_SIDE) else -1, -2).apply { topMargin = dp(if (DeviceLayout.wide) PHONE_WIDE_COPY_TOP else PHONE_COPY_TOP) })
         else frame.addView(copy, FrameLayout.LayoutParams(dp(if (showAction) 420 else 560), -2).apply { topMargin = dp(if (!showAction) 12 else if (compact) 24 else 30) })
         if (showAction) {
@@ -2760,7 +2778,8 @@ class MainActivity : Activity() {
      * Large portrait cards keep faces recognizable on phones and TVs; [round] is the 0.3.19 round portrait with a
      * one-line name (Settings → Home & appearance → Cast cards). Either opens the actor's page.
      */
-    private fun castCard(member: TmdbCatalog.CastMember, round: Boolean = roundCast()): View {
+    /** [photoLoads] collects the portrait download instead of starting it (the crew row loads them when it nears the screen). */
+    private fun castCard(member: TmdbCatalog.CastMember, round: Boolean = roundCast(), photoLoads: MutableList<() -> Unit>? = null): View {
         val size = dp(when {
             round -> if (DeviceLayout.phone) ROUND_CAST_PHOTO_PHONE else ROUND_CAST_PHOTO
             else -> if (DeviceLayout.phone) CAST_PHOTO_PHONE else CAST_PHOTO
@@ -2771,8 +2790,8 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(0, dp(10), 0, dp(4))
             // The grown ring reaches into that padding: draw it there instead of cutting it at the padding's edge.
             clipToPadding = false; clipChildren = false
-            isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true; tag = "cast:${member.personId}"
-            contentDescription = if (member.character.isBlank()) member.name else "${member.name} as ${member.character}"
+            isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true; tag = "${if (member.crew) "crew" else "cast"}:${member.personId}"
+            contentDescription = if (member.character.isBlank()) member.name else if (member.crew) "${member.name}, ${member.character}" else "${member.name} as ${member.character}"
         }
         val ring = FrameLayout(this).apply { setPadding(dp(3), dp(3), dp(3), dp(3)) }
         val photo = FixedSizeImageView(this).apply {
@@ -2781,7 +2800,7 @@ class MainActivity : Activity() {
             outlineProvider = android.view.ViewOutlineProvider.BACKGROUND; clipToOutline = true
         }
         ring.addView(photo, FrameLayout.LayoutParams(size, portraitHeight))
-        if (member.photo.isNotBlank()) image(photo, member.photo)
+        if (member.photo.isNotBlank()) { if (photoLoads != null) photoLoads += { image(photo, member.photo) } else image(photo, member.photo) }
         else ring.addView(text(member.name.split(' ').filter(String::isNotBlank).take(2).joinToString("") { it.take(1).uppercase() }, 26, muted, true)
             .apply { gravity = Gravity.CENTER }, FrameLayout.LayoutParams(size, portraitHeight).apply { gravity = Gravity.CENTER })
         card.addView(ring, LinearLayout.LayoutParams(-2, -2))
@@ -2833,6 +2852,18 @@ class MainActivity : Activity() {
             if (extra.keywords.isNotEmpty()) {
                 topics.addView(text("Keywords", theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 14, bottom = 8))
                 topicChips(topics, extra.keywords.map { topic -> topic.name to { navigate { keywordPage(item.type, topic) } } }, "keyword")
+            }
+            if (extra.crew.isNotEmpty()) {
+                topics.addView(text("Crew", theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 18, bottom = 6))
+                val row = horizontalRow(topics).apply { tag = "details-crew" }
+                // Crew portraits wait until the row nears the screen, so they never slow the cast photos above.
+                val loads = mutableListOf<() -> Unit>()
+                // Same card style as the cast (Settings → Cast & crew cards): large portraits or round.
+                val round = roundCast()
+                val width = if (round) (if (DeviceLayout.phone) ROUND_CAST_WIDTH_PHONE else ROUND_CAST_WIDTH)
+                    else if (DeviceLayout.phone) CAST_CARD_WIDTH_PHONE else CAST_CARD_WIDTH
+                extra.crew.forEach { member -> row.addView(castCard(member, round, photoLoads = loads), margin(width, -2, right = if (DeviceLayout.phone) 8 else 12)) }
+                loadWhenNear(row, loads)
             }
             if (extra.facts.isNotEmpty()) aboutSection(topics, extra.facts)
         }
@@ -3131,11 +3162,11 @@ class MainActivity : Activity() {
         if (member.photo.isNotBlank()) image(photo, member.photo)
         val names = column()
         names.addView(text(member.name, if (DeviceLayout.phone) 22 else 28, ink, true))
-        names.addView(text("Movies and shows", 13, muted), margin(-1, -2, top = 6))
+        names.addView(text(if (member.crew) member.character else "Movies and shows", 13, muted), margin(-1, -2, top = 6))
         header.addView(names, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(18) })
         body.addView(header, margin(-1, -2, bottom = 8))
         val key = if (publicPreview) "" else store.get(TMDB_KEY)
-        load(id, { filmography(key, member.personId, PERSON_ROW_TITLES) }) { result ->
+        load(id, { filmography(key, member.personId, PERSON_ROW_TITLES, crew = member.crew) }) { result ->
             if (result.movies.isEmpty() && result.shows.isEmpty()) body.addView(text("TMDB lists no films or shows for ${member.name}.", 14, muted), margin(-1, -2, top = 12))
             // The rows show the most popular; See all loads the actor's whole list.
             if (flix && DeviceLayout.phone) personColumns(member, result.movies, result.shows)
@@ -3178,10 +3209,10 @@ class MainActivity : Activity() {
 
     private val filmographyCache = LruCache<String, TmdbCatalog.Filmography>(12)
     /** Call on a worker. Kept per actor so Back and See all don't fetch again. */
-    private fun filmography(key: String, personId: Long, limit: Int, byRelease: Boolean = false): TmdbCatalog.Filmography {
-        val cacheKey = "$personId:$limit:$byRelease"
+    private fun filmography(key: String, personId: Long, limit: Int, byRelease: Boolean = false, crew: Boolean = false): TmdbCatalog.Filmography {
+        val cacheKey = "$personId:$limit:$byRelease:$crew"
         filmographyCache.get(cacheKey)?.let { return it }
-        return TmdbCatalog(this, key, tmdbRegion()).filmography(personId, limit, byRelease).also { filmographyCache.put(cacheKey, it) }
+        return TmdbCatalog(this, key, tmdbRegion()).filmography(personId, limit, byRelease, crew).also { filmographyCache.put(cacheKey, it) }
     }
 
     /** All of an actor's films (or shows), newest release first. */
@@ -3189,7 +3220,7 @@ class MainActivity : Activity() {
         current = { personGrid(member, type) }
         val id = page("${member.name} · ${if (type == "movie") "Movies" else "Shows"}")
         val key = if (publicPreview) "" else store.get(TMDB_KEY)
-        load(id, { filmography(key, member.personId, Int.MAX_VALUE, byRelease = true) }) { result ->
+        load(id, { filmography(key, member.personId, Int.MAX_VALUE, byRelease = true, crew = member.crew) }) { result ->
             mediaGrid(if (type == "movie") result.movies else result.shows)
             focusAfterRender(id)
         }
@@ -3504,9 +3535,210 @@ class MainActivity : Activity() {
         // longer, so it is ready when the list appears however the sources were opened.
         val title = MediaItemData(identity.imdbId, identity.type, identity.title)
         val details = if (cachedDetails(title) != null) null else metadataWorker.submit(java.util.concurrent.Callable { runCatching { fetchDetails(title) }.getOrNull() })
-        read(id, { resolver.search(identity).also { runCatching { details?.get(1_500, java.util.concurrent.TimeUnit.MILLISECONDS) } } }) { result ->
-            sourceResults(identity, result.items, result.unavailableProviders, autoplay = autoplayNext || (!manual && store.get(AUTOPLAY_FIRST) == "true"), animate = true)
+        val preferences = SourceSearchPreferences(this)
+        val chosen = preferences.mode(store.get(AUTOPLAY_FIRST) == "true")
+        val search = LinkSearch(identity, id).apply {
+            // A manual search never auto-plays; the player's next episode always does, straight away (it counted down already).
+            autoplay = when { autoplayNext -> chosen.takeIf { it != SourceSearchPreferences.OFF } ?: SourceSearchPreferences.END; manual -> SourceSearchPreferences.OFF; else -> chosen }
+            countdownSeconds = if (autoplayNext) 0 else SourceSearchPreferences.COUNTDOWN_SECONDS
         }
+        activeSearch = search
+        val status = text("Searching for links…", 13, muted); body.addView(status, margin(-1, -2, top = 12, bottom = 12))
+        if (search.autoplay == SourceSearchPreferences.WAIT) countdownHandler.postDelayed({
+            search.waitOver = true; if (search.rendered && generation == search.generation && !isDestroyed) renderSearch(search)
+        }, preferences.waitSeconds * 1000L)
+        val limit = preferences.timeLimitSeconds * 1000L
+        // Search goal: the time limit only, a number of good links, best per quality full, or whichever comes first.
+        val until = preferences.searchUntil(SourceSortPreferences(this).keepSearching)
+        val stopAfter = if (until == SourceSearchPreferences.UNTIL_LINKS || until == SourceSearchPreferences.UNTIL_EITHER) preferences.goodLinksNeeded else 0
+        val untilBest = until == SourceSearchPreferences.UNTIL_BEST || until == SourceSearchPreferences.UNTIL_EITHER
+        worker.execute {
+            try {
+                val result = resolver.search(identity, limit, timing = { provider, ms -> preferences.record(provider.id, ms) },
+                    ownLimitMs = { id -> preferences.ownLimit(id).takeIf { it > 0 }?.let { it * 1000L } }) { step ->
+                    runOnUiThread { if (!isDestroyed) { search.take(step); scheduleRender(search) } }
+                    val full = untilBest && !step.finished && bestPerQualityFull(step.items, identity)
+                    if (full) search.bestFull = true
+                    full || (stopAfter > 0 && !step.finished && goodLinkCount(step.items, identity) >= stopAfter)
+                }
+                runCatching { details?.get(1_500, java.util.concurrent.TimeUnit.MILLISECONDS) }
+                runOnUiThread {
+                    if (isDestroyed) return@runOnUiThread
+                    search.items = result.items; search.unavailable = result.unavailableProviders; search.late = result.lateProviders
+                    search.stoppedEarly = result.stoppedEarly
+                    search.waiting = emptyList(); search.finished = true
+                    if (generation == search.generation) { if (resumed) renderSearch(search) else search.needsRender = true }
+                }
+            } catch (error: Exception) { runOnUiThread {
+                if (!isDestroyed && generation == search.generation) { search.finished = true; body.removeView(status); showError(error); focusAfterRender(generation) }
+            } }
+        }
+    }
+
+    /** A link search, in progress or done: the link list re-renders from it as add-ons answer. */
+    private class LinkSearch(val identity: PlaybackIdentity, var generation: Int) {
+        var items: List<SourceItem> = emptyList(); var unavailable: List<String> = emptyList(); var late: List<String> = emptyList(); var stoppedEarly = false
+        var answered = 0; var total = 0; var waiting: List<String> = emptyList(); var finished = false
+        var autoplay = SourceSearchPreferences.OFF; var countdownSeconds = SourceSearchPreferences.COUNTDOWN_SECONDS
+        var autoplayDone = false; var waitOver = false; var showHidden = false; var showAll = false; var rendered = false
+        /** The source the header logos are filtering to (debrid service or add-on id), or null for all links. */
+        var sourceFilter: String? = null
+        /** Stop early because Best per quality filled up (not because of the Stop early count). */
+        @Volatile var bestFull = false
+        var hadLinks = false
+        /** The first link's key in the last render: focus on it follows the top spot as better links arrive. */
+        var topKey: String? = null
+        /** Links arrived while the list was hidden (player in front): redraw once on return. */
+        var needsRender = false
+        var lastRender = 0L; var renderQueued = false; var countdownEndsAt = 0L
+        /** Links that may auto-play (play at once, fit this device, under the size limit), best first. */
+        var good: List<SourceItem> = emptyList()
+        /** Real-Debrid-style candidates when nothing is known to be cached. */
+        var tryOnPlay: List<SourceItem> = emptyList()
+        var banner: TextView? = null
+        fun take(step: SourceResolver.SearchProgress) {
+            items = step.items; unavailable = step.unavailable; answered = step.answered; total = step.total; waiting = step.waiting
+        }
+    }
+    private var activeSearch: LinkSearch? = null
+    private var renderingSearch = false
+    private val countdownHandler = Handler(Looper.getMainLooper())
+    private var autoplayCountdown: Runnable? = null
+    private var swallowBackUp = false
+    /** Back on a filtered link list shows every link again (true when it did). */
+    private var clearSourceFilter: (() -> Boolean)? = null
+
+    /** Re-renders at most about twice a second while add-ons keep answering, keeping focus on the same link. */
+    private fun scheduleRender(search: LinkSearch) {
+        if (generation != search.generation || search.renderQueued || search.finished) return
+        // Behind the player the list is not redrawn: that work would take the TV's processor from the video.
+        if (!resumed) { search.needsRender = true; return }
+        val wait = (800 - (android.os.SystemClock.elapsedRealtime() - search.lastRender)).coerceAtLeast(0)
+        search.renderQueued = true
+        countdownHandler.postDelayed({
+            search.renderQueued = false
+            if (!isDestroyed && generation == search.generation && !search.finished) renderSearch(search)
+        }, wait)
+    }
+
+    private fun renderSearch(search: LinkSearch) {
+        // Until links were on screen there is nothing worth keeping focus on: the first links get it.
+        val captured = if (search.rendered && search.hadLinks && generation == search.generation) focusController.capture() else null
+        // Still on the top link (the viewer hasn't moved): focus follows the top spot, so a better link that arrives gets it.
+        val keep = captured?.takeUnless { it.key != null && it.key == search.topKey }
+        if (keep?.key != null && DeviceLayout.tv && pendingFocus == null) pendingFocus = keep
+        renderingSearch = true
+        try { sourceResults(search.identity, search.items, search.unavailable, animate = !search.rendered, search = search) }
+        finally { renderingSearch = false }
+        search.rendered = true; search.generation = generation; search.lastRender = android.os.SystemClock.elapsedRealtime()
+        search.hadLinks = search.items.isNotEmpty()
+        // Touch screens keep their scroll place instead of a focused row.
+        if (keep != null && (keep.key == null || !DeviceLayout.tv)) body.post { if (generation == search.generation) scroller.scrollTo(0, keep.scrollY) }
+    }
+
+    private fun searchLine(search: LinkSearch): String = if (search.answered == 0) "Searching ${search.total.takeIf { it > 0 } ?: ""} add-ons…".replace("  ", " ")
+        else "Searching ${search.answered}/${search.total} · waiting for ${search.waiting.take(3).joinToString(", ")}${if (search.waiting.size > 3) " +${search.waiting.size - 3}" else ""}"
+
+    /** Good links (play at once, fit this device) among [items]; run on a worker to decide an early stop. */
+    private fun goodLinkCount(items: List<SourceItem>, identity: PlaybackIdentity): Int {
+        val caps = DeviceVideoSupport.caps()
+        return orderForStreams(items, identity).count { playsAtOnce(it) && DeviceVideoSupport.problem(it, caps) == null && withinAutoplayLimit(it, identity) }
+    }
+
+    /** Under the Auto-play size/bitrate limit (always true when the limit is off): the same test Auto-play uses. */
+    private fun withinAutoplayLimit(source: SourceItem, identity: PlaybackIdentity): Boolean {
+        if (store.get(AUTOPLAY_LIMIT_ON) != "true") return true
+        val minutes = AutoplayLimit.runtimeMinutes(cachedDetails(MediaItemData(identity.imdbId, identity.type, identity.title))?.runtime)
+        return !AutoplayLimit.tooBig(source.sizeBytes, minutes, autoplayMaxMbps(), autoplayLimitGb(episode = identity.type == "series") * 1_000_000_000L)
+    }
+
+    /**
+     * Best per quality is full (Search goal is "Best per quality is full" or "Either one"): 4K, 1080p and 720p (those not
+     * switched off in Link filters) each have enough good links. Runs on a worker.
+     */
+    private fun bestPerQualityFull(items: List<SourceItem>, identity: PlaybackIdentity): Boolean {
+        val sorting = SourceSortPreferences(this)
+        val perQuality = sorting.bestPerQuality
+        if (perQuality <= 0) return false
+        val wanted = listOf("4k", "1080", "720").filter { it !in sorting.rules.hiddenQualities }.ifEmpty { return false }
+        val caps = DeviceVideoSupport.caps()
+        val good = orderForStreams(items, identity).filter { playsAtOnce(it) && DeviceVideoSupport.problem(it, caps) == null && withinAutoplayLimit(it, identity) }
+        return wanted.all { key -> good.count { LinkRules.qualityKey(it.qualityHeight) == key } >= perQuality }
+    }
+
+    /** A movie's release year from its details (already loaded or loading beside the search), for the year filter. */
+    private fun movieYear(identity: PlaybackIdentity?): Int? = identity?.takeIf { it.type == "movie" }?.let { movie ->
+        cachedDetails(MediaItemData(movie.imdbId, movie.type, movie.title))?.year?.take(4)?.toIntOrNull()
+    }
+
+    /**
+     * Hidden by Link filters: the viewer's switches, words and pattern, Dolby Vision only links this device can't play,
+     * and movie links naming another year (another film with the same name).
+     */
+    private fun hiddenByRules(source: SourceItem, rules: LinkRules.Rules, caps: DeviceVideoSupport.Caps, identity: PlaybackIdentity? = null, year: Int? = null): Boolean =
+        rules.hides(source.title) || rules.hidesQuality(source.qualityHeight) ||
+        (LinkRules.HIDE_DV_ONLY in rules.hidePresets && DeviceVideoSupport.problem(source, caps)?.startsWith("DOLBY VISION ONLY") == true) ||
+        (rules.hideOtherYears && identity != null && year != null && LinkRules.otherYear(source.title, identity.title, year))
+
+    private fun maybeAutoplay(search: LinkSearch, checkOnPlay: Boolean) {
+        if (search.autoplayDone || search.autoplay == SourceSearchPreferences.OFF) return
+        val ready = when (search.autoplay) {
+            SourceSearchPreferences.FIRST -> true
+            SourceSearchPreferences.WAIT -> search.waitOver || search.finished
+            else -> search.finished
+        }
+        if (!ready) return
+        if (autoplayPick(search) != null) { if (autoplayCountdown == null) startAutoplayCountdown(search) else updateCountdownLine(search) }
+        else if (search.finished && checkOnPlay && autoplayCountdown == null && search.tryOnPlay.isNotEmpty()) {
+            search.autoplayDone = true; resolveFirstCached(search.tryOnPlay, search.identity, null)
+        } else if (search.finished && autoplayCountdown == null) {
+            // Nothing found fits: say so once and leave the choice to the viewer.
+            search.autoplayDone = true
+            toast(if (store.get(AUTOPLAY_LIMIT_ON) == "true") "No link under your auto-play limit · pick one" else "No link can auto-play · pick one")
+        }
+    }
+
+    /** The best good link; for a show, the same release group as the last episode when it is as sharp as the best. */
+    private fun autoplayPick(search: LinkSearch): SourceItem? {
+        val top = search.good.firstOrNull() ?: return null
+        if (search.identity.type != "series") return top
+        val group = getSharedPreferences("pov_last_group", 0).getString(search.identity.imdbId, null) ?: return top
+        return search.good.firstOrNull { LinkRules.releaseGroup(it.title).equals(group, ignoreCase = true) && (it.qualityHeight ?: 0) >= (top.qualityHeight ?: 0) } ?: top
+    }
+
+    private fun startAutoplayCountdown(search: LinkSearch) {
+        search.countdownEndsAt = android.os.SystemClock.elapsedRealtime() + search.countdownSeconds * 1000L
+        val tick = object : Runnable {
+            override fun run() {
+                if (autoplayCountdown !== this) return
+                if (isDestroyed || generation != search.generation) { autoplayCountdown = null; return }
+                val left = search.countdownEndsAt - android.os.SystemClock.elapsedRealtime()
+                if (left > 0) { updateCountdownLine(search); countdownHandler.postDelayed(this, minOf(left, 1_000L)); return }
+                autoplayCountdown = null; search.autoplayDone = true; search.banner?.visibility = View.GONE
+                val pick = autoplayPick(search) ?: return
+                toast("Playing the top result · ${pick.title.take(60)}"); resolve(pick, search.identity)
+            }
+        }
+        autoplayCountdown = tick
+        if (search.countdownSeconds <= 0) { tick.run(); return }
+        updateCountdownLine(search); countdownHandler.postDelayed(tick, 1_000L)
+    }
+
+    private fun updateCountdownLine(search: LinkSearch) {
+        val pick = autoplayPick(search) ?: return
+        val left = ((search.countdownEndsAt - android.os.SystemClock.elapsedRealtime() + 999) / 1000).coerceAtLeast(1)
+        search.banner?.apply {
+            visibility = View.VISIBLE
+            text = "▶  Playing ${SourceBadges.name(pick).lineSequence().firstOrNull().orEmpty().take(70)} in $left · ${if (DeviceLayout.tv) "press any key" else "tap anywhere"} to choose yourself"
+        }
+    }
+
+    /** Stops a running auto-play countdown; true when one was running. */
+    private fun cancelAutoplayCountdown(): Boolean {
+        val running = autoplayCountdown ?: return false
+        autoplayCountdown = null; countdownHandler.removeCallbacks(running)
+        activeSearch?.let { it.autoplayDone = true; it.banner?.visibility = View.GONE }
+        return true
     }
 
     private fun sourceResults(identity: PlaybackIdentity, sources: List<SourceItem>) = sourceResults(identity, sources, emptyList())
@@ -3515,12 +3747,14 @@ class MainActivity : Activity() {
     private fun sourceRevision() = listOf(store.get(SourceProviders.KEY), store.get("sources.endpoint"), DebridServices.connected(store).joinToString(","),
         Easynews.active(store).toString(), Easynews.server(store)).joinToString("\u0000")
 
-    private fun sourceResults(identity: PlaybackIdentity, sources: List<SourceItem>, unavailable: List<String>, autoplay: Boolean = false, animate: Boolean = false) {
+    private fun sourceResults(identity: PlaybackIdentity, sources: List<SourceItem>, unavailable: List<String>, animate: Boolean = false, search: LinkSearch? = null) {
         val providerRevision = sourceRevision()
         current = {
             if (providerRevision != sourceRevision()) showSources(identity)
+            else if (search != null) renderSearch(search)
             else sourceResults(identity, sources, unavailable)
         }
+        val settled = search == null || search.finished
         val connected = DebridServices.connected(store)
         val directOnly = connected.isEmpty()
         val checkOnPlay = connected.filter { it in LinkDebrids.CHECK_ON_PLAY }
@@ -3528,9 +3762,15 @@ class MainActivity : Activity() {
         val hideUncached = store.get(HIDE_UNCACHED) == "true" && checkOnPlay.isEmpty()
         // Cam, telesync and other theatre copies are left out unless the viewer turned that off.
         val hideLow = LowQualityReleases.hidden(store)
-        val playable = (if (directOnly) sources.filter { it.directUrl.isNotEmpty() } else sources)
+        val filtered = (if (directOnly) sources.filter { it.directUrl.isNotEmpty() } else sources)
             .let { all -> if (hideUncached) all.filter(::playsAtOnce) else all }
             .let { all -> if (hideLow) all.filterNot(LowQualityReleases::matches) else all }
+        // Link filters (Settings → Playback → Links & sorting); the list can show what they hid.
+        val rules = SourceSortPreferences(this).rules
+        val ruleCaps = DeviceVideoSupport.caps()
+        val ruleYear = movieYear(identity)
+        val ruleHidden = filtered.count { hiddenByRules(it, rules, ruleCaps, identity, ruleYear) }
+        val playable = if (search?.showHidden == true) filtered else filtered.filterNot { hiddenByRules(it, rules, ruleCaps, identity, ruleYear) }
         val lowOnly = hideLow && playable.isEmpty() && sources.any(LowQualityReleases::matches)
         val suffix = if (identity.type == "series") "  ·  S${identity.season} E${identity.episode}" else ""
         val artShown = flix && heroBackdrop.visibility == View.VISIBLE
@@ -3553,11 +3793,29 @@ class MainActivity : Activity() {
         else body.addView(View(this), margin(-1, 6))
         sourcesBackdrop(identity, keep = artShown)
         val sorting = SourceSortPreferences(this)
-        body.addView(button("Sort · ${sorting.label}  ›") {
-            SourceSortPreferences.show(this) { sourceResults(identity, sources, unavailable) }
-        }, margin(-1, if (compactList) 36 else 42, bottom = if (compactList) 6 else 8))
+        val sortButton: View = button("Sort · ${sorting.label}  ›") {
+            SourceSortPreferences.show(this, { if (search != null) renderSearch(search) else sourceResults(identity, sources, unavailable) }) {
+                navigate { playbackPage("preferred") }
+            }
+        }
+        // The list opens on its first link, not on Sort above it.
+        sortButton.tag = "${TvFocusController.SKIP_FIRST}:sort"
+        body.addView(sortButton, margin(-1, if (compactList) 36 else 42, bottom = if (compactList) 6 else 8))
         if (unavailable.isNotEmpty()) body.addView(text("Unavailable providers: ${unavailable.joinToString(", ")}. Other providers were searched.", 14, muted), margin(-1, -2, bottom = 8))
-        if (sources.isEmpty()) body.addView(text("No sources were returned. Try again later or check the source provider in Settings.", 15, muted))
+        if (search != null && !search.finished) body.addView(text(searchLine(search), 13, 0xFF46D369.toInt(), true), margin(-1, -2, bottom = 8))
+        // Stop early is the viewer's choice, so it gets one short line; only a real time-out names the slow add-ons.
+        if (search != null && search.stoppedEarly && search.bestFull) body.addView(text("Stopped: best per quality found · " +
+            "${search.late.size} ${if (search.late.size == 1) "add-on" else "add-ons"} not waited for", 13, muted), margin(-1, -2, bottom = 8))
+        else if (search != null && search.stoppedEarly) body.addView(text("Stopped: ${SourceSearchPreferences(this).goodLinksNeeded} good links found · " +
+            "${search.late.size} ${if (search.late.size == 1) "add-on" else "add-ons"} not waited for", 13, muted), margin(-1, -2, bottom = 8))
+        else if (search != null && search.late.isNotEmpty()) body.addView(text("No answer in time: ${search.late.joinToString(", ")}. " +
+            "Give them longer in Settings → Playback → Links & sorting → Max search time.", 13, muted), margin(-1, -2, bottom = 8))
+        if (search != null) {
+            val banner = text("", 14, ink, true).apply { visibility = View.GONE; background = rounded(withAlpha(accent, 60), 8); setPadding(dp(12), dp(8), dp(12), dp(8)) }
+            body.addView(banner, margin(-1, -2, bottom = 8)); search.banner = banner
+        }
+        if (!settled) { if (sources.isEmpty()) body.addView(text("Waiting for the first add-on to answer…", 15, muted)) }
+        else if (sources.isEmpty()) body.addView(text("No sources were returned. Try again later or check the source provider in Settings.", 15, muted))
         else if (lowOnly) {
             body.addView(text("Only cam or other low-quality releases were found. Turn off Hide cam & low-quality releases in Settings → Playback to see them.", 15, muted))
         } else if (playable.isEmpty() && hideUncached) {
@@ -3576,15 +3834,64 @@ class MainActivity : Activity() {
         fun problem(source: SourceItem) = problems.getOrPut(source) { DeviceVideoSupport.problem(source, fit) }
         fun tooTall(source: SourceItem) = problem(source) != null
         val languages = sorting.languages
-        val ordered = playable.distinctBy(TvChoiceKeys::source).let { unique -> languages?.sorted(unique, sorting.order) ?: sorting.order.sorted(unique) }.let(::cachedFirst).let { all -> all.filterNot(::tooTall) + all.filter(::tooTall) }
+        val fullOrder = playable.distinctBy(TvChoiceKeys::source).let { unique -> languages?.sorted(unique, sorting.order) ?: sorting.order.sorted(unique) }.let(::cachedFirst).let { all -> all.filterNot(::tooTall) + all.filter(::tooTall) }
+        // Best per quality: the first few of each quality in this order; More links shows the rest.
+        val ordered = if (search?.showAll == true) fullOrder else SourceSortPreferences.bestPerQuality(fullOrder, sorting.bestPerQuality)
+        val moreLinks = fullOrder.size - ordered.size
+        search?.topKey = ordered.firstOrNull()?.let(TvChoiceKeys::source)
         // The player's Streams panel offers the same links in the same order.
         StreamChoices.publish(identity, ordered)
+        // The logos and counts filter the list: landing on one (TV) or tapping it (phone) shows only that source's links;
+        // Down goes into them, and Back or the total shows every link again.
+        val rowSources = HashMap<View, SourceItem>()
+        val chips = mutableListOf<View>()
+        val chipKeys = HashMap<View, String?>()
+        fun matchesSource(source: SourceItem, key: String?): Boolean = key == null || when (key) {
+            PlaybackDebrid.EASYNEWS -> Easynews.isHost(source.directUrl)
+            in DebridServices.IDS -> key in source.cachedServices
+            else -> PlaybackDebrid.addon(source) == key
+        }
+        val total = text("", 14, muted, true)
+        fun paintChips() = chips.forEach { chip ->
+            val chosen = chipKeys[chip] == search?.sourceFilter
+            chip.background = if (chip.isFocused) rounded(Color.WHITE, 10) else if (chosen && search?.sourceFilter != null) rounded(withAlpha(Color.WHITE, 46), 10) else null
+            (chip as? LinearLayout)?.let { (0 until it.childCount).map(it::getChildAt).filterIsInstance<TextView>().forEach { label -> label.setTextColor(if (chip.isFocused) Color.BLACK else ink) } }
+        }
+        fun applySourceFilter(key: String?) {
+            search?.sourceFilter = key
+            var shown = 0
+            for (index in 0 until choices.childCount) {
+                val row = choices.getChildAt(index); val source = rowSources[row] ?: continue
+                val visible = matchesSource(source, key); row.visibility = if (visible) View.VISIBLE else View.GONE; if (visible) shown++
+            }
+            val all = ordered.size
+            total.text = if (key == null) "$all ${if (all == 1) "link" else "links"}" else "${ordered.count { matchesSource(it, key) }} of $all links"
+            paintChips()
+        }
+        fun chip(key: String?, description: String, filters: Boolean): LinearLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(8), dp(4), dp(8), dp(4))
+            contentDescription = description
+            if (search != null && filters) {
+                tag = "${TvFocusController.SKIP_SOURCE}${key ?: "all"}"; isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true
+                chips += this; chipKeys[this] = key
+                setOnFocusChangeListener { _, focused -> if (focused && DeviceLayout.tv) applySourceFilter(key) else paintChips() }
+                setOnClickListener { if (!DeviceLayout.tv) applySourceFilter(if (key != null && search.sourceFilter == key) null else key) }
+                setOnKeyListener { _, keyCode, event ->
+                    if (event.action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                        (0 until choices.childCount).map(choices::getChildAt).firstOrNull { it.visibility == View.VISIBLE }?.requestFocus(); true
+                    } else false
+                }
+            }
+        }
         fun count(service: String, value: String, description: String) {
-            counts.addView(ImageView(this).apply {
+            val filters = value != "?" && value != "0"
+            val holder = chip(service, description, filters)
+            holder.addView(ImageView(this).apply {
                 setImageResource(PlaybackDebrid.logo(service)); adjustViewBounds = true; maxWidth = dp(72)
-                scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = description
-            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(20)).apply { leftMargin = dp(14) })
-            counts.addView(text(value, 16, ink, true), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(6) })
+                scaleType = ImageView.ScaleType.FIT_CENTER
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(20)))
+            holder.addView(text(value, 16, ink, true), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(6) })
+            counts.addView(holder, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(6) })
         }
         connected.forEach { service ->
             val name = DebridServices.name(service)
@@ -3598,17 +3905,18 @@ class MainActivity : Activity() {
             ordered.count { PlaybackDebrid.addon(it) == addon }
                 .takeIf { it > 0 }?.let { count(addon, "$it", "$it $name links") }
         }
-        counts.addView(text("${ordered.size} ${if (ordered.size == 1) "link" else "links"}", 14, muted, true),
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(16) })
-        ordered.forEach { source ->
-            val cachedOn = source.cachedServices.map(DebridServices::name)
-            val status = when {
-                source.directUrl.isNotEmpty() -> "DIRECT STREAM"
-                cachedOn.size > 1 -> "CACHED · ${cachedOn.joinToString(" + ")} · Plays via ${cachedOn.first()}"
-                cachedOn.isNotEmpty() -> "CACHED · ${cachedOn.first()}"
-                checkOnPlay.isNotEmpty() -> "CHECK ON PLAY · ${checkOnPlay.joinToString(" + ") { DebridServices.name(it) }}"
-                else -> "TRANSFER MAY BE NEEDED"
-            }
+        val totalChip = chip(null, "All links", filters = chips.isNotEmpty())
+        totalChip.addView(total)
+        applySourceFilter(search?.sourceFilter)
+        counts.addView(totalChip, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
+        // Up from Sort reaches the logos, on the one that is filtering.
+        sortButton.setOnKeyListener { _, keyCode, event ->
+            if (event.action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_DPAD_UP && chips.isNotEmpty()) {
+                (chips.firstOrNull { chipKeys[it] == search?.sourceFilter && search?.sourceFilter != null } ?: chips.first()).requestFocus(); true
+            } else false
+        }
+        clearSourceFilter = if (search == null) null else ({ if (search.sourceFilter != null && generation == id) { applySourceFilter(null); true } else false })
+        fun addRow(source: SourceItem, fadeIn: Boolean) {
             val limitNote = problem(source)?.let { " · $it" }.orEmpty()
             // Only the badges, the release name and the source's own name: the scrapers' extra lines are left out.
             choices.addChoice(TvChoiceRow(this, TvChoiceKeys.source(source), SourceBadges.name(source), SourceBadges.origin(source),
@@ -3619,20 +3927,54 @@ class MainActivity : Activity() {
                     else offerTransfer(source, identity)
                 }
                 else resolve(source, identity)
-            }.apply { setOnLongClickListener { debridMenu(source, identity, checkOnPlay) } })
+            }.apply {
+                setOnLongClickListener { debridMenu(source, identity, checkOnPlay) }
+                rowSources[this] = source
+                if (!matchesSource(source, search?.sourceFilter)) visibility = View.GONE
+                if (fadeIn) { alpha = 0f; animate().alpha(1f).setDuration(180).start() }
+            })
         }
+        // The first screenful (and the row focus returns to) is built at once; the rest follow a batch per frame, so a
+        // long list never freezes the TV and More links opens in place.
+        val focusIndex = pendingFocus?.key?.let { key -> ordered.indexOfFirst { TvChoiceKeys.source(it) == key } } ?: -1
+        val firstBatch = minOf(ordered.size, maxOf(14, focusIndex + 4))
+        ordered.take(firstBatch).forEach { addRow(it, fadeIn = false) }
+        var nextRow = firstBatch
+        val rowsFor = id
+        fun moreRows() {
+            if (rowsFor != generation || isDestroyed) return
+            // Paused behind the player: finish the list when it is seen again.
+            if (!resumed && search != null) { search.needsRender = true; return }
+            val end = minOf(nextRow + 12, ordered.size)
+            for (index in nextRow until end) addRow(ordered[index], fadeIn = true)
+            nextRow = end
+            if (nextRow < ordered.size) body.post { moreRows() }
+        }
+        if (nextRow < ordered.size) body.post { moreRows() }
+        if (search != null && (moreLinks > 0 || search.showAll) && sorting.bestPerQuality > 0) body.addView(button(
+            if (search.showAll) "Best ${sorting.bestPerQuality} per quality only" else "More links ($moreLinks)") {
+            // Opening the rest lands on the first link that was hidden, so the list grows in place below it.
+            if (!search.showAll) ordered.toHashSet().let { shown -> fullOrder.firstOrNull { it !in shown } }?.let { pendingFocus = TvFocusSnapshot(TvChoiceKeys.source(it), scroller.scrollY) }
+            search.showAll = !search.showAll; renderSearch(search)
+        }, margin(-1, 40, top = 8))
+        if (search != null && ruleHidden > 0) body.addView(button(if (search.showHidden) "Hide the $ruleHidden filtered ${if (ruleHidden == 1) "link" else "links"} again"
+            else "Show $ruleHidden hidden ${if (ruleHidden == 1) "link" else "links"} (Link filters)") {
+            search.showHidden = !search.showHidden; renderSearch(search)
+        }, margin(-1, 40, top = 8))
         focusAfterRender(id)
         if (animate && flix) sourcesRiseIn(choices)
         // Only a fresh search auto-plays; returning to this list leaves the choice to the viewer.
-        if (autoplay) {
+        if (search != null) {
             // Auto-play skips links over the viewer's size limit; links of unknown size stay eligible.
             // Over the bitrate cap when the runtime is known, else over this kind of title's size cap.
             val limited = store.get(AUTOPLAY_LIMIT_ON) == "true"
             val maxBytes = autoplayLimitGb(episode = identity.type == "series") * 1_000_000_000L
             fun tooBig(source: SourceItem) = limited && AutoplayLimit.tooBig(source.sizeBytes, minutes, autoplayMaxMbps(), maxBytes)
-            val first = ordered.firstOrNull { (it.cached || it.directUrl.isNotEmpty()) && !tooTall(it) && !tooBig(it) }
-            if (first != null) { toast("Playing the top result · ${first.title.take(60)}"); resolve(first, identity) }
-            else if (checkOnPlay.isNotEmpty()) resolveFirstCached(ordered.filterNot { tooTall(it) || tooBig(it) }, identity, null)
+            fun fits(source: SourceItem) = (source.cached || source.directUrl.isNotEmpty()) && !tooTall(source) && !tooBig(source)
+            // The short list (Best per quality) first; when none of it fits the Auto-play limit, every found link in the same order.
+            search.good = ordered.filter(::fits).ifEmpty { fullOrder.filter(::fits) }
+            search.tryOnPlay = ordered.filterNot { tooTall(it) || tooBig(it) }.ifEmpty { fullOrder.filterNot { tooTall(it) || tooBig(it) } }
+            maybeAutoplay(search, checkOnPlay.isNotEmpty())
         }
     }
 
@@ -3682,7 +4024,10 @@ class MainActivity : Activity() {
      * services can't tell in advance, so with only those connected nothing moves.
      */
     private fun cachedFirst(sorted: List<SourceItem>): List<SourceItem> {
-        val ready = sorted.partition(::playsAtOnce).let { (ready, other) -> ready + other }
+        // Your own Preferred words can keep a not-yet-cached link among the ready ones, in its sort place.
+        val sorting = SourceSortPreferences(this)
+        val rules = sorting.rules.takeIf { sorting.wordsBeatCached && sorting.preferredFirst && it.preferWords.isNotEmpty() }
+        val ready = sorted.partition { playsAtOnce(it) || rules?.matchesOwnWord(it.title) == true }.let { (ready, other) -> ready + other }
         // Library links now rank by their own row in Link sorting (SourceSortOrder.LIBRARY).
         migrateLibraryFirst()
         return ready
@@ -3697,17 +4042,20 @@ class MainActivity : Activity() {
     private fun playsAtOnce(source: SourceItem) = source.cached || source.cachedServices.isNotEmpty() || source.directUrl.isNotEmpty()
 
     /** The links of [sources] as the source list shows them: playable ones, in the viewer's order, too-tall last. */
-    private fun orderForStreams(sources: List<SourceItem>): List<SourceItem> {
+    private fun orderForStreams(sources: List<SourceItem>, identity: PlaybackIdentity? = null): List<SourceItem> {
         val connected = DebridServices.connected(store)
         val hideUncached = store.get(HIDE_UNCACHED) == "true" && connected.none { it in LinkDebrids.CHECK_ON_PLAY }
+        val sorting = SourceSortPreferences(this)
+        val fit = DeviceVideoSupport.caps()
+        val rules = sorting.rules
         val playable = (if (connected.isEmpty()) sources.filter { it.directUrl.isNotEmpty() } else sources)
             .let { all -> if (hideUncached) all.filter(::playsAtOnce) else all }
             .let { all -> if (LowQualityReleases.hidden(store)) all.filterNot(LowQualityReleases::matches) else all }
-        val sorting = SourceSortPreferences(this)
-        val fit = DeviceVideoSupport.caps()
+            .let { all -> val year = movieYear(identity); all.filterNot { hiddenByRules(it, rules, fit, identity, year) } }
         fun tooTall(source: SourceItem) = DeviceVideoSupport.problem(source, fit) != null
         return playable.distinctBy(TvChoiceKeys::source).let { unique -> sorting.languages?.sorted(unique, sorting.order) ?: sorting.order.sorted(unique) }
             .let(::cachedFirst).let { all -> all.filterNot(::tooTall) + all.filter(::tooTall) }
+            .let { all -> SourceSortPreferences.bestPerQuality(all, sorting.bestPerQuality) }
     }
 
     /**
@@ -3720,7 +4068,7 @@ class MainActivity : Activity() {
         window.decorView.postDelayed({
             worker.execute {
                 runCatching { resolver.search(identity).items }
-                    .onSuccess { found -> runOnUiThread { if (!isDestroyed) StreamChoices.publish(identity, orderForStreams(found)) } }
+                    .onSuccess { found -> runOnUiThread { if (!isDestroyed) StreamChoices.publish(identity, orderForStreams(found, identity)) } }
                     .onFailure { StreamChoices.fail(identity) }
             }
         }, delayMs)
@@ -3763,6 +4111,7 @@ class MainActivity : Activity() {
      */
     private fun resolveFirstCached(candidates: List<SourceItem>, identity: PlaybackIdentity, picked: SourceItem?) {
         if (resolvingGeneration == generation || launchingPlayer) { toast("Preparing the selected source…"); return }
+        cancelAutoplayCountdown()
         playingSourceText = ""; playingMedia = null
         val request = generation; resolvingGeneration = request
         val progress = text("Checking links…", 14, accent); body.addView(progress, margin(-1, -2, top = 14))
@@ -3823,6 +4172,9 @@ class MainActivity : Activity() {
     /** [service] plays the link on that debrid service instead of the preferred one (chosen by holding OK on a link). */
     private fun resolve(source: SourceItem, identity: PlaybackIdentity, service: String? = null) {
         if (resolvingGeneration == generation || launchingPlayer) { toast("Preparing the selected source…"); return }
+        cancelAutoplayCountdown()
+        // A show's next episode auto-plays from the same release group when it can, so quality stays the same.
+        if (identity.type == "series") LinkRules.releaseGroup(source.title)?.let { getSharedPreferences("pov_last_group", 0).edit().putString(identity.imdbId, it).apply() }
         playingSourceText = "${source.title} · ${source.detail}"; playingMedia = playingSourceText to source.sizeBytes
         val request = generation; resolvingGeneration = request
         val progress = text("Preparing your video…", 14, accent); body.addView(progress, margin(-1, -2, top = 14))
@@ -4709,10 +5061,9 @@ class MainActivity : Activity() {
 
     /** Parallel connections per Easynews video: each connection is capped, so more connections stream faster. */
     private fun easynewsConnections() {
-        inputSetting("Easynews connections (1–${Easynews.MAX_CONNECTIONS})", "e.g. 4 or 8. 1 = a single connection", Easynews.connections(store).toString()) { value ->
-            val count = value.trim().toIntOrNull()
-            if (count == null || count !in 1..Easynews.MAX_CONNECTIONS) toast("Enter a whole number from 1 to ${Easynews.MAX_CONNECTIONS}")
-            else { store.put(Easynews.CONNECTIONS, count.toString()); toast("Easynews uses $count ${if (count == 1) "connection" else "connections"} from the next video"); refreshSettings() }
+        NumberStepper.show(this, "Easynews connections", "More connections stream faster; 1 = a single connection. Applies from the next video.",
+            Easynews.connections(store), 1..Easynews.MAX_CONNECTIONS, { "$it ${if (it == 1) "connection" else "connections"}" }) { count ->
+            store.put(Easynews.CONNECTIONS, count.toString()); toast("Easynews uses $count ${if (count == 1) "connection" else "connections"} from the next video"); refreshSettings()
         }
     }
 
@@ -4843,10 +5194,10 @@ class MainActivity : Activity() {
                     TvContinueWatching.setEnabled(this,enabled)
                 }
             }
-            settingsRow(home, "Cast cards", if (roundCast()) "Round" else "Large portraits",
-                "How the cast looks on details pages: large portrait photos, or the smaller round ones.") {
+            settingsRow(home, "Cast & crew cards", if (roundCast()) "Round" else "Large portraits",
+                "How the cast and crew look on details pages: large portrait photos, or the smaller round ones.") {
                 val styles = listOf("large" to "Large portraits", "round" to "Round")
-                AlertDialog.Builder(this).setTitle("Cast cards")
+                AlertDialog.Builder(this).setTitle("Cast & crew cards")
                     .setSingleChoiceItems(styles.map { it.second }.toTypedArray(), if (roundCast()) 1 else 0) { dialog, index ->
                         store.put(CAST_STYLE, styles[index].first); dialog.dismiss(); refreshSettings()
                     }.setNegativeButton("Cancel", null).show()
@@ -4893,8 +5244,10 @@ class MainActivity : Activity() {
             // Playback opens three short pages instead of one long list of switches.
             settingsRow(playback, "Links & sorting", SourceSortPreferences(this).label,
                 "Sort order, badge style, compact list, and hiding uncached, cam and low-quality links.") { navigate { playbackPage("links") } }
-            val autoplayOn = store.get(AUTOPLAY_FIRST) == "true"
-            settingsRow(playback, "Auto-play", if (!autoplayOn) "Off" else if (store.get(AUTOPLAY_LIMIT_ON) == "true") "On · up to ${autoplayMaxMbps()} Mbps" else "On",
+            val autoplaySearch = SourceSearchPreferences(this)
+            val autoplayMode = autoplaySearch.mode(store.get(AUTOPLAY_FIRST) == "true")
+            val autoplayOn = autoplayMode != SourceSearchPreferences.OFF
+            settingsRow(playback, "Auto-play", if (!autoplayOn) "Off" else if (store.get(AUTOPLAY_LIMIT_ON) == "true") "${autoplaySearch.modeLabel(autoplayMode)} · up to ${autoplayMaxMbps()} Mbps" else autoplaySearch.modeLabel(autoplayMode),
                 "Auto-play the first link, its bitrate and size limits, and auto-play next episode.") { navigate { playbackPage("autoplay") } }
             settingsRow(playback, "Player", if (MiniPlayerPreferences(this).enabled) "Mini player on" else "Mini player off",
                 "Mini player, skip buttons, seek previews, read-ahead and Dolby Vision.") { navigate { playbackPage("player") } }
@@ -4924,6 +5277,10 @@ class MainActivity : Activity() {
             }
             settingsToggle(captions, "Find missing subtitles", "When a video has no subtitles in your language, the best matches from OpenSubtitles are added and the first one is turned on. Others are in the player's Subtitles list.",
                 subtitlePreferences.autoFetch) { on -> SubtitlePreferences(this).autoFetch = on }
+            settingsRow(captions, "Subtitle style", "${subtitlePreferences.fontLabel} · ${subtitlePreferences.sizeLabel}",
+                "Font, size, text and outline colors, outline type and background, with a live preview and Netflix, Prime and YouTube-style presets.") {
+                navigate { subtitleStylePage() }
+            }
             val wyzie = store.get(InAppPlaybackSession.WYZIE_KEY)
             settingsRow(captions, "Wyzie Subs", if (wyzie.isBlank()) "Not set" else "Connected",
                 "Optional: your own free Wyzie key (store.wyzie.io) adds more subtitle sources to Find missing subtitles.", status = wyzie.isNotBlank()) {
@@ -4944,21 +5301,6 @@ class MainActivity : Activity() {
             }
             if (subdl.isNotBlank()) settingsRow(captions, "Remove SubDL key", danger = true) {
                 confirm("Remove your SubDL key?") { store.remove(InAppPlaybackSession.SUBDL_KEY); refreshSettings() }
-            }
-            settingsRow(captions, "Subtitle style", "${subtitlePreferences.sizeLabel} · text and size") {
-                val preferences = SubtitlePreferences(this)
-                AlertDialog.Builder(this).setTitle("Subtitle style")
-                    .setMultiChoiceItems(arrayOf("Transparent background", "Bold text"),
-                        booleanArrayOf(preferences.transparentBackground, preferences.boldText)) { _, which, checked ->
-                        if (which == 0) preferences.transparentBackground = checked else preferences.boldText = checked
-                        InAppPlaybackSession.refreshSubtitleStyle()
-                    }.setNeutralButton("Size · ${preferences.sizeLabel}") { _, _ ->
-                        AlertDialog.Builder(this).setTitle("Subtitle size")
-                            .setSingleChoiceItems(SubtitlePreferences.SIZE_LABELS.toTypedArray(), SubtitlePreferences.SIZES.indexOf(preferences.sizePercent)) { dialog, index ->
-                                preferences.sizePercent = SubtitlePreferences.SIZES[index]
-                                InAppPlaybackSession.refreshSubtitleStyle(); dialog.dismiss(); refreshSettings()
-                            }.setPositiveButton("Done", null).show()
-                    }.setPositiveButton("Done", null).show()
             }
             settingsRow(captions, "Subtitle position", subtitlePreferences.positionLabel) {
                 SubtitlePositionPicker.show(this, liveVideo = false,
@@ -5219,12 +5561,21 @@ class MainActivity : Activity() {
         val (title, subtitle) = when (section) {
             "links" -> "Links & sorting" to "How links are ordered, and which are left out."
             "autoplay" -> "Auto-play" to "What Play starts on its own, and the next episode."
+            "qualities" -> "Qualities to show" to "Links of a switched-off quality are left out of the link list, Best per quality and the player's Streams."
+            "rules" -> "Link rules" to "Prefer or hide links by keywords, release groups, ready-made rules and regex patterns, like AIOStreams SEL templates."
+            "preferred" -> "Prefer" to "Links matching these move up, where Preferred sits in Link sorting."
+            "filters" -> "Hide" to "Links matching these are left out of the link list and the player's Streams."
+            "groups" -> "Trusted release groups" to "Pick a list to edit its groups. The lists' own switches are on the Preferred links page."
             "trailers" -> "Trailers" to "Trailers on details pages and when a Home shelf poster has focus."
-            else -> "Player" to "The player's extras: mini player, skip buttons, seek previews and picture."
+            else -> if (section.startsWith("group:")) (LinkRules.groupSet(section.removePrefix("group:"))?.label ?: "Release groups") to
+                (if (LinkRules.GROUP_SETS.any { it.id == section.removePrefix("group:") }) "Trusted release groups, best first. Links from groups that are on move up."
+                else "Links from groups that are on are hidden.")
+            else "Player" to "The player's extras: mini player, skip buttons, seek previews and picture."
         }
         page(title, subtitle)
         // The page title already names the card.
         val playback = settingsGroup(title, "nowplaying", heading = false)
+        if (section.startsWith("group:")) { groupListPage(playback, section.removePrefix("group:")); return }
         when (section) {
             "trailers" -> {
             settingsToggle(playback, "Trailers", "Trailers play on details pages and when a Home shelf poster has focus. The rotating top recommendations show backdrop images only.", heroTrailersEnabled()) { enabled ->
@@ -5246,8 +5597,60 @@ class MainActivity : Activity() {
             }
             "links" -> {
             settingsRow(playback, "Link sorting", SourceSortPreferences(this).label,
-                "Library links on top (or off), then what comes next (language, quality or size) and each one's direction. Auto-play follows this order.") {
-                SourceSortPreferences.show(this) { refreshSettings() }
+                "Library links on top (or off), then what comes next (language, quality, Preferred or size) and each one's direction. Auto-play follows this order.") {
+                SourceSortPreferences.show(this, { refreshSettings() }) { navigate { playbackPage("preferred") } }
+            }
+            val sortPreferences = SourceSortPreferences(this)
+            settingsRow(playback, "Best per quality", if (sortPreferences.bestPerQuality == 0) "Off · all links" else "${sortPreferences.bestPerQuality} per quality",
+                "Show only the best links of each quality (4K, 1080p, 720p, lower) in your sort order, with a More links row for the rest. Auto-play and the player's Streams use the same short list.") {
+                NumberStepper.show(this, "Best per quality", "Links kept for each quality. 0 = off: show every link.", sortPreferences.bestPerQuality,
+                    SourceSortPreferences.BEST_PER_QUALITY_RANGE, { if (it == 0) "Off" else "$it ${if (it == 1) "link" else "links"}" }) { count ->
+                    sortPreferences.bestPerQuality = count; refreshSettings()
+                }
+            }
+            val shownQualities = LinkRules.QUALITIES.filter { it.first !in SourceSortPreferences(this).rules.hiddenQualities }
+            settingsRow(playback, "Qualities to show", if (shownQualities.size == LinkRules.QUALITIES.size) "All" else shownQualities.joinToString(", ") { it.second.substringBefore(",") }.ifEmpty { "None" },
+                "Switch qualities on or off: 4K, 1080p, 720p, 576p/480p and lower, unknown. Links of a switched-off quality are left out everywhere, Best per quality included.") {
+                navigate { playbackPage("qualities") }
+            }
+            val untilPrefs = SourceSearchPreferences(this)
+            val until = untilPrefs.searchUntil(sortPreferences.keepSearching)
+            settingsRow(playback, "Search goal", untilPrefs.untilLabel(until, sortPreferences.bestPerQuality),
+                "When the search is done: when the time limit ends, once enough good links are in, once best per quality is full, or whichever of those two comes first. " +
+                "Good links play at once, suit this device and fit your Auto-play limit. The max search time still ends it if the goal isn't reached.") {
+                val modes = SourceSearchPreferences.UNTIL_MODES
+                val labels = listOf("Time limit ends · wait for every add-on, up to the time limit",
+                    "Good links needed · stop once this many good links are in",
+                    "Best per quality is full · stop once 4K, 1080p and 720p each have ${sortPreferences.bestPerQuality.takeIf { it > 0 } ?: "N"} good links",
+                    "Either one · good links needed or best per quality full, whichever comes first")
+                AlertDialog.Builder(this).setTitle("Search goal").setSingleChoiceItems(labels.toTypedArray(), modes.indexOf(until)) { dialog, index ->
+                    dialog.dismiss()
+                    val mode = modes[index]
+                    untilPrefs.setSearchUntil(mode)
+                    if (mode == SourceSearchPreferences.UNTIL_BEST || mode == SourceSearchPreferences.UNTIL_EITHER) {
+                        if (sortPreferences.bestPerQuality == 0) toast("Set Best per quality first, or this never stops the search")
+                    }
+                    if (mode == SourceSearchPreferences.UNTIL_LINKS || mode == SourceSearchPreferences.UNTIL_EITHER) {
+                        NumberStepper.show(this, "Good links needed", "The search stops once this many good links are in.", untilPrefs.goodLinksNeeded,
+                            SourceSearchPreferences.GOOD_LINKS_RANGE, { "$it ${if (it == 1) "link" else "links"}" }) { count ->
+                            untilPrefs.goodLinksNeeded = count; refreshSettings()
+                        }
+                    }
+                    refreshSettings()
+                }.setNegativeButton("Cancel", null).show()
+            }
+            val linkRules = SourceSortPreferences(this).rules
+            val preferCount = linkRules.preferWords.size + linkRules.preferPresets.size + (if (linkRules.preferPattern.isNotBlank()) 1 else 0)
+            val hideCount = linkRules.hideCount(LowQualityReleases.hidden(store))
+            settingsRow(playback, "Link rules", "$preferCount prefer · $hideCount hide",
+                "Prefer or hide links by keywords, release groups, ready-made rules and regex patterns, like AIOStreams SEL templates.") {
+                navigate { playbackPage("rules") }
+            }
+            val searchPreferences = SourceSearchPreferences(this)
+            val ownLimits = (SourceProviders(store).load().map { it.id } + "easynews").count { searchPreferences.ownLimit(it) > 0 }
+            settingsRow(playback, "Max search time", searchPreferences.timeLimitLabel + if (ownLimits > 0) " · $ownLimits add-on${if (ownLimits == 1) "" else "s"} own" else "",
+                "How long the search waits for add-ons: one time for all of them, and any add-on can have its own, shorter or longer. Links show as they answer.") {
+                navigate { maxSearchTimePage() }
             }
             val badgeStyle = BadgeStyle.current(this)
             settingsRow(playback, "Badge style", badgeStyle.label, "How the quality, HDR, audio and source tags on links look. ${badgeStyle.description}") { chooseBadgeStyle() }
@@ -5255,12 +5658,59 @@ class MainActivity : Activity() {
                 LinkListPreferences.compact(this)) { on -> LinkListPreferences.setCompact(this, on) }
             settingsToggle(playback, "Hide uncached links", "Show only links that play at once (cached or direct) in the link list and the player's Streams. Real-Debrid, AllDebrid and Debrid-Link can't tell in advance, so their links stay.",
                 store.get(HIDE_UNCACHED) == "true") { on -> store.put(HIDE_UNCACHED, on.toString()) }
-            settingsToggle(playback, "Hide cam & low-quality releases", "Leave out theatre recordings and early copies: CAM, HDCAM, TS/telesync, TC/telecine, screeners, workprints and HDRip. On by default.",
-                LowQualityReleases.hidden(store)) { on -> store.put(LowQualityReleases.KEY, on.toString()) }
             }
+            "qualities" -> {
+                val sort = SourceSortPreferences(this)
+                LinkRules.QUALITIES.forEach { (key, label) ->
+                    settingsToggle(playback, label, if (key == "unknown") "Links that don't say their quality." else "Switch off to leave out every $label link.", key !in sort.rules.hiddenQualities) { on ->
+                        sort.rules = sort.rules.let { it.copy(hiddenQualities = if (on) it.hiddenQualities - key else it.hiddenQualities + key) }
+                    }
+                }
+            }
+            "rules" -> {
+                val rules = SourceSortPreferences(this).rules
+                val preferCount = rules.preferWords.size + rules.preferPresets.size + (if (rules.preferPattern.isNotBlank()) 1 else 0)
+                settingsRow(playback, "Prefer", if (rules.preferActive) SourceSortPreferences.preferredSummary(rules) else "Not set",
+                    "Move links up: your keywords (playWEB, PSA…), ready-made rules, trusted release groups and a regex pattern. $preferCount on.") {
+                    navigate { playbackPage("preferred") }
+                }
+                val hideCount = rules.hideCount(LowQualityReleases.hidden(store))
+                settingsRow(playback, "Hide", if (hideCount == 0) "Off" else "$hideCount on",
+                    "Leave links out: bad copies, 3D, other years, low-quality groups, keywords and a regex pattern. The link list can still show what was hidden.") {
+                    navigate { playbackPage("filters") }
+                }
+            }
+            "preferred" -> preferredLinksPage(playback)
+            "groups" -> {
+                val rules = SourceSortPreferences(this).rules
+                LinkRules.GROUP_SETS.forEach { set ->
+                    settingsRow(playback, set.label, "${rules.activeGroups(set).size} of ${rules.groups(set).size} on" + if (set.id in rules.groupSets) "" else " · list off",
+                        rules.groups(set).take(6).joinToString(", ") + if (rules.groups(set).size > 6) "…" else "") {
+                        navigate { playbackPage("group:${set.id}") }
+                    }
+                }
+            }
+            "filters" -> linkFiltersPage(playback)
             "autoplay" -> {
-            settingsToggle(playback, "Auto-play first result", "Play starts the first cached or direct link in your sort order. The full list stays open behind it, so you can pick another link if it fails.",
-                store.get(AUTOPLAY_FIRST) == "true") { on -> store.put(AUTOPLAY_FIRST, on.toString()) }
+            val searchPreferences = SourceSearchPreferences(this)
+            val mode = searchPreferences.mode(store.get(AUTOPLAY_FIRST) == "true")
+            settingsRow(playback, "Auto-play", searchPreferences.modeLabel(mode),
+                "What Play starts on its own, in your sort order: the first good link as soon as one is in, the best after a few seconds, or the best once the search ends. " +
+                "The link shows for ${SourceSearchPreferences.COUNTDOWN_SECONDS} seconds first: press any key (or tap) to choose yourself.") {
+                val modes = SourceSearchPreferences.MODES
+                val labels = listOf("Off · show the link list", "First good link · fastest", "Best link after a few seconds", "Best link when the search ends")
+                AlertDialog.Builder(this).setTitle("Auto-play")
+                    .setSingleChoiceItems(labels.toTypedArray(), modes.indexOf(mode)) { dialog, index ->
+                        searchPreferences.setMode(modes[index]); store.put(AUTOPLAY_FIRST, (modes[index] != SourceSearchPreferences.OFF).toString())
+                        dialog.dismiss(); refreshSettings()
+                    }.setNegativeButton("Cancel", null).show()
+            }
+            if (mode == SourceSearchPreferences.WAIT) settingsRow(playback, "Wait before auto-play", "${searchPreferences.waitSeconds} seconds",
+                "How long the search collects links before the best one starts.") {
+                NumberStepper.show(this, "Wait before auto-play", "", searchPreferences.waitSeconds, SourceSearchPreferences.WAIT_RANGE, { "$it seconds" }) { seconds ->
+                    searchPreferences.waitSeconds = seconds; refreshSettings()
+                }
+            }
             settingsToggle(playback, "Auto-play limit", "Auto-play skips links above your bitrate limit (file size over the title's runtime). When the runtime is unknown, the movie or episode size limit applies. Links of unknown size can still play, and you can still choose any link yourself.",
                 store.get(AUTOPLAY_LIMIT_ON) == "true") { on -> store.put(AUTOPLAY_LIMIT_ON, on.toString()); refreshSettings() }
             if (store.get(AUTOPLAY_LIMIT_ON) == "true") {
@@ -5332,6 +5782,305 @@ class MainActivity : Activity() {
         }
         body.addView(View(this), margin(-1, 24))
         focusAfterRender(generation)
+    }
+
+    /** Each add-on's own time limit (0 = follow the max search time), with its average answer time to go by. */
+    private fun maxSearchTimePage() {
+        current = { maxSearchTimePage() }
+        destination = "settings"; refreshNavigation()
+        val search = SourceSearchPreferences(this)
+        val global = if (search.timeLimitSeconds == 0) "no limit" else "${search.timeLimitSeconds} s"
+        page("Max search time", "How long the search waits for add-ons. Links show as they answer; add-ons that haven't answered in time are left out of that search.")
+        val overall = settingsGroup("All add-ons", "library", heading = false)
+        settingsRow(overall, "All add-ons", search.timeLimitLabel, "The time for every add-on without its own. 0 = no limit: wait for every add-on.") {
+            NumberStepper.show(this, "Max search time", "0 = no limit: wait for every add-on.", search.timeLimitSeconds,
+                SourceSearchPreferences.TIME_LIMIT_RANGE, { if (it == 0) "No limit" else "$it seconds" }) { seconds -> search.timeLimitSeconds = seconds; refreshSettings() }
+        }
+        val card = settingsGroup("Per add-on · shorter or longer than all add-ons ($global)", null)
+        val providers = SourceProviders(store).load().map { it.id to it.name } + (if (Easynews.active(store)) listOf("easynews" to "Easynews") else emptyList())
+        providers.forEach { (id, name) ->
+            val own = search.ownLimit(id)
+            settingsRow(card, name, if (own == 0) "Follows max search time" else "$own seconds", search.speedLabel(id).ifBlank { "No searches timed yet" }) {
+                NumberStepper.show(this, "$name time limit", "0 = follow the max search time ($global).", own, SourceSearchPreferences.OWN_LIMIT_RANGE,
+                    { if (it == 0) "Follow" else "$it seconds" }) { seconds -> search.setOwnLimit(id, seconds); refreshSettings() }
+            }
+        }
+    }
+
+    /** Subtitle style: a live preview line, presets, and each part of the look on its own row. */
+    private fun subtitleStylePage() {
+        current = { subtitleStylePage() }
+        destination = "settings"; refreshNavigation()
+        page("Subtitle style", "How subtitles look in the player. The sample below changes as you go.")
+        val preferences = SubtitlePreferences(this)
+        body.addView(preferences.preview(), margin(-1, if (DeviceLayout.phone) 110 else 130, bottom = 12))
+        fun changed() { InAppPlaybackSession.refreshSubtitleStyle(); refreshSettings() }
+        fun choose(title: String, labels: List<String>, selected: Int, picked: (Int) -> Unit) {
+            AlertDialog.Builder(this).setTitle(title).setSingleChoiceItems(labels.toTypedArray(), selected) { dialog, index ->
+                picked(index); dialog.dismiss(); changed()
+            }.setNegativeButton("Cancel", null).show()
+        }
+        val looks = settingsGroup("Look", "series", heading = false)
+        settingsRow(looks, "Presets", "", "One tap sets the font, colors, outline and background together. Change any part afterwards.") {
+            choose("Subtitle presets", SubtitlePreferences.PRESETS.map { it.second }, -1) { index -> preferences.applyPreset(SubtitlePreferences.PRESETS[index].first) }
+        }
+        val fonts = listOf(SubtitlePreferences.Companion.Font("", "Device default", "Your TV's caption font")) + SubtitlePreferences.FONTS
+        settingsRow(looks, "Font", preferences.fontLabel, "Free look-alikes of the fonts streaming apps use, plus YouTube's extra styles.") {
+            subtitleFontPicker(preferences, fonts) { changed() }
+        }
+        settingsToggle(looks, "Bold text", "Thicker letters read better from the sofa.", preferences.boldText) { on -> preferences.boldText = on; InAppPlaybackSession.refreshSubtitleStyle(); refreshSettings() }
+        settingsRow(looks, "Size", preferences.sizeLabel) {
+            choose("Subtitle size", SubtitlePreferences.SIZE_LABELS, SubtitlePreferences.SIZES.indexOf(preferences.sizePercent)) { index -> preferences.sizePercent = SubtitlePreferences.SIZES[index] }
+        }
+        val colorLabels = listOf("Device default") + SubtitlePreferences.COLORS.map { it.second }
+        fun colorIndex(color: Int?) = if (color == null) 0 else SubtitlePreferences.COLORS.indexOfFirst { it.first == color } + 1
+        settingsRow(looks, "Text color", SubtitlePreferences.colorName(preferences.textColor)) {
+            choose("Text color", colorLabels, colorIndex(preferences.textColor)) { index -> preferences.textColor = if (index == 0) null else SubtitlePreferences.COLORS[index - 1].first }
+        }
+        val edges = listOf(-1 to "Device default") + SubtitlePreferences.EDGE_TYPES
+        settingsRow(looks, "Outline type", preferences.edgeLabel, "Outline draws a border round each letter; Drop shadow is the Netflix look; Raised and Depressed look embossed or pressed in.") {
+            choose("Outline type", edges.map { it.second }, edges.indexOfFirst { it.first == preferences.edgeType }) { index -> preferences.edgeType = edges[index].first }
+        }
+        settingsRow(looks, "Outline color", SubtitlePreferences.colorName(preferences.edgeColor)) {
+            choose("Outline color", colorLabels, colorIndex(preferences.edgeColor)) { index -> preferences.edgeColor = if (index == 0) null else SubtitlePreferences.COLORS[index - 1].first }
+        }
+        val opacities = listOf(-1) + SubtitlePreferences.OPACITIES
+        settingsRow(looks, "Background box", preferences.backgroundLabel, "A box behind the text. None keeps the picture clear; 75% is the YouTube look.") {
+            choose("Background box", opacities.map { when (it) { -1 -> "Device default"; 0 -> "None"; else -> "$it%${if (it == 100) " (solid)" else ""}" } },
+                opacities.indexOf(preferences.backgroundOpacity)) { index -> preferences.backgroundOpacity = opacities[index] }
+        }
+        if (preferences.backgroundOpacity > 0) settingsRow(looks, "Box color", SubtitlePreferences.colorName(preferences.backgroundColor)) {
+            choose("Box color", SubtitlePreferences.COLORS.map { it.second }, SubtitlePreferences.COLORS.indexOfFirst { it.first == preferences.backgroundColor }) { index ->
+                preferences.backgroundColor = SubtitlePreferences.COLORS[index].first
+            }
+        }
+        settingsRow(looks, "Position", preferences.positionLabel) {
+            SubtitlePositionPicker.show(this, liveVideo = false, changed = { InAppPlaybackSession.refreshSubtitleStyle() }, dismissed = { refreshSettings() })
+        }
+        settingsRow(looks, "Reset subtitle style", "", "Back to the app's default: bold white Lato, medium, black drop shadow, no box.", danger = true) {
+            preferences.applyPreset("default"); changed()
+        }
+    }
+
+    /**
+     * The subtitle font list: each name written in its own font, in a list that scrolls on its own so Cancel always
+     * stays in view below it.
+     */
+    private fun subtitleFontPicker(preferences: SubtitlePreferences, fonts: List<SubtitlePreferences.Companion.Font>, changed: () -> Unit) {
+        var dialog: AlertDialog? = null
+        val list = column().apply { setPadding(dp(14), dp(6), dp(14), dp(6)) }
+        var selectedRow: View? = null
+        fonts.forEach { font ->
+            val selected = font.id == preferences.font
+            val row = column().apply {
+                isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true; tag = "font:${font.id}"
+                setPadding(dp(14), dp(9), dp(14), dp(9))
+                background = if (selected) rounded(withAlpha(Color.WHITE, 30), 9) else null
+            }
+            row.addView(text((if (selected) "✓  " else "") + font.label, 19, Color.WHITE).apply {
+                typeface = if (font.id.isEmpty()) android.graphics.Typeface.DEFAULT_BOLD else SubtitlePreferences.typeface(this@MainActivity, font.id, bold = true)
+            })
+            row.addView(text(font.description, 12, muted), margin(-1, -2, top = 2))
+            row.setOnFocusChangeListener { view, focused ->
+                view.background = if (focused) rounded(withAlpha(Color.WHITE, 60), 9) else if (selected) rounded(withAlpha(Color.WHITE, 30), 9) else null
+            }
+            row.setOnClickListener { preferences.font = font.id; dialog?.dismiss(); changed() }
+            list.addView(row, margin(-1, -2, bottom = 4))
+            if (selected) selectedRow = row
+        }
+        val scroll = ScrollView(this).apply { addView(list); scrollBarStyle = View.SCROLLBARS_OUTSIDE_OVERLAY }
+        val shown = AlertDialog.Builder(this).setTitle("Subtitle font").setView(scroll).setNegativeButton("Cancel", null).show()
+        dialog = shown
+        // A fixed height: the list scrolls inside it, the title and Cancel never move.
+        shown.window?.setLayout(minOf(dp(620), resources.displayMetrics.widthPixels - dp(32)), (resources.displayMetrics.heightPixels * 0.82).toInt())
+        scroll.post { (selectedRow ?: list.getChildAt(0))?.requestFocus() }
+    }
+
+    /** Runs [loads] once [view] is within about a screen of the visible area (on scroll, or at once if it already is). */
+    private fun loadWhenNear(view: View, loads: List<() -> Unit>) {
+        if (loads.isEmpty()) return
+        var done = false
+        lateinit var listener: android.view.ViewTreeObserver.OnScrollChangedListener
+        fun check() {
+            if (done || !view.isAttachedToWindow) return
+            val spot = IntArray(2); view.getLocationOnScreen(spot)
+            if (spot[1] < resources.displayMetrics.heightPixels + dp(260)) {
+                done = true; loads.forEach { it() }
+                view.viewTreeObserver.takeIf { it.isAlive }?.removeOnScrollChangedListener(listener)
+            }
+        }
+        listener = android.view.ViewTreeObserver.OnScrollChangedListener { check() }
+        view.viewTreeObserver.addOnScrollChangedListener(listener)
+        view.post { check() }
+    }
+
+    /** One group list (trusted or hidden): a switch per group, hold OK to move or remove, add, and reset. */
+    private fun groupListPage(card: LinearLayout, id: String) {
+        val set = LinkRules.groupSet(id) ?: return
+        val sort = SourceSortPreferences(this)
+        val rules = sort.rules
+        val trusted = LinkRules.GROUP_SETS.any { it.id == id }
+        fun change(edit: (LinkRules.Rules) -> LinkRules.Rules) { sort.rules = edit(sort.rules) }
+        fun saveList(list: List<String>) { change { it.copy(customGroups = it.customGroups + (id to list.map(String::trim).filter(String::isNotBlank).distinctBy { name -> name.lowercase() }.take(80))) }; refreshSettings() }
+        val groups = rules.groups(set)
+        val hold = if (DeviceLayout.tv) "Hold OK" else "Press and hold"
+        groups.forEachIndexed { index, group ->
+            settingsDivider(card)
+            val row = toggleRow(if (trusted) "${index + 1}.  $group" else group, "$hold to move or remove.", rules.groupOn(set, group)) { on ->
+                change { current ->
+                    val off = current.disabledGroups[id].orEmpty().let { names -> if (on) names - group.lowercase() else names + group.lowercase() }
+                    current.copy(disabledGroups = current.disabledGroups + (id to off))
+                }
+            }
+            row.setOnLongClickListener {
+                val actions = listOfNotNull(
+                    ("Move up" to { saveList(groups.toMutableList().apply { add(index - 1, removeAt(index)) }) }).takeIf { index > 0 },
+                    ("Move down" to { saveList(groups.toMutableList().apply { add(index + 1, removeAt(index)) }) }).takeIf { index < groups.lastIndex },
+                    ("Remove" to { saveList(groups.filterIndexed { position, _ -> position != index }) }),
+                )
+                AlertDialog.Builder(this).setTitle(group).setItems(actions.map { it.first }.toTypedArray()) { _, which -> actions[which].second() }
+                    .setNegativeButton("Cancel", null).show()
+                true
+            }
+            card.addView(row, margin(-1, -2))
+        }
+        settingsRow(card, "Add a group", "", "One release group name, as it appears at the end of a link name (…-FLUX.mkv → FLUX).") {
+            inputSetting("Add a group to ${set.label}", "e.g. FLUX", "") { value -> saveList(groups + value) }
+        }
+        if (id in rules.customGroups || rules.disabledGroups[id].orEmpty().isNotEmpty()) settingsRow(card, "Reset to the built-in list", "", "", danger = true) {
+            change { it.copy(customGroups = it.customGroups - id, disabledGroups = it.disabledGroups - id) }; refreshSettings()
+        }
+    }
+
+    /** Preferred links: the viewer's words, the ready-made switches, trusted release groups and an optional pattern. */
+    private fun preferredLinksPage(card: LinearLayout) {
+        val sort = SourceSortPreferences(this)
+        val rules = sort.rules
+        fun change(edit: (LinkRules.Rules) -> LinkRules.Rules) { sort.rules = edit(sort.rules) }
+        settingsRow(card, "Link sorting", sort.label, "Where Preferred sits among Library, Language, Quality and File size. Above Quality, a preferred 1080p link beats a 4K one.") {
+            SourceSortPreferences.show(this, { refreshSettings() })
+        }
+        settingsToggle(card, "Use Preferred", "Switch off to keep the rules below but stop them moving links.", sort.preferredFirst) { on -> sort.preferredFirst = on }
+        val words = settingsGroup("Your words · ranked first, in this order", null)
+        wordRows(words, rules.preferWords, "preferred word", "PSA") { list -> change { it.copy(preferWords = list) } }
+        settingsToggle(words, "Your words beat cached links", "A link with one of your words keeps its place among the links that play at once, even when it isn't cached (it may need a transfer). Auto-play still only picks links that play at once.",
+            sort.wordsBeatCached) { on -> sort.wordsBeatCached = on }
+        val switches = settingsGroup("Ready-made", null)
+        LinkRules.PREFER.forEach { preset ->
+            settingsToggle(switches, preset.label, "Moves up links with ${preset.example}…", preset.id in rules.preferPresets) { on ->
+                change { it.copy(preferPresets = if (on) it.preferPresets + preset.id else it.preferPresets - preset.id) }
+            }
+        }
+        settingsToggle(switches, "Trusted release groups", "Well-known release groups, best first. Only a name's release tag counts (…x265-PSA.mkv, [SubsPlease] …), so ordinary words never match.",
+            LinkRules.GROUPS in rules.preferPresets) { on ->
+            change { it.copy(preferPresets = if (on) it.preferPresets + LinkRules.GROUPS else it.preferPresets - LinkRules.GROUPS) }; refreshSettings()
+        }
+        if (LinkRules.GROUPS in rules.preferPresets) {
+            val groups = settingsGroup("Trusted release groups · top of the list ranks first", null)
+            LinkRules.GROUP_SETS.forEach { set ->
+                settingsToggle(groups, set.label, rules.activeGroups(set).joinToString(", ").ifEmpty { "Every group in this list is off" }, set.id in rules.groupSets) { on ->
+                    change { it.copy(groupSets = if (on) it.groupSets + set.id else it.groupSets - set.id) }
+                }
+            }
+            settingsRow(groups, "Edit trusted release groups", "", "Pick a list to switch single groups on or off, reorder, add or remove them.") {
+                navigate { playbackPage("groups") }
+            }
+        }
+        val advanced = settingsGroup("Advanced", null)
+        patternRow(advanced, "Prefer pattern", rules.preferPattern) { value -> change { it.copy(preferPattern = value) } }
+    }
+
+    /** Link filters: ready-made hide switches, the viewer's own hide words and an optional pattern. */
+    private fun linkFiltersPage(card: LinearLayout) {
+        val sort = SourceSortPreferences(this)
+        val rules = sort.rules
+        fun change(edit: (LinkRules.Rules) -> LinkRules.Rules) { sort.rules = edit(sort.rules) }
+        settingsToggle(card, "Hide bad copies", "Theatre recordings and early copies: CAM, HDCAM, TS/telesync, TC/telecine, screeners, workprints and HDRip. On by default.",
+            LowQualityReleases.hidden(store)) { on -> store.put(LowQualityReleases.KEY, on.toString()) }
+        LinkRules.HIDE.forEach { preset ->
+            val extra = if (preset.id == "dubbed") " Off by default: turn on only if you never want dubbed audio." else ""
+            settingsToggle(card, preset.label, "Leaves out links with ${preset.example}….$extra", preset.id in rules.hidePresets) { on ->
+                change { it.copy(hidePresets = if (on) it.hidePresets + preset.id else it.hidePresets - preset.id) }
+            }
+        }
+        settingsToggle(card, "Hide Dolby Vision only links", "Only on devices that can't play Dolby Vision; links with an HDR10 fallback stay. When off, they are listed last and marked.",
+            LinkRules.HIDE_DV_ONLY in rules.hidePresets) { on ->
+            change { it.copy(hidePresets = if (on) it.hidePresets + LinkRules.HIDE_DV_ONLY else it.hidePresets - LinkRules.HIDE_DV_ONLY) }
+        }
+        settingsToggle(card, "Hide links for a different year", "Movies only: a link naming another year is usually another film with the same name (Street Fighter 1994 for Street Fighter 2026). " +
+            "A year either side is allowed, numbers in the title (1917, Blade Runner 2049) are skipped, and links with no year stay. On by default.", rules.hideOtherYears) { on ->
+            change { it.copy(hideOtherYears = on) }
+        }
+        settingsToggle(card, "Hide release groups", "Leaves out links from the groups in the lists below. Only a name's release tag counts (…-YIFY.mp4, [Group] …), so ordinary words never match. Off by default.",
+            LinkRules.HIDE_GROUPS in rules.hidePresets) { on ->
+            change { it.copy(hidePresets = if (on) it.hidePresets + LinkRules.HIDE_GROUPS else it.hidePresets - LinkRules.HIDE_GROUPS) }; refreshSettings()
+        }
+        if (LinkRules.HIDE_GROUPS in rules.hidePresets) {
+            val groups = settingsGroup("Release groups to hide", null)
+            LinkRules.HIDE_GROUP_SETS.forEach { set ->
+                settingsToggle(groups, set.label, rules.activeGroups(set).joinToString(", ").ifEmpty { "Every group in this list is off" }, set.id in rules.hideGroupSets) { on ->
+                    change { it.copy(hideGroupSets = if (on) it.hideGroupSets + set.id else it.hideGroupSets - set.id) }
+                }
+                settingsRow(groups, "Edit ${set.label}", "${rules.activeGroups(set).size} of ${rules.groups(set).size} on", "Switch single groups on or off, add or remove them.") {
+                    navigate { playbackPage("group:${set.id}") }
+                }
+            }
+        }
+        val words = settingsGroup("Hide words", null)
+        wordRows(words, rules.hideWords, "hide word", "YIFY") { list -> change { it.copy(hideWords = list) } }
+        val advanced = settingsGroup("Advanced", null)
+        patternRow(advanced, "Hide pattern", rules.hidePattern) { value -> change { it.copy(hidePattern = value) } }
+    }
+
+    /** One row per word (OK opens Edit / Move up / Move down / Remove), then "Add a …". */
+    private fun wordRows(card: LinearLayout, words: List<String>, noun: String, example: String, save: (List<String>) -> Unit) {
+        fun clean(list: List<String>) = list.map(String::trim).filter(String::isNotBlank).distinctBy { it.lowercase() }.take(LinkRules.MAX_WORDS)
+        words.forEachIndexed { index, word ->
+            settingsRow(card, "${index + 1}.  $word", "", "") {
+                val actions = listOfNotNull(
+                    ("Edit" to { inputSetting("Edit $noun", "e.g. $example", word) { value -> save(clean(words.toMutableList().apply { set(index, value) })); refreshSettings() } }),
+                    ("Move up" to { save(words.toMutableList().apply { add(index - 1, removeAt(index)) }); refreshSettings() }).takeIf { index > 0 },
+                    ("Move down" to { save(words.toMutableList().apply { add(index + 1, removeAt(index)) }); refreshSettings() }).takeIf { index < words.lastIndex },
+                    ("Remove" to { save(words.filterIndexed { position, _ -> position != index }); refreshSettings() }),
+                )
+                AlertDialog.Builder(this).setTitle(word).setItems(actions.map { it.first }.toTypedArray()) { _, which -> actions[which].second() }
+                    .setNegativeButton("Cancel", null).show()
+            }
+        }
+        if (words.size < LinkRules.MAX_WORDS) settingsRow(card, "Add a $noun", "", "One word or phrase per field, e.g. $example. Matches whole words in any case: $example matches “x265-$example” but not longer words.") {
+            inputSetting("Add a $noun", "e.g. $example", "") { value -> save(clean(words + value)); refreshSettings() }
+        }
+    }
+
+    /** A regular-expression setting: checked as it is typed, with how many of the last link list's links it matches. */
+    private fun patternRow(card: LinearLayout, label: String, currentValue: String, save: (String) -> Unit) {
+        settingsRow(card, label, currentValue.ifBlank { "Not set" }, "For people who know regular expressions, e.g. x265.*10bit (any case). While you type it shows how many links of the last title you opened match.") {
+            val sample = StreamChoices.items.orEmpty()
+            val input = TvEditText(this).apply { setText(currentValue); setSingleLine(); hint = "e.g. x265.*10bit"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD }
+            val result = text("", 12, muted)
+            val box = column().apply { setPadding(dp(20), dp(8), dp(20), 0); addView(input); addView(result, margin(-1, -2, top = 8)) }
+            fun check(): Boolean {
+                val parsed = LinkRules.pattern(input.text.toString())
+                parsed.exceptionOrNull()?.let { result.text = it.message; result.setTextColor(0xFFFF8A80.toInt()); return false }
+                val regex = parsed.getOrNull(); result.setTextColor(muted)
+                result.text = when {
+                    regex == null -> "Empty: no pattern."
+                    sample.isEmpty() -> "Valid. Open a title's links to see how many would match."
+                    else -> "Matches ${sample.count { regex.containsMatchIn(it.title) }} of ${sample.size} links for the last title you opened."
+                }
+                return true
+            }
+            input.addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: android.text.Editable?) { check() }
+            })
+            check()
+            val dialog = AlertDialog.Builder(this).setTitle(label).setView(box)
+                .setPositiveButton("Save", null).setNeutralButton("Clear", null).setNegativeButton("Cancel", null).show()
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener { if (check()) { save(input.text.toString().trim()); dialog.dismiss(); refreshSettings() } }
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener { save(""); dialog.dismiss(); refreshSettings() }
+        }
     }
 
     private fun settingsToggle(card: LinearLayout, label: String, description: String, initial: Boolean,
@@ -5448,7 +6197,8 @@ class MainActivity : Activity() {
             val copy = column()
             copy.addView(text(provider.name, 14, if (on) ink else muted, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
             val host = runCatching { java.net.URI(provider.address).host }.getOrNull().orEmpty()
-            copy.addView(text(if (on) "On · $host" else "Off · $host", 11, if (on) 0xFF46D369.toInt() else muted).apply {
+            val speed = SourceSearchPreferences(this).speedLabel(provider.id)
+            copy.addView(text(listOf(if (on) "On" else "Off", host, speed).filter(String::isNotBlank).joinToString(" · "), 11, if (on) 0xFF46D369.toInt() else muted).apply {
                 maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 2))
             line.addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
             fun control(label: String, tagName: String, description: String, width: Int, enabled: Boolean = true, action: () -> Unit) {
@@ -5472,7 +6222,7 @@ class MainActivity : Activity() {
             control("Manage", "provider-manage", "Manage ${provider.name}", 84) { sourceProviderActions(provider) }
             list.addView(line, margin(-1, -2))
         }
-        if (providers.size < SourceProviders.MAX) settingsRow(list, "Add source provider", "", "Paste an HTTPS Stremio add-on or manifest URL, for example your Torrentio or Deepbrid add-on.") { editSourceProvider(null) }
+        settingsRow(list, "Add source provider", "", "Paste an HTTPS Stremio add-on or manifest URL, for example your Torrentio or Deepbrid add-on.") { editSourceProvider(null) }
         body.addView(View(this), margin(-1, 24))
         if (focusTag != null) keepPlace(generation, focusTag, keepScroll) else focusAfterRender(generation)
     }

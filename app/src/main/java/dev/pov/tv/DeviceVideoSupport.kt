@@ -63,9 +63,12 @@ internal object DeviceVideoSupport {
     /** Why [source] likely won't play here, as a short capital note for the link list, or null when it should. */
     fun problem(source: SourceItem, caps: Caps = caps()): String? = problem("${source.title} ${source.detail}".take(4000), source.qualityHeight, caps)
 
+    private val patterns = HashMap<String, Regex>()
+
     internal fun problem(name: String, height: Int?, caps: Caps): String? {
         if (caps.maxHeight.isEmpty()) return null
-        fun has(pattern: String) = Regex("(?i)(?<![a-z0-9])(?:$pattern)(?![a-z0-9])").containsMatchIn(name)
+        // Compiled once: building these for every link froze the TV on long link lists.
+        fun has(pattern: String) = synchronized(patterns) { patterns.getOrPut(pattern) { Regex("(?i)(?<![a-z0-9])(?:$pattern)(?![a-z0-9])") } }.containsMatchIn(name)
         val dv = has("DV|DOVI|DOLBY[ ._-]*VISION")
         val hdrBase = has("HDR10\\+|HDR10PLUS|HDR10|HDR|HLG")
         // Dolby Vision with no HDR10/HLG picture underneath (Profile 5, common on web releases) needs a real DV decoder.

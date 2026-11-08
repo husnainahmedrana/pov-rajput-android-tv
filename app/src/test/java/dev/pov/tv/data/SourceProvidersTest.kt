@@ -55,7 +55,6 @@ class SourceProvidersTest {
             assertThrows(IllegalArgumentException::class.java) { config.save(listOf(alpha.copy(name = name))) }
         }
         assertThrows(IllegalArgumentException::class.java) { config.save(listOf(alpha, beta.copy(address = alpha.address.removeSuffix("/manifest.json") + "/"))) }
-        assertThrows(IllegalArgumentException::class.java) { config.save((0..SourceProviders.MAX).map { alpha.copy(id = "$it", address = "https://example.com/$it") }) }
         assertTrue(values.isEmpty())
     }
     @Test fun `disabled provider is never requested and name replaces address`() {

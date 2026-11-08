@@ -28,58 +28,105 @@ class SourceResolver internal constructor(
         links = LinkDebrids(store), easynews = { if (Easynews.active(store)) EasynewsApi(store) else null })
     fun sources(identity: PlaybackIdentity): List<SourceItem> = search(identity).items
 
-    internal data class SearchResult(val items: List<SourceItem>, val unavailableProviders: List<String>)
+    internal data class SearchResult(val items: List<SourceItem>, val unavailableProviders: List<String>, val lateProviders: List<String> = emptyList(),
+                                     /** Stop early (enough good links) ended the search, not the time limit. */
+                                     val stoppedEarly: Boolean = false)
 
-    /** Fetch all enabled add-ons concurrently, then perform one combined debrid cache check. */
-    internal fun search(identity: PlaybackIdentity): SearchResult {
+    /** One step of a search: what has arrived so far, how many add-ons answered, and which are still being waited for. */
+    internal data class SearchProgress(val items: List<SourceItem>, val answered: Int, val total: Int, val waiting: List<String>,
+                                       val unavailable: List<String>, val finished: Boolean)
+
+    /**
+     * Fetch all enabled add-ons at the same time (one thread each, no cap). Each add-on's links are cache-checked as
+     * they arrive and handed to [progress]; returning true from it stops waiting for the rest (enough good links).
+     * [timeLimitMs] > 0 stops waiting after that long: add-ons that have not answered are listed as unavailable.
+     * [timing] reports each add-on's answer time (null = no answer in time), for the per-add-on speed in Settings.
+     */
+    internal fun search(identity: PlaybackIdentity, timeLimitMs: Long = 0, timing: ((SourceProvider, Long?) -> Unit)? = null,
+                        /** An add-on's own time limit in ms (by provider id, "easynews" for Easynews), replacing [timeLimitMs]; 0 or null = follow it. */
+                        ownLimitMs: (String) -> Long? = { null },
+                        progress: ((SearchProgress) -> Boolean)? = null): SearchResult {
         validateIdentity(identity)
         val providers = (configuredProviders?.invoke()
             ?: listOf(SourceProvider("legacy", "Source 1", sourceEndpoint()))).filter { it.enabled }
         val usenet = easynews()
         require(providers.isNotEmpty() || usenet != null) { "Add or enable a source provider in Settings before searching for links." }
-        require(providers.size <= SourceProviders.MAX) { "Too many source providers. Check Settings." }
         // Validate before starting any requests; an empty legacy endpoint has the same setup guidance.
         val endpoints = providers.map { SourceProviders.endpoint(it.address) }
         val id = if (identity.type == "series") "${identity.imdbId}:${identity.season}:${identity.episode}" else identity.imdbId
-        val executor = java.util.concurrent.Executors.newFixedThreadPool(minOf(providers.size, 4) + if (usenet != null) 1 else 0)
+        val names = providers.map { it.name } + listOfNotNull(usenet?.let { "Easynews" })
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(maxOf(1, names.size))
+        val done = java.util.concurrent.ExecutorCompletionService<Pair<Int, List<SourceItem>?>>(executor)
         val failures = mutableListOf<String>()
         var successful = 0
-        val all = mutableListOf<SourceItem>()
-        try {
-            val tasks = providers.mapIndexed { index, provider -> executor.submit(java.util.concurrent.Callable {
-                try { parseStreams(publicJson("${endpoints[index]}/stream/${identity.type}/$id.json"), provider.name, identity, AddonBadges.of(endpoints[index], provider.name), provider.newsProvider) }
-                catch (error: InterruptedException) { throw error }
-                catch (error: java.util.concurrent.CancellationException) { throw error }
-                catch (_: Exception) { null }
-            }) }
-            val usenetTask = usenet?.let { api -> executor.submit(java.util.concurrent.Callable {
-                try { api.search(identity) }
-                catch (error: InterruptedException) { throw error }
-                catch (error: java.util.concurrent.CancellationException) { throw error }
-                catch (_: Exception) { null }
-            }) }
-            tasks.forEachIndexed { index, task ->
-                val items = try { task.get() }
-                    catch (error: java.util.concurrent.ExecutionException) { throw (error.cause as? Exception ?: error) }
-                if (items == null) failures += providers[index].name else { successful++; all += items }
-            }
-            if (usenetTask != null) {
-                val items = try { usenetTask.get() }
-                    catch (error: java.util.concurrent.ExecutionException) { throw (error.cause as? Exception ?: error) }
-                if (items == null) failures += "Easynews" else { successful++; all += items }
-            }
-        } finally { executor.shutdownNow() }
-        check(successful > 0) { "The enabled source providers could not be reached. Try again or check source providers in Settings." }
-        val choices = deduplicate(all)
-        val availability = checkCaches(activeServices(), choices.map { it.infoHash }.filter { it.isNotBlank() }.distinct())
-        val results = choices.map { source ->
-            val cachedOn = availability.filter { source.infoHash in it.hashes }.map { it.service }
-            val unavailable = if (source.infoHash.isNotBlank()) availability.filter { it.failed }
-                .map { "${DebridServices.name(it.service)} cache unavailable" } else emptyList()
-            source.copy(cached = cachedOn.isNotEmpty(), cachedServices = cachedOn,
+        // Kept per add-on so the combined list stays in the configured add-on order, whatever order they answer in.
+        val answers = arrayOfNulls<List<SourceItem>>(names.size)
+        val services = activeServices()
+        val cachedOn = services.associateWith { mutableSetOf<String>() }
+        val failedServices = mutableSetOf<String>()
+        val checked = mutableSetOf<String>()
+        val started = System.nanoTime()
+        var stoppedEarly = false
+        fun results(): List<SourceItem> = deduplicate(answers.filterNotNull().flatten()).map { source ->
+            val on = services.filter { source.infoHash in cachedOn.getValue(it) }
+            val unavailable = if (source.infoHash.isNotBlank()) failedServices.map { "${DebridServices.name(it)} cache unavailable" } else emptyList()
+            source.copy(cached = on.isNotEmpty(), cachedServices = on,
                 detail = (listOf(source.detail) + unavailable).filter { it.isNotBlank() }.joinToString(" · "))
         }.sortedByDescending { it.cached }
-        return SearchResult(results, failures)
+        val pending = names.indices.toMutableSet()
+        val ids = providers.map { it.id } + listOfNotNull(usenet?.let { "easynews" })
+        // Each add-on's deadline: its own limit, else the search time limit, else none.
+        val deadlines = ids.map { id -> (ownLimitMs(id)?.takeIf { it > 0 } ?: timeLimitMs.takeIf { it > 0 }) ?: Long.MAX_VALUE }
+        val expired = mutableListOf<Int>()
+        try {
+            providers.forEachIndexed { index, provider -> done.submit {
+                val began = System.nanoTime()
+                val items = try { parseStreams(publicJson("${endpoints[index]}/stream/${identity.type}/$id.json"), provider.name, identity, AddonBadges.of(endpoints[index], provider.name), provider.newsProvider) }
+                catch (error: InterruptedException) { throw error }
+                catch (error: java.util.concurrent.CancellationException) { throw error }
+                catch (_: Exception) { null }
+                timing?.invoke(provider, if (items == null) null else (System.nanoTime() - began) / 1_000_000)
+                index to items
+            } }
+            if (usenet != null) done.submit {
+                val items = try { usenet.search(identity) }
+                catch (error: InterruptedException) { throw error }
+                catch (error: java.util.concurrent.CancellationException) { throw error }
+                catch (_: Exception) { null }
+                providers.size to items
+            }
+            while (pending.isNotEmpty()) {
+                val elapsed = (System.nanoTime() - started) / 1_000_000
+                // Add-ons past their deadline stop being waited for; the rest keep going.
+                pending.filter { deadlines[it] <= elapsed }.forEach { index -> pending -= index; expired += index }
+                if (pending.isEmpty()) break
+                val nearest = pending.minOf { deadlines[it] }
+                val next = (if (nearest == Long.MAX_VALUE) done.take() else done.poll(nearest - elapsed, java.util.concurrent.TimeUnit.MILLISECONDS)) ?: continue
+                val (index, items) = try { next.get() }
+                    catch (error: java.util.concurrent.ExecutionException) { throw (error.cause as? Exception ?: error) }
+                if (index !in pending) continue
+                pending -= index
+                if (items == null) { failures += names[index]; continue }
+                successful++; answers[index] = items
+                // Only hashes not checked yet: each add-on's links are checked once, as they arrive.
+                val fresh = items.map { it.infoHash }.filter { it.isNotBlank() && checked.add(it) }.distinct()
+                if (fresh.isNotEmpty()) checkCaches(services, fresh).forEach { result ->
+                    cachedOn[result.service]?.addAll(result.hashes); if (result.failed) failedServices += result.service
+                }
+                val stop = progress?.invoke(SearchProgress(results(), names.size - pending.size, names.size,
+                    pending.sorted().map { names[it] }, failures.toList(), pending.isEmpty())) == true
+                if (stop) { stoppedEarly = true; break }
+            }
+        } finally { executor.shutdownNow() }
+        // Add-ons that ran out of time, then those still being waited for when enough good links ended the search.
+        expired.forEach { index -> providers.getOrNull(index)?.let { timing?.invoke(it, null) } }
+        val late = (expired + pending.sorted()).map { names[it] }
+        check(successful > 0) {
+            if (late.isNotEmpty() && failures.isEmpty()) "No source provider answered in time. Try again, or raise the time limits in Settings."
+            else "The enabled source providers could not be reached. Try again or check source providers in Settings."
+        }
+        val results = results()
+        return SearchResult(results, failures, late, stoppedEarly && pending.isNotEmpty())
     }
 
     private fun parseStreams(payload: JSONObject, provider: String, identity: PlaybackIdentity, addon: String? = null, newsProvider: String = ""): List<SourceItem> {

@@ -545,7 +545,9 @@ class PlayerActivity : Activity() {
 
     private fun showSubtitleStyle() {
         val preferences = SubtitlePreferences(this)
-        showSheet("Subtitle style", "Applies to text subtitles. Image subtitles keep their original appearance.", listOf(
+        showSheet("Subtitle style", "Applies to text subtitles. Image subtitles keep their original appearance. Colors, outline and background are in Settings → Audio & Subtitles → Subtitle style.", listOf(
+            PlayerSheetChoice("Presets · Netflix, Prime, YouTube-style…") { showSubtitlePresets() },
+            PlayerSheetChoice("Font · ${preferences.fontLabel}") { showSubtitleFonts() },
             PlayerSheetChoice("Transparent background", preferences.transparentBackground) {
                 preferences.transparentBackground = !preferences.transparentBackground
                 preferences.applyTo(view); InAppPlaybackSession.refreshSubtitleStyle(); showSubtitleStyle()
@@ -557,6 +559,23 @@ class PlayerActivity : Activity() {
             PlayerSheetChoice("Subtitle size · ${preferences.sizeLabel}") { showSubtitleSize() },
             PlayerSheetChoice("Subtitle position · ${preferences.positionLabel}") { showSubtitlePosition() }
         ))
+    }
+
+    private fun showSubtitlePresets() {
+        val preferences = SubtitlePreferences(this)
+        showSheet("Subtitle presets", "Sets the font, colors, outline and background together.", SubtitlePreferences.PRESETS.map { (id, label) ->
+            PlayerSheetChoice(label) { preferences.applyPreset(id); preferences.applyTo(view); InAppPlaybackSession.refreshSubtitleStyle(); showSubtitleStyle() }
+        })
+    }
+
+    private fun showSubtitleFonts() {
+        val preferences = SubtitlePreferences(this)
+        val fonts = listOf(SubtitlePreferences.Companion.Font("", "Device default", "Your TV's caption font")) + SubtitlePreferences.FONTS
+        showSheet("Subtitle font", "Free look-alikes of the fonts streaming apps use.", fonts.map { font ->
+            PlayerSheetChoice(font.label, preferences.font == font.id) {
+                preferences.font = font.id; preferences.applyTo(view); InAppPlaybackSession.refreshSubtitleStyle(); showSubtitleFonts()
+            }
+        })
     }
 
     private fun showSubtitlePosition() {
@@ -682,16 +701,27 @@ class PlayerActivity : Activity() {
                 val languages = SourceSortPreferences(this).languages
                 val minutes = player?.duration?.takeIf { it > 0 }?.let { (it / 60_000).toInt() }
                 val checkOnPlay = dev.pov.tv.data.DebridServices.connected(dev.pov.tv.data.SecureStore(this)).filter { it in dev.pov.tv.data.LinkDebrids.CHECK_ON_PLAY }
-                val choices = links.take(STREAMS_SHOWN).map { source ->
+                val playingUrl = InAppPlaybackSession.sourceUrl
+                fun isPlaying(source: dev.pov.tv.data.SourceItem): Boolean {
                     val name = SourceBadges.name(source)
-                    val current = playing.isNotBlank() && name.isNotBlank() && playing.contains(name.take(40))
-                    // Only the badges, the release name and the source's own name, as in the source list.
-                    PlayerSheetChoice(name.ifBlank { source.title }, checked = current, detail = SourceBadges.origin(source),
-                        badges = SourceBadges.forRow(source, languages, minutes, checkOnPlay, logos = true),
-                        logos = SourceBadges.cachedOn(source).map(PlaybackDebrid::logo),
-                        hold = PlaybackDebrid.choices(source, checkOnPlay).takeIf { it.isNotEmpty() }?.let { services -> { pickDebrid(media, source, services) } }) { pickStream(media, source) }
+                    return (source.directUrl.isNotBlank() && source.directUrl == playingUrl) ||
+                        (playing.isNotBlank() && name.isNotBlank() && playing.contains(name.take(40)))
                 }
-                showSheet("Streams", "${links.size} links · pick one to continue from the same spot.", choices)
+                // The link now playing goes first (once), the rest keep their order.
+                val nowPlaying = links.firstOrNull(::isPlaying)
+                val ordered = listOfNotNull(nowPlaying) + links.filter { it !== nowPlaying }.take(STREAMS_SHOWN)
+                val entries = ordered.map { source ->
+                    val name = SourceBadges.name(source)
+                    val current = source === nowPlaying
+                    // Only the badges, the release name and the source's own name, as in the source list.
+                    StreamsPanel.Entry(source.provider.split(" + ").map(String::trim).filter(String::isNotBlank).ifEmpty { listOf("Other") }, PlayerSheetChoice(name.ifBlank { source.title }, detail = SourceBadges.origin(source),
+                        badges = SourceBadges.forRow(source, languages, minutes, checkOnPlay, logos = true),
+                        logos = SourceBadges.cachedOn(source).map(PlaybackDebrid::logo), playing = current,
+                        hold = PlaybackDebrid.choices(source, checkOnPlay).takeIf { it.isNotEmpty() }?.let { services -> { pickDebrid(media, source, services) } }) {
+                        if (!current) pickStream(media, source)
+                    }, current)
+                }
+                showStreamsPanel(InAppPlaybackSession.title.ifBlank { media.title }, entries)
             }
         }
         streamsDialog = activeDialog
@@ -785,6 +815,22 @@ class PlayerActivity : Activity() {
                 activeTracksLoading = false
                 if (!stopped) controls.show()
             }
+        }
+        dialog.show()
+    }
+
+    /** The see-through Streams panel; it takes the place of the bottom sheet for links. */
+    private fun showStreamsPanel(title: String, entries: List<StreamsPanel.Entry>) {
+        finishSeek(cancelled = true)
+        activeDialog?.dismiss()
+        activeTrackType = null; activeTrackChoices = emptyList(); activeTracksLoading = false
+        if (isFinishing || isDestroyed) return
+        // The panel covers the controls; the video keeps playing behind it.
+        controls.dismiss()
+        val dialog = StreamsPanel.create(this, title, entries)
+        activeDialog = dialog
+        dialog.setOnDismissListener {
+            if (activeDialog === dialog) { activeDialog = null; if (!stopped) controls.show() }
         }
         dialog.show()
     }

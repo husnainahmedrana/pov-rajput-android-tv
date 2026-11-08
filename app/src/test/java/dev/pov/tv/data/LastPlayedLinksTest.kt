@@ -15,10 +15,10 @@ class LastPlayedLinksTest {
         var time = 1_000_000L
         val links = LastPlayedLinks({ data[it].orEmpty() }, { key, value -> data[key] = value }, { time })
     }
-    @Test fun `last successful link survives a new owner and expires at exactly 24 hours`() {
+    @Test fun `last successful link survives a new owner and expires after exactly 7 days`() {
         val f = Fixture(); f.links.save(movie, "https://media.example.invalid/video?signature=fixture", "media:one", "offcloud")
         val reopened = LastPlayedLinks({ f.data[it].orEmpty() }, { key, value -> f.data[key] = value }, { f.time })
-        f.time += 86_399_999L
+        f.time += LastPlayedLinks.KEEP_FOR - 1
         assertEquals("media:one", reopened.find(movie)?.key)
         f.time++
         assertNull(reopened.find(movie))
@@ -79,5 +79,14 @@ class LastPlayedLinksTest {
         assertNull(f.links.find(movie))
         f.links.save(movie, "https://media.example.invalid/video", "key", null)
         assertNotNull(f.links.find(movie))
+    }
+    @Test fun `keeps the newest 60 links`() {
+        val f = Fixture()
+        (1..LastPlayedLinks.MAX_LINKS + 1).forEach { episode ->
+            f.links.save(PlaybackIdentity("tt1234567", "series", "Example", 1, episode), "https://media.example.invalid/$episode", "key", null); f.time++
+        }
+        assertNull(f.links.find(PlaybackIdentity("tt1234567", "series", "Example", 1, 1)))
+        assertNotNull(f.links.find(PlaybackIdentity("tt1234567", "series", "Example", 1, 2)))
+        assertNotNull(f.links.find(PlaybackIdentity("tt1234567", "series", "Example", 1, LastPlayedLinks.MAX_LINKS + 1)))
     }
 }
