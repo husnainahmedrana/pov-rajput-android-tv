@@ -11,7 +11,7 @@
 
 ![Flix home: a living backdrop, rotating feature and Top 10 shelves](docs/screenshots/tv-home.jpg)
 
-**[⬇ Download the latest APK](https://github.com/husnainahmedrana/pov-rajput-android-tv/releases/latest)** · [Setup guide](docs/OFFCLOUD.md) · [Release notes](docs/RELEASE_NOTES.md) · [Build and release](docs/BUILD_AND_RELEASE.md)
+**[⬇ Download the latest APK](https://github.com/husnainahmedrana/pov-rajput-android-tv/releases/latest)** · **[Website](https://pov.rajput.cc)** · **[Discord](https://discord.gg/dr7PauYM3y)** · [Setup guide](docs/OFFCLOUD.md) · [Release notes](docs/RELEASE_NOTES.md) · [Build and release](docs/BUILD_AND_RELEASE.md)
 
 This is **Rajput's Android TV edition**, forked from [MM-482/pov-android-tv](https://github.com/MM-482/pov-android-tv). The original Android TV port was created by **Mark Mateo**, based on the original POV Kodi add-on by **[kodifitzwell](https://github.com/kodifitzwell/repo)**. Their work, attribution and GPL-3.0 license are preserved.
 
@@ -140,7 +140,7 @@ Choose your tracking service in **Settings → Tracking**. Press Connect, scan t
 
 ## Feedback
 
-Found a bug or have an idea? Use **[bug.rajput.cc](https://bug.rajput.cc)** or **[feature.rajput.cc](https://feature.rajput.cc)**, also in the app under **Settings → About**. No account is needed and your email is optional (only for a reply). A bug report opened from the app fills in the app version, device and Android version, shown on the form so you can change or clear it.
+Found a bug or have an idea? Use **[bug.rajput.cc](https://bug.rajput.cc)** or **[feature.rajput.cc](https://feature.rajput.cc)**, also in the app under **Settings → About**. For help, chat and release news, join the **[POV Rajput Discord](https://discord.gg/dr7PauYM3y)**. No account is needed and your email is optional (only for a reply). A bug report opened from the app fills in the app version, device and Android version, shown on the form so you can change or clear it.
 
 ## Updates
 
