@@ -54,7 +54,8 @@ def main() -> None:
     if "--dry-run" in sys.argv:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return
-    url = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+    # A secret pasted from some editors starts with an invisible byte-order mark, which breaks the URL.
+    url = os.environ.get("DISCORD_WEBHOOK_URL", "").replace("\ufeff", "").strip()
     if not url:
         print("DISCORD_WEBHOOK_URL is not set; skipping the Discord announcement.")
         return
