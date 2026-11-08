@@ -163,4 +163,14 @@ jobs:
             gh release upload "$RELEASE_TAG" release-assets/* --clobber
           else
             gh release create "$RELEASE_TAG" release-assets/* --verify-tag --title "POV Rajput $RELEASE_TAG" --notes-file release-notes.md
+            echo 'NEW_RELEASE=true' >> "$GITHUB_ENV"
           fi
+      # Only for a newly created release, so re-running a tag's workflow doesn't post twice.
+      - name: Announce the release on Discord
+        if: env.NEW_RELEASE == 'true'
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/announce-discord.py docs/RELEASE_NOTES.md "$RELEASE_TAG" "$GH_REPO"
