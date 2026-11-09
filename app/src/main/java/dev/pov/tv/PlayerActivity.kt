@@ -23,6 +23,7 @@ import android.view.Gravity
 import android.widget.FrameLayout
 import android.widget.Button
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.media3.common.C
@@ -77,8 +78,10 @@ class PlayerActivity : Activity() {
     private lateinit var splashLogo: ImageView
     private lateinit var splashTitle: TextView
     /** The title's transparent logo in the top-left corner while playback is paused. */
-    private lateinit var pauseLogo: FrameLayout
+    private lateinit var pauseLogo: LinearLayout
     private lateinit var pauseLogoArt: ImageView
+    /** "S01E03 - Shakti" under the logo for an episode. */
+    private lateinit var pauseEpisode: TextView
     private var splashPulse: ValueAnimator? = null
     private var everReady = false
     /** Until this time, buffering is a decoder catching up after a seek into loaded video, not a network stall. */
@@ -87,8 +90,9 @@ class PlayerActivity : Activity() {
     private val showSplashLater = Runnable { setSplash(true) }
     private val miniPlayer by lazy { MiniPlayerPreferences(this).enabled }
     /** pov_browse is the Streams button: the title's other links, over the playing video. */
-    private val rowIds = listOf(androidx.media3.ui.R.id.exo_rew, androidx.media3.ui.R.id.exo_play_pause,
-        androidx.media3.ui.R.id.exo_ffwd, R.id.pov_audio, R.id.pov_speed, R.id.pov_browse, R.id.pov_stop)
+    private val rowIds = listOf(R.id.pov_stop, androidx.media3.ui.R.id.exo_rew, androidx.media3.ui.R.id.exo_play_pause,
+        androidx.media3.ui.R.id.exo_ffwd, R.id.pov_next_episode, R.id.pov_audio, R.id.pov_speed, R.id.pov_browse,
+        R.id.pov_info, R.id.pov_episodes)
     private var streamsDialog: Dialog? = null
     private val streamsChanged: () -> Unit = { if (!stopped && streamsDialog != null && streamsDialog === activeDialog && activeDialog?.isShowing == true) showStreams() }
     private val sessionListener: () -> Unit = {
@@ -187,6 +191,24 @@ class PlayerActivity : Activity() {
     }
 
     private fun configureButtons() {
+        // No Back/Forward 10 s buttons: the seek bar seeks with previews (OK on it plays/pauses on the TV) and the
+        // phone also double-taps to skip 10 s.
+        view.setShowRewindButton(false); view.setShowFastForwardButton(false)
+        val identity = panelIdentity()
+        val series = identity?.type == "series" && identity.season > 0
+        view.findViewById<View>(R.id.pov_next_episode).apply {
+            visibility = if (series) View.VISIBLE else View.GONE
+            setOnClickListener { playNextEpisode() }
+        }
+        // Info (title, synopsis, the episode's cast) and Episodes (pick any episode) need a catalog title.
+        view.findViewById<View>(R.id.pov_info).apply {
+            visibility = if (identity != null) View.VISIBLE else View.GONE
+            setOnClickListener { panelIdentity()?.let { showPanel(PlayerPanels.info(this@PlayerActivity, it)) } }
+        }
+        view.findViewById<View>(R.id.pov_episodes).apply {
+            visibility = if (series) View.VISIBLE else View.GONE
+            setOnClickListener { panelIdentity()?.let { current -> showPanel(PlayerPanels.episodes(this@PlayerActivity, current) { picked -> playEpisode(current, picked) }) } }
+        }
         // The focused control is a white pill with dark icon and text; the pill glides between buttons.
         val pill = SlidingFocusPill(view.findViewById(R.id.pov_player_actions), rowIds.map { view.findViewById<View>(it) })
         rowIds.forEachIndexed { index, id ->
@@ -253,26 +275,34 @@ class PlayerActivity : Activity() {
         splash.addView(splashTitle, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER))
         requireNotNull(view.overlayFrameLayout).addView(splash, 0, FrameLayout.LayoutParams(-1, -1))
         pauseLogoArt = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER; adjustViewBounds = true; maxWidth = dp(190); maxHeight = dp(70) }
-        pauseLogo = FrameLayout(this).apply {
-            visibility = View.GONE; alpha = 0f; isFocusable = false
-            addView(pauseLogoArt, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        pauseEpisode = TextView(this).apply {
+            setTextColor(0xFFE3E8EF.toInt()); setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (DeviceLayout.tv) 20f else 16f)
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
+            setShadowLayer(dp(6).toFloat(), 0f, dp(1).toFloat(), 0xCC000000.toInt())
+            maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; maxWidth = dp(420); visibility = View.GONE
         }
+        pauseLogo = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; visibility = View.GONE; alpha = 0f; isFocusable = false
+            addView(pauseLogoArt, LinearLayout.LayoutParams(-2, -2))
+            addView(pauseEpisode, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+        }
+        showEpisodeLine()
         requireNotNull(view.overlayFrameLayout).addView(pauseLogo, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply {
             topMargin = dp(30); leftMargin = dp(30)
         })
-        // Skip / Next episode sits just above the title row and the streaming service's badge (the controls' 124 dp
+        // Skip / Next episode sits just above the title row and the streaming service's badge (the controls' 130 dp
         // bottom panel), right-aligned with the badge, and is drawn above the controls. Up from the seek bar reaches it.
         skipPill = SkipPill(this, DeviceLayout.tv).apply { setOnClickListener { skipAction?.run?.invoke() } }
-        // 48 dp button plus 9 dp of glow on each side; the margins place the outline itself 28 dp in and 126 dp up.
+        // 48 dp button plus 9 dp of glow on each side; the margins place the outline itself 28 dp in and 132 dp up.
         view.addView(skipPill, FrameLayout.LayoutParams(-2, dp(66), Gravity.BOTTOM or Gravity.END).apply {
-            rightMargin = dp(19); bottomMargin = dp(117)
+            rightMargin = dp(19); bottomMargin = dp(123)
         })
         val imdb = try { intent.getStringExtra("identity")?.let { org.json.JSONObject(it).optString("imdbId") } } catch (_: Exception) { null }
         if (imdb != null && imdb.matches(Regex("tt\\d+"))) {
             loadSplashImage("https://images.metahub.space/background/medium/$imdb/img") { art.setImageBitmap(it) }
             loadSplashImage("https://images.metahub.space/logo/medium/$imdb/img") {
                 splashLogo.setImageBitmap(it); splashLogo.visibility = View.VISIBLE; splashTitle.visibility = View.GONE
-                pauseLogoArt.setImageBitmap(withShadow(it)); updatePauseLogo()
+                pauseLogoArt.setImageBitmap(withShadow(it)); updatePauseLogo(); updateControls()
             }
         }
     }
@@ -437,6 +467,18 @@ class PlayerActivity : Activity() {
         return out
     }
 
+    /** "S01E03" at once, then " - Title" once Home's (usually cached) episode list answers. */
+    private fun showEpisodeLine() {
+        val identity = panelIdentity()?.takeIf { it.type == "series" && it.season > 0 } ?: return
+        val code = String.format(java.util.Locale.US, "S%02dE%02d", identity.season, identity.episode)
+        pauseEpisode.text = code; pauseEpisode.visibility = View.VISIBLE
+        Thread {
+            val title = runCatching { PlayerShowInfo.details?.invoke(identity)?.episodes
+                ?.firstOrNull { it.season == identity.season && it.episode == identity.episode }?.title }.getOrNull()
+            if (!title.isNullOrBlank()) runOnUiThread { if (!isDestroyed) pauseEpisode.text = "$code - $title" }
+        }.apply { isDaemon = true }.start()
+    }
+
     private fun updatePauseLogo() {
         if (!::pauseLogo.isInitialized) return
         val exo = player
@@ -460,7 +502,18 @@ class PlayerActivity : Activity() {
         updatePauseLogo()
         updateEndTime()
         if (player?.playbackState == Player.STATE_READY) cachedLinkAttempt = false
-        view.findViewById<TextView>(R.id.pov_playback_title).text = InAppPlaybackSession.title.ifBlank { "Now playing" }
+        // With the title logo (and the episode line) in the corner, the name above the seek bar is left out and the
+        // media badges take its place; without a logo the name stays.
+        val logoShown = ::pauseLogoArt.isInitialized && pauseLogoArt.drawable != null
+        view.findViewById<TextView>(R.id.pov_playback_title).apply {
+            text = InAppPlaybackSession.title.ifBlank { "Now playing" }
+            visibility = if (logoShown) View.GONE else View.VISIBLE
+        }
+        view.findViewById<View>(R.id.pov_media_badges)?.let { badges ->
+            val params = badges.layoutParams as LinearLayout.LayoutParams
+            val start = if (logoShown) 0 else dp(16)
+            if (params.marginStart != start) { params.marginStart = start; badges.layoutParams = params }
+        }
         PlaybackDebrid.bind(view, InAppPlaybackSession.debridService, InAppPlaybackSession.sourceUrl, InAppPlaybackSession.sourceAddon)
         view.findViewById<PlayerBadgeRow>(R.id.pov_media_badges)?.show(PlayerMediaBadges.from(PlayerMediaFacts.from(
             InAppPlaybackSession.mediaName, InAppPlaybackSession.mediaSize, player?.videoFormat, player?.audioFormat)))
@@ -820,6 +873,30 @@ class PlayerActivity : Activity() {
     }
 
     /** The see-through Streams panel; it takes the place of the bottom sheet for links. */
+    private fun panelIdentity(): PlaybackIdentity? = try {
+        intent.getStringExtra("identity")?.let { PlaybackIdentity.fromJson(org.json.JSONObject(it)) }?.takeIf { it.imdbId.startsWith("tt") }
+    } catch (_: Exception) { null }
+
+    /** Info / Episodes: full-screen panels over the playing video; the controls come back when they close. */
+    private fun showPanel(dialog: Dialog) {
+        finishSeek(cancelled = true)
+        activeDialog?.dismiss()
+        if (isFinishing || isDestroyed) return
+        controls.dismiss()
+        activeDialog = dialog
+        dialog.setOnDismissListener {
+            if (activeDialog === dialog) { activeDialog = null; if (!stopped) controls.show() }
+        }
+        dialog.show()
+    }
+
+    /** An episode picked in the Episodes panel: close the player; Home searches its links and plays the best one. */
+    private fun playEpisode(current: PlaybackIdentity, picked: dev.pov.tv.data.EpisodeData) {
+        PlayerShowInfo.pickedEpisode = current.copy(season = picked.season, episode = picked.episode)
+        hideSkip()
+        InAppPlaybackSession.stop(); finish()
+    }
+
     private fun showStreamsPanel(title: String, entries: List<StreamsPanel.Entry>) {
         finishSeek(cancelled = true)
         activeDialog?.dismiss()
@@ -1072,6 +1149,13 @@ class PlayerActivity : Activity() {
         if (event.action == KeyEvent.ACTION_UP && event.keyCode == revealKey) {
             revealKey = KeyEvent.KEYCODE_UNKNOWN
             return true
+        }
+        // OK on the seek bar plays/pauses, like the Play button (OK while previewing a seek is handled above).
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && !seekPreview.active && view.isControllerFullyVisible &&
+            activeDialog?.isShowing != true && currentFocus?.id == androidx.media3.ui.R.id.exo_progress &&
+            (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER || event.keyCode == KeyEvent.KEYCODE_ENTER)) {
+            view.findViewById<View>(androidx.media3.ui.R.id.exo_play_pause).performClick()
+            revealKey = event.keyCode; return true
         }
         // With the controls hidden, OK presses the Skip / Next episode button while it shows.
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && skipPill.showing && !view.isControllerFullyVisible &&

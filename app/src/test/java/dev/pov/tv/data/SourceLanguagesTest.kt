@@ -126,6 +126,16 @@ class SourceLanguagesTest {
         assertTrue("took $millis ms", millis < 3000)
     }
 
+    @Test fun `second audio language comes after the first and before other languages`() {
+        // English first, Hindi second, on a South Indian release: Hindi beats Telugu and Tamil, English still wins.
+        val items = listOf(source("Pushpa.2021.1080p.TELUGU.mkv"), source("Pushpa.2021.1080p.HINDI.mkv"),
+            source("Pushpa.2021.1080p.TAMIL.mkv"), source("Pushpa.2021.720p.ENG.mkv", 720))
+        assertEquals(listOf("Pushpa.2021.720p.ENG.mkv", "Pushpa.2021.1080p.HINDI.mkv"),
+            SourceLanguageOrder("en", "", second = "hi").sorted(items, SourceSortOrder()).take(2).map { it.title })
+        // Without a second language, Hindi gets no lift over Telugu (quality and file order decide).
+        assertEquals("Pushpa.2021.1080p.TELUGU.mkv", SourceLanguageOrder("en", "").sorted(items, SourceSortOrder())[1].title)
+    }
+
     @Test fun `english fallback lists english links before other languages`() {
         val items = listOf(source("Movie.1080p.ITALIAN.mkv"), source("Movie.1080p.ENG.mkv"), source("Movie.1080p.HINDI.mkv"), source("Movie.720p.ENG.mkv", 720))
         assertEquals(listOf("Movie.1080p.HINDI.mkv", "Movie.1080p.ENG.mkv", "Movie.720p.ENG.mkv", "Movie.1080p.ITALIAN.mkv"),

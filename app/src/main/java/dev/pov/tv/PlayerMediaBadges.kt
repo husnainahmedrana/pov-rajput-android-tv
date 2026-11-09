@@ -153,14 +153,18 @@ internal class PlayerBadgeRow @JvmOverloads constructor(context: Context, attrs:
 
     private fun badgeView(badge: PlayerBadge): TextView {
         val (start, end, border) = when (badge.kind) {
-            PlayerBadgeKind.QUALITY -> Triple(0xFFFFE9A3.toInt(), 0xFFE0A21B.toInt(), 0x99E0A21B.toInt())
-            PlayerBadgeKind.SIZE -> Triple(0xFFF2F4F7.toInt(), 0xFFC9CED6.toInt(), 0x66C9CED6)
-            PlayerBadgeKind.SOURCE -> Triple(0xFF8FD0FF.toInt(), 0xFF2F8CFF.toInt(), 0x992F8CFF.toInt())
-            PlayerBadgeKind.CODEC -> Triple(0xFFC8F56A.toInt(), 0xFF6CC72B.toInt(), 0x996CC72B.toInt())
-            PlayerBadgeKind.DOLBY_VISION -> Triple(0xFFFFFFFF.toInt(), 0xFFB9A7FF.toInt(), 0x99B9A7FF.toInt())
-            PlayerBadgeKind.HDR -> Triple(0xFFFF7A45.toInt(), 0xFF7CC8FF.toInt(), 0x99FFB347.toInt())
-            PlayerBadgeKind.AUDIO -> Triple(0xFF9BF2D8.toInt(), 0xFF2EC4A0.toInt(), 0x992EC4A0.toInt())
-            PlayerBadgeKind.CHANNELS -> Triple(0xFFE3E8EF.toInt(), 0xFFAEB6C2.toInt(), 0x66AEB6C2)
+            // Brighter than 0.3.26 (same hues, richer text, full-strength outline). The 0.3.26 values, to revert:
+            // QUALITY FFE9A3/E0A21B/99E0A21B, SIZE F2F4F7/C9CED6/66C9CED6, SOURCE 8FD0FF/2F8CFF/992F8CFF,
+            // CODEC C8F56A/6CC72B/996CC72B, DV FFFFFF/B9A7FF/99B9A7FF, HDR FF7A45/7CC8FF/99FFB347,
+            // AUDIO 9BF2D8/2EC4A0/992EC4A0, CHANNELS E3E8EF/AEB6C2/66AEB6C2.
+            PlayerBadgeKind.QUALITY -> Triple(0xFFFFEEB7.toInt(), 0xFFFFC139.toInt(), 0xFFF8B422.toInt())
+            PlayerBadgeKind.SIZE -> Triple(0xFFF2F4F7.toInt(), 0xFFE8EDF4.toInt(), 0xFFD6DDE8.toInt())
+            PlayerBadgeKind.SOURCE -> Triple(0xFFA3D9FF.toInt(), 0xFF6CAEFF.toInt(), 0xFF4E9DFF.toInt())
+            PlayerBadgeKind.CODEC -> Triple(0xFFD2FF74.toInt(), 0xFF89F13E.toInt(), 0xFF79E72A.toInt())
+            PlayerBadgeKind.DOLBY_VISION -> Triple(0xFFFFFFFF.toInt(), 0xFFEAE4FF.toInt(), 0xFFD1C6FF.toInt())
+            PlayerBadgeKind.HDR -> Triple(0xFFFF8959.toInt(), 0xFFB9E2FF.toInt(), 0xFFFFC066.toInt())
+            PlayerBadgeKind.AUDIO -> Triple(0xFFA6FBE2.toInt(), 0xFF41EEC5.toInt(), 0xFF2DE4B8.toInt())
+            PlayerBadgeKind.CHANNELS -> Triple(0xFFEDF1F8.toInt(), 0xFFC8D4E5.toInt(), 0xFFB7C4D8.toInt())
         }
         return GradientLabel(context, start, end, badge.kind == PlayerBadgeKind.HDR).apply {
             text = badge.label; tag = "player-badge:${badge.label}"
@@ -188,8 +192,8 @@ internal class PlayerBadgeRow @JvmOverloads constructor(context: Context, attrs:
 
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         val gap = dp(6)
-        val total = (0 until fitting).sumOf { getChildAt(it).measuredWidth } + gap * (fitting - 1).coerceAtLeast(0)
-        var x = ((r - l) - total) / 2
+        // Left-aligned: the row sits right after the title on the title line.
+        var x = 0
         for (index in 0 until childCount) {
             val child = getChildAt(index)
             if (index >= fitting) { child.layout(0, 0, 0, 0); continue }

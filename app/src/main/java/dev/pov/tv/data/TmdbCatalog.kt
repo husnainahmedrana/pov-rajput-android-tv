@@ -197,6 +197,42 @@ class TmdbCatalog internal constructor(
             }.distinctBy { it.personId }.take(limit)
     }
 
+    data class EpisodeCredits(val runtimeMinutes: Int, val people: List<CastMember>)
+
+    /**
+     * One episode's own people for the player's Info panel: its cast, then guest stars, then director and writers
+     * (as crew, the job in place of a character). Null when TMDB doesn't know the show or episode.
+     */
+    fun episodeCredits(imdbId: String, season: Int, episode: Int, limit: Int = 30): EpisodeCredits? {
+        val id = tvId(imdbId) ?: return null
+        val data = json("/tv/$id/season/$season/episode/$episode?append_to_response=credits")
+        val credits = data.optJSONObject("credits") ?: JSONObject()
+        fun people(list: org.json.JSONArray?, crew: Boolean, role: (JSONObject) -> String) =
+            (0 until (list?.length() ?: 0)).mapNotNull { list?.optJSONObject(it) }.mapNotNull { entry ->
+                val person = entry.optLong("id", -1).takeIf { it > 0 } ?: return@mapNotNull null
+                val name = entry.optString("name").ifBlank { return@mapNotNull null }
+                CastMember(person, name, role(entry).trim(), image(entry.optString("profile_path"), "w185"), crew)
+            }
+        val cast = people(credits.optJSONArray("cast"), false) { it.optString("character") } +
+            people(data.optJSONArray("guest_stars") ?: credits.optJSONArray("guest_stars"), false) { it.optString("character") }
+        val crew = people(data.optJSONArray("crew") ?: credits.optJSONArray("crew"), true) { it.optString("job") }
+            .filter { it.character == "Director" || it.character == "Writer" || it.character == "Teleplay" || it.character == "Story" }
+        return EpisodeCredits(data.optInt("runtime", 0), (cast + crew).distinctBy { it.personId }.take(limit))
+    }
+
+    /** Episode number → runtime in minutes for one season, from TMDB (Cinemeta and TVDB lists carry no runtimes). */
+    fun seasonRuntimes(imdbId: String, season: Int): Map<Int, Int> {
+        val id = tvId(imdbId) ?: return emptyMap()
+        val list = json("/tv/$id/season/$season").optJSONArray("episodes") ?: return emptyMap()
+        return (0 until list.length()).mapNotNull { list.optJSONObject(it) }
+            .mapNotNull { e -> e.optInt("runtime", 0).takeIf { it > 0 }?.let { e.optInt("episode_number") to it } }.toMap()
+    }
+
+    private fun tvId(imdbId: String): Long? {
+        val found = json("/find/$imdbId?external_source=imdb_id").optJSONArray("tv_results")
+        return found?.optJSONObject(0)?.optLong("id", -1)?.takeIf { it > 0 }
+    }
+
     /**
      * An actor's films and shows from TMDB combined credits: posters only, no talk, news or reality shows (where they
      * appear as themselves), up to [limit] of each, most popular first, or with [byRelease] newest release first.

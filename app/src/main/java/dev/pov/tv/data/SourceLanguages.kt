@@ -128,13 +128,13 @@ object SourceLanguages {
  * then multi-audio, other untagged and other-language links. Links with subtitles in the preferred language lead
  * within each group, and quality and size sort inside that.
  */
-data class SourceLanguageOrder(val audio: String, val subtitle: String, val fallback: String = "") {
+data class SourceLanguageOrder(val audio: String, val subtitle: String, val fallback: String = "", val second: String = "") {
     private val subtitleCode = subtitle.takeUnless { it == "off" }.orEmpty()
     val active: Boolean get() = audio.isNotEmpty() || subtitleCode.isNotEmpty()
     private val cache = IdentityHashMap<SourceItem, SourceLanguages.Detected>()
 
     fun detect(source: SourceItem): SourceLanguages.Detected = synchronized(cache) {
-        cache.getOrPut(source) { SourceLanguages.detect("${source.title} · ${source.detail}", listOf(audio, subtitleCode, fallback)) }
+        cache.getOrPut(source) { SourceLanguages.detect("${source.title} · ${source.detail}", listOf(audio, subtitleCode, fallback, second)) }
     }
 
     /** True only for an explicit tag; untagged links never get a language badge. */
@@ -154,10 +154,12 @@ data class SourceLanguageOrder(val audio: String, val subtitle: String, val fall
         audio.isEmpty() || audio in found.audio -> 0
         found.audio.isEmpty() && !found.multiAudio && original == audio -> 1
         found.multiAudio -> 2
+        // The second audio language (tagged, or an untagged original in it) comes before English and the rest.
+        second.isNotEmpty() && second != audio && (second in found.audio || (found.audio.isEmpty() && original == second)) -> 3
         // With a fallback set, links in it (tagged, or untagged originals in it) come before other languages.
-        fallback.isNotEmpty() && (fallback in found.audio || (found.audio.isEmpty() && original == fallback)) -> 3
-        found.audio.isEmpty() -> 4
-        else -> 5
+        fallback.isNotEmpty() && (fallback in found.audio || (found.audio.isEmpty() && original == fallback)) -> 4
+        found.audio.isEmpty() -> 5
+        else -> 6
     }
 
     /** Sorts by [base], whose priority says where the language step sits (first by default). */

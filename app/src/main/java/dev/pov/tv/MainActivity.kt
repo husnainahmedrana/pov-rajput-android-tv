@@ -189,6 +189,12 @@ class MainActivity : Activity() {
         simklChosen = Trackers.selected(store) == Trackers.SIMKL
         resolver = SourceResolver(store, torbox); history = PlaybackStore(this)
         StreamChoices.searcher = { identity -> searchStreamsInBackground(identity, delayMs = 0) }
+        // The player's Info / Episodes panels read the same cached details and TMDB key as the details page.
+        PlayerShowInfo.details = { identity ->
+            val item = MediaItemData(identity.imdbId, identity.type, identity.title)
+            runCatching { cachedDetails(item) ?: fetchDetails(item) }.getOrNull()
+        }
+        PlayerShowInfo.tmdb = { if (publicPreview) null else store.get(TMDB_KEY).takeIf { it.isNotBlank() }?.let { TmdbCatalog(this, it, tmdbRegion()) } }
         themePreferences = ThemePreferences(this); theme = themePreferences.selected()
         // Retire the old tracker locally; never replay its queued updates after this upgrade.
         if (store.get("tracking.wetrakr_only") != "true") {
@@ -246,6 +252,13 @@ class MainActivity : Activity() {
         if (!publicPreview && ::store.isInitialized && android.os.SystemClock.elapsedRealtime() - watchedCheckedAt > 60_000) refreshWatched()
         if (::shellRoot.isInitialized) { updateMiniPlayer(); refreshHeroTrailer() }
         if (BackHoldGesture.settingsRequested && ::shellRoot.isInitialized) { BackHoldGesture.settingsRequested = false; openSettingsAnywhere() }
+        PlayerShowInfo.pickedEpisode?.let { picked ->
+            PlayerShowInfo.pickedEpisode = null
+            if (::shellRoot.isInitialized) {
+                toast("Playing S${picked.season} E${picked.episode}")
+                navigate { showSources(picked, autoplayNext = true) }
+            }
+        }
         PlayerActivity.nextEpisodeAfter?.let { finished ->
             PlayerActivity.nextEpisodeAfter = null
             if (::shellRoot.isInitialized) runCatching { PlaybackIdentity.fromJson(org.json.JSONObject(finished)) }.getOrNull()?.let(::playNextEpisode)
@@ -293,6 +306,7 @@ class MainActivity : Activity() {
         searchDialog?.dismiss(); authorization?.dismiss(); apiKeyDialog?.dismiss(); miniPlayer?.let(InAppPlaybackSession::detachPlayerView)
         InAppPlaybackSession.removeListener(playbackChanged)
         StreamChoices.searcher = null
+        PlayerShowInfo.details = null; PlayerShowInfo.tmdb = null
         rotationHandler.removeCallbacksAndMessages(null); featureHandler.removeCallbacksAndMessages(null)
         worker.shutdownNow(); metadataWorker.shutdownNow(); imdbWorker.shutdownNow(); images.shutdownNow(); featureImages.shutdownNow(); authWorker.shutdownNow(); bitmapCache.evictAll()
         super.onDestroy()
@@ -5172,16 +5186,19 @@ class MainActivity : Activity() {
             }.setNegativeButton("Cancel", null).show()
     }
 
-    private fun audioLanguage(allLanguages: Boolean = false) {
+    /** [second]: the second audio language, whose list starts with "None" instead of "Automatic" and leaves out the first. */
+    private fun audioLanguage(allLanguages: Boolean = false, second: Boolean = false) {
         val preferences = AudioPreferences(this)
-        val languages = if (allLanguages) AudioPreferences.LANGUAGES else
+        val all = if (allLanguages) AudioPreferences.LANGUAGES else
             AudioPreferences.COMMON_LANGUAGES.map { code -> AudioPreferences.LANGUAGES.first { it.first == code } }
+        val languages = if (!second) all else listOf("" to "None") + all.filter { it.first.isNotEmpty() && it.first != preferences.language }
         val labels = languages.map { it.second } + if (allLanguages) emptyList() else listOf("More languages…")
-        AlertDialog.Builder(this).setTitle("Preferred audio language")
-            .setSingleChoiceItems(labels.toTypedArray(), languages.indexOfFirst { it.first == preferences.language }) { dialog, index ->
+        val chosen = if (second) preferences.secondLanguage else preferences.language
+        AlertDialog.Builder(this).setTitle(if (second) "Second audio language" else "Preferred audio language")
+            .setSingleChoiceItems(labels.toTypedArray(), languages.indexOfFirst { it.first == chosen }) { dialog, index ->
                 dialog.dismiss()
-                if (index == languages.size) audioLanguage(true) else {
-                    preferences.language = languages[index].first
+                if (index == languages.size) audioLanguage(true, second) else {
+                    if (second) preferences.secondLanguage = languages[index].first else preferences.language = languages[index].first
                     InAppPlaybackSession.refreshAudioLanguage()
                     refreshSettings()
                 }
@@ -5302,6 +5319,8 @@ class MainActivity : Activity() {
             // Two cards: audio, then subtitles, each with its own English fallback.
             val sound = settingsGroup("Audio", "nowplaying")
             settingsRow(sound, "Audio language", AudioPreferences(this).languageLabel, "Chosen automatically when available, and links in this language are listed and auto-played first. You can pick another track in the player.") { audioLanguage() }
+            if (AudioPreferences(this).language.isNotEmpty()) settingsRow(sound, "Second audio language", AudioPreferences(this).secondLanguageLabel,
+                "Used when a video has no audio in your first language, before English. E.g. English first, Hindi second picks Hindi over Telugu or Tamil, and Hindi links are listed before other languages.") { audioLanguage(second = true) }
             settingsToggle(sound, "English audio fallback", "If a video has no audio in your language, English is chosen instead, and English links are listed before other languages.",
                 AudioPreferences(this).englishFallback) { on ->
                 AudioPreferences(this).englishFallback = on; InAppPlaybackSession.refreshAudioLanguage()

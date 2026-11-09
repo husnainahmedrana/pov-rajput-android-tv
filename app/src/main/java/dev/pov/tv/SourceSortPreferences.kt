@@ -59,7 +59,8 @@ internal class SourceSortPreferences(private val context: Context) {
     val languages: SourceLanguageOrder?
         get() = if (!languageFirst) null
             else AudioPreferences(context).let { audio ->
-                SourceLanguageOrder(audio.language, SubtitlePreferences(context).language, if (audio.englishFallback) "en" else "")
+                SourceLanguageOrder(audio.language, SubtitlePreferences(context).language, if (audio.englishFallback) "en" else "",
+                    second = audio.secondLanguage.takeIf { audio.language.isNotEmpty() }.orEmpty())
             }.takeIf { it.active }
     private val languageLabel: String?
         get() = languages?.let { order -> if (order.audio.isNotEmpty()) "${languageName(order.audio)} first" else "${languageName(order.subtitle)} subtitles first" }

@@ -1,18 +1,14 @@
-# POV Rajput 0.3.26
+# POV Rajput 0.3.27
 
 ## New
 
-- **Add an add-on from your phone.** In Settings → Sources → Add source provider, press **Use phone** on the TV and scan the QR code. Paste the add-on's install link on your phone and it arrives on the TV filled in, with the add-on's own name. The link is encrypted on the phone for that TV only; the relay server can't read it.
-- **Add-on links open POV.** On the phone, tap a `stremio://` install link on an add-on's setup page and pick POV Rajput, or share an `https://` add-on link to POV. Add source provider opens filled in; nothing is added until you press Save.
-- **Debrid logos on add-on links.** Add-ons set up with your own debrid key (Torrentio, Comet, MediaFusion, StremThru, Debridio…) name the service in each link, like `[TB+]` or `[RD download]`. POV now reads that tag: the link shows the service's logo and "Cached" or "Not cached" instead of "Direct", the player shows the logo, and links the add-on still has to download are skipped by auto-play and hidden by Hide uncached links.
-- **Scraper logos.** Links from Debridio, Torrentio, Comet, Meteor and StremThru show the scraper's logo next to the debrid service's, both when the add-on holds your debrid key and when POV's own debrid plays its torrents. The player shows them side by side too, as logos only.
-
-## Fixed
-
-- **Auto-play next episode** searched the next episode's links but didn't start one. It now plays the best link as soon as the search ends.
-- Torrentio links with settings (`providers=…|sort=…`) were refused when saving a source provider. Characters like `|` are now stored percent-encoded, which the add-on reads the same way.
+- **Episodes in the player.** Press **Episodes** while a show plays: the seasons are on the left and each season's episodes are large cards on the right, with the episode's picture, runtime, air date, IMDb rating and synopsis. It opens on the episode that's playing. Pick another one and POV finds its links and plays it.
+- **Info in the player.** Press **Info** and a panel slides up over the video with the title logo, "S01E03 - Title", runtime, air date, synopsis and the episode's own cast and crew (guest stars, director and writers included). For movies it shows the movie's cast. Press Up or Back to slide it away.
+- **Episode number and title under the logo.** When you pause, or the controls are open, the episode shows under the show's logo, e.g. "S01E03 - Shakti".
+- **Second audio language.** Settings → Audio → **Second audio language** is used when a video has no audio in your first language, before English. For example English first and Hindi second picks the Hindi track over Telugu or Tamil on Indian multi-language releases, and Hindi links are listed and auto-played before other languages.
 
 ## Improved
 
-- The logos at the top of the link list leave out debrid services with no links (for example when every link came ready-made from add-ons with their own key). Real-Debrid-style services show "?" only when there are torrents to check.
-- Scraper logos stay on their links and no longer take space at the top of the link list.
+- **New player button row.** Stop, Play and **Next episode** sit on the left; Audio & Subtitles, Speed, Streams, Info and Episodes on the right. The 10-second back and forward buttons are gone: the seek bar already seeks with previews, and on the phone a double tap skips 10 seconds.
+- **OK on the seek bar plays and pauses.** While you're previewing a seek, OK still jumps to that scene.
+- **The quality badges moved up** above the seek bar, where the title used to be, and their colours are brighter. The title already shows as the logo in the top-left corner; titles without a logo keep their name there.

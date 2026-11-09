@@ -73,7 +73,7 @@ class PlayerControlVisibilityTest {
             val scrimBounds = Rect()
             assertTrue(scrim.getGlobalVisibleRect(scrimBounds))
             assertTrue("Controls should occupy only the lower part of the video", scrimBounds.top > 270)
-            assertEquals("Playback strip should remain compact", 124, scrimBounds.height())
+            assertEquals("Playback strip should remain compact (title line holds the media badges)", 130, scrimBounds.height())
             assertEquals(16f, view.findViewById<android.widget.TextView>(R.id.pov_playback_title).textSize, 0.01f)
             for (id in chromeIds) {
                 val child = view.findViewById<View>(id)
