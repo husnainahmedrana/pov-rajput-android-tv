@@ -31,6 +31,15 @@ class SourceBadgesTest {
         val labels = SourceBadges.from(SourceItem("Movie.DV.HDR10+.HDR.SDR.BDRemux.H265.mkv", "fixture")).map { it.label }
         assertEquals(listOf("Quality unavailable", "Size unavailable", "DV · HDR10+", "BLU-RAY · REMUX · HEVC"), labels)
     }
+    @Test fun `each audio language gets a flag and its code, your language first, and matching subtitles get no flag`() {
+        val source = SourceItem("Movie.2026.1080p.WEB-DL.Hindi.English.Japanese.Korean.ESub.mkv", "fixture", qualityHeight = 1080)
+        val languages = dev.pov.tv.data.SourceLanguageOrder("en", "en")
+        val tags = SourceBadges.from(source, languages).filter { it.tone == SourceBadgeTone.LANGUAGE }.map { it.label }
+        assertEquals(listOf("\uD83C\uDDEC\uD83C\uDDE7 ENG", "\uD83C\uDDEE\uD83C\uDDF3 HIN", "\uD83C\uDDEF\uD83C\uDDF5 JPN", "+1", "ENG SUBS"), tags)
+        // Without language settings the flags still show; untagged releases show none.
+        assertEquals(listOf("\uD83C\uDDF5\uD83C\uDDF0 URD"), SourceBadges.from(SourceItem("Movie.2026.720p.Urdu.mkv", "fixture")).filter { it.tone == SourceBadgeTone.LANGUAGE }.map { it.label })
+        assertTrue(SourceBadges.from(SourceItem("Movie.2026.720p.mkv", "fixture")).none { it.tone == SourceBadgeTone.LANGUAGE })
+    }
     @Test fun `quality colors match requested resolution groups`() {
         for ((height, tone) in listOf(2160 to SourceBadgeTone.UHD, 1080 to SourceBadgeTone.FULL_HD, 720 to SourceBadgeTone.HD)) {
             assertEquals(tone, SourceBadges.from(SourceItem("Movie", "fixture", qualityHeight = height)).first().tone)
@@ -69,26 +78,6 @@ class SourceBadgesTest {
                 assertEquals(listOf("#FFE34D", "#FF9F1C"), (quality.background as android.graphics.drawable.GradientDrawable).colors!!.map { String.format("#%06X", it and 0xFFFFFF) })
                 assertEquals(ViewGroup.FOCUS_BLOCK_DESCENDANTS, row.descendantFocusability)
             }
-        } finally { activity.finish() }
-    }
-    @Test fun `elite badges draw plates, wordmarks and icons without focus and within the row`() {
-        val activity = Robolectric.buildActivity(Activity::class.java).setup().visible().get()
-        try {
-            val source = SourceItem("Movie.2160p.UHD.BluRay.REMUX.DV.HDR10+.HEVC.10bit.TrueHD.7.1.Atmos.mkv", "fixture", sizeBytes = 50_000_000_000L, qualityHeight = 2160)
-            val strip = SourceBadgeStrip(activity, SourceBadges.from(source, runtimeMinutes = 120), BadgeStyle.ELITE)
-            val root = FrameLayout(activity); root.addView(strip, FrameLayout.LayoutParams(600, -2)); activity.setContentView(root)
-            shadowOf(Looper.getMainLooper()).idle()
-            root.measure(View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY))
-            root.layout(0, 0, 600, 800)
-            val tags = (0 until strip.childCount).map { strip.getChildAt(it).tag }
-            assertEquals(listOf("source-badge:4K", "source-badge:DV", "source-badge:HDR10+", "source-badge:TrueHD", "source-badge:7.1", "source-badge:Atmos",
-                "source-badge:BLU-RAY", "source-badge:REMUX", "source-badge:HEVC", "source-badge:10bit"), tags.filterNotNull())
-            // The size and bitrate sit beside the plate as heat-coloured text in its own rounded box.
-            val sizeBox = strip.getChildAt(1) as ViewGroup
-            assertEquals("50.00 GB · ≈56 Mbps", (sizeBox.getChildAt(0) as TextView).text.toString())
-            assertTrue(sizeBox.background is android.graphics.drawable.GradientDrawable)
-            descendants(strip).forEach { assertFalse(it.isFocusable) }
-            (0 until strip.childCount).map(strip::getChildAt).forEach { assertTrue(it.right <= strip.width && it.bottom <= strip.height) }
         } finally { activity.finish() }
     }
     @Test fun `color by type is the default badge style until another is picked`() {

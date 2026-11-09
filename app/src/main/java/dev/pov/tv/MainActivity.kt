@@ -6496,13 +6496,13 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Aurora, Sunset or Elite badges on the links page and the player's Streams panel. A wide window with each style's
-     * name, a short line and a sample of its badges, so all three fit without scrolling.
+     * Color by type, Aurora or Sunset badges on the links page and the player's Streams panel. A wide window with each
+     * style's name, a short line and a sample of its badges (language flags included), so all fit without scrolling.
      */
     private fun chooseBadgeStyle() {
         val current = BadgeStyle.current(this)
         val list = column().apply { setPadding(dp(18), dp(6), dp(18), dp(6)) }
-        val sample = SourceItem("Sample.2160p.BluRay.REMUX.DV.HDR10+.HEVC.TrueHD.7.1.Atmos.mkv", "sample",
+        val sample = SourceItem("Sample.2160p.BluRay.REMUX.DV.HDR10+.HEVC.TrueHD.7.1.Atmos.English.Hindi.mkv", "sample",
             sizeBytes = 40_000_000_000L, qualityHeight = 2160)
         val dialog = AlertDialog.Builder(this).setTitle("Badge style").setView(list).setNegativeButton("Cancel", null).create()
         BadgeStyle.entries.forEach { style ->
@@ -6513,7 +6513,7 @@ class MainActivity : Activity() {
             }
             row.addView(text(if (style == current) "${style.label}  ✓" else style.label, 16, ink, true))
             row.addView(text(style.description, 12, muted).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 2))
-            row.addView(SourceBadgeStrip(this, SourceBadges.from(sample, runtimeMinutes = 140).take(4), style), margin(-1, -2, top = 6))
+            row.addView(SourceBadgeStrip(this, SourceBadges.from(sample, runtimeMinutes = 140).filter { it.tone != SourceBadgeTone.SOURCE }, style), margin(-1, -2, top = 6))
             row.setOnFocusChangeListener { view, focused ->
                 view.background = rounded(when { focused -> withAlpha(Color.WHITE, 46); style == current -> withAlpha(Color.WHITE, 26); else -> Color.TRANSPARENT }, 10)
             }

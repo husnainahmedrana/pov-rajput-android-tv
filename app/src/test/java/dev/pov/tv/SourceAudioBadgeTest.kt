@@ -45,7 +45,7 @@ class SourceAudioBadgeTest {
         assertEquals("#FF8A3D" to "#FF3D9A", SourceBadges.gradient(unknown, BadgeStyle.SUNSET))
     }
 
-    @Test fun `grouped badges keep their separate tags for the Elite style`() {
+    @Test fun `grouped badges keep their separate tags`() {
         val badges = SourceBadges.from(SourceItem("Movie.2160p.BluRay.REMUX.DV.HDR10+.HEVC.TrueHD.7.1.Atmos.mkv", "fixture", qualityHeight = 2160))
         assertEquals(listOf("DV", "HDR10+"), badges.first { it.tone == SourceBadgeTone.HDR }.parts)
         assertEquals(listOf("TrueHD", "7.1", "Atmos"), badges.first { it.tone == SourceBadgeTone.AUDIO }.parts)

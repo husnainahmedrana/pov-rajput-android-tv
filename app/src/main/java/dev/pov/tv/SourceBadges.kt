@@ -15,6 +15,7 @@ import dev.pov.tv.data.DebridServices
 import dev.pov.tv.data.Easynews
 import dev.pov.tv.data.SourceItem
 import dev.pov.tv.data.SourceLanguageOrder
+import dev.pov.tv.data.SourceLanguages
 import dev.pov.tv.data.SourceMetadata
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -24,7 +25,7 @@ import kotlin.math.roundToInt
  * the cached / not cached status keeps its flat green and grey.
  */
 internal enum class SourceBadgeTone { UHD, FULL_HD, HD, OTHER, NEUTRAL, CACHED, UNCACHED, SIZE, HDR, AUDIO, LANGUAGE, SOURCE }
-/** [mbps] (size badges only) picks the heat step of the size badge's gradient; [parts] are the grouped tags (Elite draws each). */
+/** [mbps] (size badges only) picks the heat step of the size badge's gradient; [parts] are the grouped tags. */
 internal data class SourceBadge(val label: String, val tone: SourceBadgeTone = SourceBadgeTone.NEUTRAL, val quality: Boolean = false,
                                 val mbps: Double? = null, val parts: List<String> = listOf(label))
 
@@ -32,12 +33,11 @@ internal data class SourceBadge(val label: String, val tone: SourceBadgeTone = S
 internal enum class BadgeStyle(val id: String, val label: String, val description: String) {
     COLOR_BY_TYPE("color", "Color by type", "One flat colour per kind of tag, as a thin outline: quality, size, HDR, audio, languages, source."),
     AURORA("aurora", "Aurora", "Gradient chips in cool aurora colours; the size badge heats up with the bitrate."),
-    SUNSET("sunset", "Sunset", "Gradient chips in warm sunset colours; the size badge heats up with the bitrate."),
-    ELITE("elite", "Elite", "Logo-style badges: metal resolution plates, wordmarks and icons.");
+    SUNSET("sunset", "Sunset", "Gradient chips in warm sunset colours; the size badge heats up with the bitrate.");
     companion object {
         const val KEY = "badge_style"
         private fun preferences(context: Context) = context.applicationContext.getSharedPreferences("pov_ui", Context.MODE_PRIVATE)
-        // Color by type until the viewer picks another style.
+        // Color by type until the viewer picks another style (the removed Elite style falls back to it too).
         fun current(context: Context): BadgeStyle = preferences(context).getString(KEY, null).let { id -> entries.firstOrNull { it.id == id } } ?: COLOR_BY_TYPE
         fun save(context: Context, style: BadgeStyle) = preferences(context).edit().putString(KEY, style.id).apply()
     }
@@ -174,16 +174,15 @@ internal object SourceBadges {
             if (has("SDR") && isEmpty()) add("SDR")
         }, SourceBadgeTone.HDR)
         group(audio(metadata), SourceBadgeTone.AUDIO)
-        if (languages != null) {
-            fun name(code: String) = SubtitlePreferences.LANGUAGES.firstOrNull { it.first == code }?.second?.uppercase() ?: code.uppercase()
-            group(buildList {
-                when {
-                    languages.audioMatch(source) -> add(name(languages.audio))
-                    languages.multiAudio(source) -> add("MULTI AUDIO")
-                }
-                if (languages.subtitleMatch(source)) add("${name(languages.subtitle)} SUBS")
-            }, SourceBadgeTone.LANGUAGE)
-        }
+        // Languages: a flag and short code for each audio language the link names (your language first), then
+        // "ENG SUBS" (no flag: flags are for audio only) when it has subtitles in yours. Hindi, Tamil and Telugu share a
+        // flag, so the code tells them apart.
+        val found = languages?.detect(source) ?: SourceLanguages.detect("${source.title} · ${source.detail}")
+        val spoken = found.audio.sortedBy { if (languages != null && it == languages.audio) 0 else 1 }
+        spoken.take(MAX_LANGUAGES).forEach { add(SourceBadge(languageTag(it), SourceBadgeTone.LANGUAGE)) }
+        if (spoken.size > MAX_LANGUAGES) add(SourceBadge("+${spoken.size - MAX_LANGUAGES}", SourceBadgeTone.LANGUAGE))
+        if (spoken.isEmpty() && found.multiAudio) add(SourceBadge("MULTI AUDIO", SourceBadgeTone.LANGUAGE))
+        if (languages != null && languages.subtitleMatch(source)) add(SourceBadge("${languageCode(languages.subtitle)} SUBS", SourceBadgeTone.LANGUAGE))
         group(buildList {
             when {
                 has("WEB[ ._-]?DL") -> add("WEB-DL")
@@ -232,6 +231,25 @@ internal object SourceBadges {
             if (ATMOS.containsMatchIn(metadata)) add("Atmos")
         }
     }
+
+    private const val MAX_LANGUAGES = 3
+    private val FLAGS = mapOf("en" to "GB", "pt" to "PT", "es" to "ES", "fr" to "FR", "de" to "DE", "it" to "IT", "hi" to "IN", "ur" to "PK",
+        "ar" to "SA", "ru" to "RU", "ja" to "JP", "ko" to "KR", "zh" to "CN", "tr" to "TR", "pl" to "PL", "nl" to "NL", "ta" to "IN",
+        "te" to "IN", "ml" to "IN", "bn" to "BD", "kn" to "IN", "mr" to "IN", "gu" to "IN", "pa" to "IN", "sv" to "SE", "da" to "DK",
+        "no" to "NO", "nb" to "NO", "fi" to "FI", "el" to "GR", "he" to "IL", "th" to "TH", "vi" to "VN", "id" to "ID", "ms" to "MY",
+        "uk" to "UA", "cs" to "CZ", "hu" to "HU", "ro" to "RO", "fa" to "IR", "fil" to "PH", "tl" to "PH")
+
+    /** A language's flag, from its usual country ("en" -> GB flag), or nothing when there's no clear one. */
+    fun flag(code: String): String = FLAGS[code.lowercase()]?.let { country ->
+        country.map { String(Character.toChars(0x1F1E6 + (it - 'A'))) }.joinToString("")
+    }.orEmpty()
+
+    /** The three-letter code ("hi" -> HIN). */
+    private fun languageCode(code: String): String =
+        (runCatching { java.util.Locale.forLanguageTag(code).isO3Language }.getOrNull()?.takeIf { it.isNotBlank() } ?: code).uppercase()
+
+    /** An audio language: its flag and code ("ENG" after the GB flag). */
+    fun languageTag(code: String): String = "${flag(code)} ${languageCode(code)}".trim()
 
     /** A badge's gradient, left to right, in the Aurora (default) or Sunset set. */
     fun gradient(badge: SourceBadge, style: BadgeStyle = BadgeStyle.AURORA): Pair<String, String>? = if (style == BadgeStyle.SUNSET) sunset(badge) else when (badge.tone) {
@@ -291,17 +309,12 @@ internal object SourceBadges {
 internal class SourceBadgeStrip(context: Context, badges: List<SourceBadge>, style: BadgeStyle = BadgeStyle.current(context),
                                 private val compact: Boolean = false, trailing: String = "") : ViewGroup(context) {
     private fun px(value: Int) = (value * DeviceLayout.unit(resources)).roundToInt().coerceAtLeast(1)
-    private val gap = px(if (style == BadgeStyle.ELITE) 8 else 6)
+    private val gap = px(6)
     init {
         isFocusable = false
         descendantFocusability = FOCUS_BLOCK_DESCENDANTS
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         badges.forEach { badge ->
-            // Elite draws each tag as its own logo-style badge; the cached status stays a plain chip.
-            if (style == BadgeStyle.ELITE && badge.tone !in setOf(SourceBadgeTone.CACHED, SourceBadgeTone.UNCACHED, SourceBadgeTone.NEUTRAL)) {
-                EliteBadges.views(context, badge, ::px).forEach { addView(EliteBadges.boxed(context, it, ::px), LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)) }
-                return@forEach
-            }
             // Color by type: one flat colour per kind, as a thin outline on a dark tint of it, with matching text.
             val flat = if (style == BadgeStyle.COLOR_BY_TYPE) SourceBadges.flatColor(badge)?.let(Color::parseColor) else null
             val gradient = if (style == BadgeStyle.COLOR_BY_TYPE) null else SourceBadges.gradient(badge, style)
