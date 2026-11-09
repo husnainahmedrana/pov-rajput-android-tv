@@ -102,8 +102,14 @@ internal object NumberStepper {
         dial.setOnFocusChangeListener { _, focused -> paintDial(focused) }
         dial.setOnKeyListener { _, keyCode, event ->
             if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-            // Held down on a long range, it counts in fives after a moment.
-            val size = if (event.repeatCount > 6 && range.last - range.first > 20) 5 else 1
+            // Held down on a long range, it counts in fives after a moment, and in tens on a very long one; a single
+            // press always moves by one, so any number can be picked.
+            val span = range.last - range.first
+            val size = when {
+                event.repeatCount > 30 && span > 200 -> 10
+                event.repeatCount > 6 && span > 20 -> 5
+                else -> 1
+            }
             when (keyCode) {
                 KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_RIGHT -> { step(size); true }
                 KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT -> { step(-size); true }

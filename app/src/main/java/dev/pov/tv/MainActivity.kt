@@ -173,6 +173,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         DeviceLayout.fit(resources)
         super.onCreate(savedInstanceState)
+        markUnsupportedPrefer()
         if (packageName.endsWith(".preview")) {
             // Preview-only test switches: start with an empty artwork cache, and choose card image size.
             if (intent.getBooleanExtra("clear_artwork_cache", false)) java.io.File(cacheDir, "artwork-http").deleteRecursively()
@@ -836,7 +837,6 @@ class MainActivity : Activity() {
             }
             if (!publicPreview && wetrakr.connected() && store.get("wetrakr.home_liked_opt_in") == "true") homeLikedLists(id)
             // Credits live in Settings → About; Home ends at its last shelf. The feature's Play starts focused.
-            if (!flix) homeCredit()
             body.post { dismissSplash() }
             if (flix) warmUpHome((movies.take(3) + series.take(3) + shelves.filter { it.title != TOP10_MOVIES && it.title != TOP10_SHOWS }
                 .take(2).flatMap { it.items.take(2) }).distinct())
@@ -2044,9 +2044,6 @@ class MainActivity : Activity() {
 
     private fun contentBottomPadding() = dp(if (!publicPreview && InAppPlaybackSession.hasActive()) (if (DeviceLayout.phone) 120 else 184) else 24)
 
-    private fun homeCredit() {
-        body.addView(text("POV Rajput  ·  Android TV port: Mark Mateo  ·  Original POV: kodifitzwell", 10, muted), margin(-1, -2, top = 20, bottom = 6))
-    }
 
     private fun animePage(type: String = "series", query: String = "", skip: Int = 0) {
         current = { animePage(type, query, skip) }
@@ -3653,6 +3650,16 @@ class MainActivity : Activity() {
     }
 
     /**
+     * With auto-play on and its limit set, links over the limit go below the ones it may play (each group keeps the
+     * viewer's sort order), so the link auto-play starts sits at the top. Null when that doesn't apply.
+     */
+    private fun overAutoplayLimit(identity: PlaybackIdentity): ((SourceItem) -> Boolean)? {
+        if (store.get(AUTOPLAY_LIMIT_ON) != "true") return null
+        if (SourceSearchPreferences(this).mode(store.get(AUTOPLAY_FIRST) == "true") == SourceSearchPreferences.OFF) return null
+        return { source -> !withinAutoplayLimit(source, identity) }
+    }
+
+    /**
      * Best per quality is full (Search goal is "Best per quality is full" or "Either one"): 4K, 1080p and 720p (those not
      * switched off in Link filters) each have enough good links. Runs on a worker.
      */
@@ -3834,7 +3841,11 @@ class MainActivity : Activity() {
         fun problem(source: SourceItem) = problems.getOrPut(source) { DeviceVideoSupport.problem(source, fit) }
         fun tooTall(source: SourceItem) = problem(source) != null
         val languages = sorting.languages
-        val fullOrder = playable.distinctBy(TvChoiceKeys::source).let { unique -> languages?.sorted(unique, sorting.order) ?: sorting.order.sorted(unique) }.let(::cachedFirst).let { all -> all.filterNot(::tooTall) + all.filter(::tooTall) }
+        // Auto-play on with a limit: links over it go below the ones it may play, under their own heading.
+        val overLimit = overAutoplayLimit(identity)
+        val fullOrder = playable.distinctBy(TvChoiceKeys::source).let { unique -> languages?.sorted(unique, sorting.order) ?: sorting.order.sorted(unique) }.let(::cachedFirst)
+            .let { all -> overLimit?.let { over -> all.filterNot(over) + all.filter(over) } ?: all }
+            .let { all -> all.filterNot(::tooTall) + all.filter(::tooTall) }
         // Best per quality: the first few of each quality in this order; More links shows the rest.
         val ordered = if (search?.showAll == true) fullOrder else SourceSortPreferences.bestPerQuality(fullOrder, sorting.bestPerQuality)
         val moreLinks = fullOrder.size - ordered.size
@@ -3916,7 +3927,12 @@ class MainActivity : Activity() {
             } else false
         }
         clearSourceFilter = if (search == null) null else ({ if (search.sourceFilter != null && generation == id) { applySourceFilter(null); true } else false })
+        var limitHeading = false
         fun addRow(source: SourceItem, fadeIn: Boolean) {
+            if (!limitHeading && overLimit?.invoke(source) == true && !tooTall(source) && choices.childCount > 0) {
+                limitHeading = true
+                choices.addView(text("Over your auto-play limit", 14, muted, true), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10); bottomMargin = dp(8) })
+            }
             val limitNote = problem(source)?.let { " · $it" }.orEmpty()
             // Only the badges, the release name and the source's own name: the scrapers' extra lines are left out.
             choices.addChoice(TvChoiceRow(this, TvChoiceKeys.source(source), SourceBadges.name(source), SourceBadges.origin(source),
@@ -4054,7 +4070,9 @@ class MainActivity : Activity() {
             .let { all -> val year = movieYear(identity); all.filterNot { hiddenByRules(it, rules, fit, identity, year) } }
         fun tooTall(source: SourceItem) = DeviceVideoSupport.problem(source, fit) != null
         return playable.distinctBy(TvChoiceKeys::source).let { unique -> sorting.languages?.sorted(unique, sorting.order) ?: sorting.order.sorted(unique) }
-            .let(::cachedFirst).let { all -> all.filterNot(::tooTall) + all.filter(::tooTall) }
+            .let(::cachedFirst)
+            .let { all -> overAutoplayLimit(identity ?: return@let all)?.let { over -> all.filterNot(over) + all.filter(over) } ?: all }
+            .let { all -> all.filterNot(::tooTall) + all.filter(::tooTall) }
             .let { all -> SourceSortPreferences.bestPerQuality(all, sorting.bestPerQuality) }
     }
 
@@ -5346,10 +5364,19 @@ class MainActivity : Activity() {
                 store.get("updates.startup") != "false", contentLabel = "Check for updates on startup") { on -> store.put("updates.startup", on.toString()) }
                 }
                 "about" -> {
-            val about = settingsGroup("About", null)
-            about.addView(text("POV Rajput fork by Rajput · Android TV port by Mark Mateo · based on the POV Kodi add-on by kodifitzwell (github.com/kodifitzwell/repo). Licensed under GNU GPL v3. WeTrakr tracking and API by alberdev (wetrakr.com). Catalogs: TMDB, Queued Up (queued-up.app), Cinemeta, Kitsu and your own catalog add-ons. Subtitles found online: OpenSubtitles, and Wyzie Subs with your key. Skip intro, recap and credits times: TheIntroDB (theintrodb.org) and, for anime, AniSkip (aniskip.com) with Kitsu ID mappings. Seek previews: Seekr (seekr.tv) with your key; support it at buymeacoffee.com/seekrtvdev. This product uses the TMDB API but is not endorsed or certified by TMDB. With your TVDB key, show metadata is provided by TheTVDB (thetvdb.com); please consider adding missing information or subscribing. Playback: AndroidX Media3, with FFmpeg audio decoding via Jellyfin's Media3 FFmpeg decoder.", 12, muted).apply {
-                setLineSpacing(dp(2).toFloat(), 1f); setPadding(dp(14), dp(12), dp(14), dp(12))
-            }, margin(-1, -2))
+            val version = packageManager.getPackageInfo(packageName, 0).versionName.orEmpty().removeSuffix("-rajput")
+            // The app: icon, name and version, then help and feedback, then the services it uses as a grid.
+            val app = settingsGroup("App", null, heading = false)
+            val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(12), dp(14), dp(12)) }
+            header.addView(ImageView(this).apply { setImageResource(R.drawable.pov_icon); scaleType = ImageView.ScaleType.FIT_CENTER
+                background = rounded(Color.TRANSPARENT, 10); clipToOutline = true }, margin(46, 46))
+            val names = column()
+            names.addView(text("POV Rajput", 18, ink, true))
+            names.addView(text("Version $version · ${if (DeviceLayout.tv) "Android TV" else "Phone"}", 12, muted), margin(-1, -2, top = 3))
+            header.addView(names, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(14) })
+            app.addView(header, margin(-1, -2))
+
+            val about = settingsGroup("Help & feedback", null)
             // Only the app version and device are added to the bug link, shown on the form before sending.
             val appDetails = "POV Rajput ${packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()} · ${if (DeviceLayout.tv) "TV" else "Phone"} · " +
                 "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android ${android.os.Build.VERSION.RELEASE}"
@@ -5362,9 +5389,51 @@ class MainActivity : Activity() {
             settingsRow(about, "Website", WEBSITE.removePrefix("https://"), "Downloads, install guide and help for POV Rajput.") {
                 openWebPage("POV Rajput website", WEBSITE, WEBSITE)
             }
-            settingsRow(about, "Open-source notices") {
+            settingsRow(about, "Open-source notices", "", "Licences and credits for the code and fonts this app builds on.") {
                 AlertDialog.Builder(this).setTitle("Open-source notices").setMessage(assets.open("NOTICE.txt").bufferedReader().use { it.readText() }).setPositiveButton("Close", null).show()
             }
+
+            // Services the app uses: logo, name and one short line each. Credits for code are in Open-source notices.
+            val services = listOf(
+                Triple(R.drawable.pov_about_tmdb, "TMDB", "Uses the TMDB API but is not endorsed or certified by TMDB."),
+                Triple(R.drawable.pov_about_tvdb, "TheTVDB", "Show details with your TVDB key. Please add missing info or subscribe."),
+                Triple(R.drawable.pov_about_cinemeta, "Cinemeta", "Catalogs and details."),
+                Triple(0, "Kitsu", "Anime catalogs and IDs."),
+                Triple(R.drawable.pov_about_queuedup, "Queued Up", "Catalogs."),
+                Triple(R.drawable.wetrakr_logo, "WeTrakr", "Tracking and lists."),
+                Triple(R.drawable.pov_about_simkl, "Simkl", "Tracking and lists."),
+                Triple(R.drawable.pov_about_introdb, "TheIntroDB", "Skip intro, recap and credits times."),
+                Triple(0, "AniSkip", "Anime skip times."),
+                Triple(R.drawable.pov_about_opensubtitles, "OpenSubtitles", "Subtitles found online."),
+                Triple(R.drawable.pov_about_subdl, "SubDL", "Subtitles found online."),
+                Triple(R.drawable.pov_about_wyzie, "Wyzie Subs", "Subtitles with your key."),
+                Triple(R.drawable.pov_about_seekr, "Seekr", "Seek previews with your key."),
+            )
+            val powered = settingsGroup("Powered by", null)
+            gridRows(powered, services.map { (logo, name, line) ->
+                val wordmark = logo == R.drawable.pov_about_tmdb || logo == R.drawable.pov_about_tvdb || logo == R.drawable.wetrakr_logo
+                val tile = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(10), dp(12), dp(10)); minimumHeight = dp(74)
+                    // Focusable only so the remote can scroll down to every tile; OK does nothing.
+                    isFocusable = DeviceLayout.tv; isFocusableInTouchMode = DeviceLayout.tv; tag = "tile:about:$name"; contentDescription = name
+                }
+                val mark: View = if (logo == 0) text(name.take(1), 14, ink, true).apply {
+                    gravity = Gravity.CENTER; background = rounded(withAlpha(Color.WHITE, 30), 7)
+                } else ImageView(this).apply {
+                    setImageResource(logo); adjustViewBounds = true; scaleType = ImageView.ScaleType.FIT_START
+                    if (!wordmark) { background = rounded(Color.TRANSPARENT, 7); clipToOutline = true }
+                }
+                val slot = FrameLayout(this)
+                slot.addView(mark, if (wordmark) FrameLayout.LayoutParams(-2, dp(when (logo) { R.drawable.pov_about_tvdb -> 26; R.drawable.wetrakr_logo -> 18; else -> 13 }), Gravity.CENTER_VERTICAL or Gravity.START)
+                    else FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER_VERTICAL or Gravity.START))
+                tile.addView(slot, margin(-1, 28))
+                tile.addView(text(name, 13, ink, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 8))
+                tileFocus(tile)
+                tile
+            }, if (DeviceLayout.phone) 3 else 5)
+            // TMDB's terms ask for this notice wherever its data is used.
+            powered.addView(text("This product uses the TMDB API but is not endorsed or certified by TMDB.", 11, muted).apply {
+                setTypeface(typeface, android.graphics.Typeface.ITALIC) }, margin(-1, -2, bottom = 10).apply { leftMargin = dp(14); rightMargin = dp(14) })
                 }
             }
         } finally { settingsTarget = null }
@@ -5561,11 +5630,10 @@ class MainActivity : Activity() {
         val (title, subtitle) = when (section) {
             "links" -> "Links & sorting" to "How links are ordered, and which are left out."
             "autoplay" -> "Auto-play" to "What Play starts on its own, and the next episode."
-            "qualities" -> "Qualities to show" to "Links of a switched-off quality are left out of the link list, Best per quality and the player's Streams."
-            "rules" -> "Link rules" to "Prefer or hide links by keywords, release groups, ready-made rules and regex patterns, like AIOStreams SEL templates."
-            "preferred" -> "Prefer" to "Links matching these move up, where Preferred sits in Link sorting."
-            "filters" -> "Hide" to "Links matching these are left out of the link list and the player's Streams."
-            "groups" -> "Trusted release groups" to "Pick a list to edit its groups. The lists' own switches are on the Preferred links page."
+            "rules", "filters", "preferred", "qualities" -> "Link filters" to "Which links show, which are hidden and which move up. Each tile saves at once."
+            "words:prefer" -> "Your words to prefer" to "Links with these words move up, the first word ranking highest."
+            "words:hide" -> "Your words to hide" to "Links with any of these words are left out."
+            "groups" -> "Trusted release groups" to "Lists of well-known release groups; links from groups in lists that are on move up, best first."
             "trailers" -> "Trailers" to "Trailers on details pages and when a Home shelf poster has focus."
             else -> if (section.startsWith("group:")) (LinkRules.groupSet(section.removePrefix("group:"))?.label ?: "Release groups") to
                 (if (LinkRules.GROUP_SETS.any { it.id == section.removePrefix("group:") }) "Trusted release groups, best first. Links from groups that are on move up."
@@ -5578,22 +5646,17 @@ class MainActivity : Activity() {
         if (section.startsWith("group:")) { groupListPage(playback, section.removePrefix("group:")); return }
         when (section) {
             "trailers" -> {
-            settingsToggle(playback, "Trailers", "Trailers play on details pages and when a Home shelf poster has focus. The rotating top recommendations show backdrop images only.", heroTrailersEnabled()) { enabled ->
-                getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("enabled", enabled).apply()
-                heroTrailer?.stop()
-            }
-            settingsToggle(playback, "Trailer sound", "Play trailer audio on details pages and focused Home posters. Turn off for muted previews.", heroTrailerSoundEnabled()) { enabled ->
-                getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("sound", enabled).apply()
-                heroTrailer?.stop()
-            }
-            settingsToggle(playback, "High quality trailers", "Use sharper VP9 video when this TV can decode it in hardware. Turn off to use standard AVC video.", heroTrailerHighQuality()) { enabled ->
-                getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("high_quality", enabled).apply()
-                heroTrailer?.stop()
-            }
-            settingsToggle(playback, "Fill trailer screen", "Zoom and crop wide trailers to reduce black bars. Some picture edges are cut off; turn off for original framing.", heroTrailerFillEnabled()) { enabled ->
-                getSharedPreferences("pov_hero_trailers", 0).edit().putBoolean("fill_screen", enabled).apply()
-                heroTrailer?.stop()
-            }
+            val prefs = getSharedPreferences("pov_hero_trailers", 0)
+            val on = heroTrailersEnabled()
+            fun save(key: String, value: Boolean, redraw: Boolean = false) { prefs.edit().putBoolean(key, value).apply(); heroTrailer?.stop(); if (redraw) refreshSettings() }
+            tileGrid(playback, listOf(
+                Tile("trailers", "Trailers", "Details pages and Home posters", on) { value -> save("enabled", value, redraw = true) },
+                Tile("trailer_sound", "Trailer sound", "Muted when off", heroTrailerSoundEnabled(), enabled = on) { value -> save("sound", value) },
+                Tile("trailer_hq", "High quality", "VP9 when the TV can", heroTrailerHighQuality(), enabled = on) { value -> save("high_quality", value) },
+                Tile("trailer_fill", "Fill screen", "Zoom to remove bars", heroTrailerFillEnabled(), enabled = on) { value -> save("fill_screen", value) },
+            ), columns = if (DeviceLayout.phone) 2 else 4)
+            playback.addView(text("The rotating top recommendations show backdrop images only. Fill screen crops some picture edges.", 11, muted),
+                margin(-1, -2, bottom = 8).apply { leftMargin = dp(10); rightMargin = dp(10) })
             }
             "links" -> {
             settingsRow(playback, "Link sorting", SourceSortPreferences(this).label,
@@ -5607,11 +5670,6 @@ class MainActivity : Activity() {
                     SourceSortPreferences.BEST_PER_QUALITY_RANGE, { if (it == 0) "Off" else "$it ${if (it == 1) "link" else "links"}" }) { count ->
                     sortPreferences.bestPerQuality = count; refreshSettings()
                 }
-            }
-            val shownQualities = LinkRules.QUALITIES.filter { it.first !in SourceSortPreferences(this).rules.hiddenQualities }
-            settingsRow(playback, "Qualities to show", if (shownQualities.size == LinkRules.QUALITIES.size) "All" else shownQualities.joinToString(", ") { it.second.substringBefore(",") }.ifEmpty { "None" },
-                "Switch qualities on or off: 4K, 1080p, 720p, 576p/480p and lower, unknown. Links of a switched-off quality are left out everywhere, Best per quality included.") {
-                navigate { playbackPage("qualities") }
             }
             val untilPrefs = SourceSearchPreferences(this)
             val until = untilPrefs.searchUntil(sortPreferences.keepSearching)
@@ -5642,8 +5700,9 @@ class MainActivity : Activity() {
             val linkRules = SourceSortPreferences(this).rules
             val preferCount = linkRules.preferWords.size + linkRules.preferPresets.size + (if (linkRules.preferPattern.isNotBlank()) 1 else 0)
             val hideCount = linkRules.hideCount(LowQualityReleases.hidden(store))
-            settingsRow(playback, "Link rules", "$preferCount prefer · $hideCount hide",
-                "Prefer or hide links by keywords, release groups, ready-made rules and regex patterns, like AIOStreams SEL templates.") {
+            val hiddenQualityCount = linkRules.hiddenQualities.size
+            settingsRow(playback, "Link filters", "$hideCount hide · $preferCount prefer" + if (hiddenQualityCount > 0) " · $hiddenQualityCount ${if (hiddenQualityCount == 1) "quality" else "qualities"} off" else "",
+                "Qualities to show, what to hide and what to prefer, as tiles on one page, plus your own words, release groups and patterns.") {
                 navigate { playbackPage("rules") }
             }
             val searchPreferences = SourceSearchPreferences(this)
@@ -5659,38 +5718,31 @@ class MainActivity : Activity() {
             settingsToggle(playback, "Hide uncached links", "Show only links that play at once (cached or direct) in the link list and the player's Streams. Real-Debrid, AllDebrid and Debrid-Link can't tell in advance, so their links stay.",
                 store.get(HIDE_UNCACHED) == "true") { on -> store.put(HIDE_UNCACHED, on.toString()) }
             }
-            "qualities" -> {
+            "rules", "filters", "preferred", "qualities" -> linkFilterTiles(playback)
+            "words:prefer" -> {
                 val sort = SourceSortPreferences(this)
-                LinkRules.QUALITIES.forEach { (key, label) ->
-                    settingsToggle(playback, label, if (key == "unknown") "Links that don't say their quality." else "Switch off to leave out every $label link.", key !in sort.rules.hiddenQualities) { on ->
-                        sort.rules = sort.rules.let { it.copy(hiddenQualities = if (on) it.hiddenQualities - key else it.hiddenQualities + key) }
-                    }
-                }
+                wordRows(playback, sort.rules.preferWords, "preferred word", "PSA") { list -> sort.rules = sort.rules.copy(preferWords = list) }
             }
-            "rules" -> {
-                val rules = SourceSortPreferences(this).rules
-                val preferCount = rules.preferWords.size + rules.preferPresets.size + (if (rules.preferPattern.isNotBlank()) 1 else 0)
-                settingsRow(playback, "Prefer", if (rules.preferActive) SourceSortPreferences.preferredSummary(rules) else "Not set",
-                    "Move links up: your keywords (playWEB, PSA…), ready-made rules, trusted release groups and a regex pattern. $preferCount on.") {
-                    navigate { playbackPage("preferred") }
-                }
-                val hideCount = rules.hideCount(LowQualityReleases.hidden(store))
-                settingsRow(playback, "Hide", if (hideCount == 0) "Off" else "$hideCount on",
-                    "Leave links out: bad copies, 3D, other years, low-quality groups, keywords and a regex pattern. The link list can still show what was hidden.") {
-                    navigate { playbackPage("filters") }
-                }
+            "words:hide" -> {
+                val sort = SourceSortPreferences(this)
+                wordRows(playback, sort.rules.hideWords, "hide word", "YIFY") { list -> sort.rules = sort.rules.copy(hideWords = list) }
             }
-            "preferred" -> preferredLinksPage(playback)
             "groups" -> {
-                val rules = SourceSortPreferences(this).rules
+                val sort = SourceSortPreferences(this)
+                val rules = sort.rules
                 LinkRules.GROUP_SETS.forEach { set ->
-                    settingsRow(playback, set.label, "${rules.activeGroups(set).size} of ${rules.groups(set).size} on" + if (set.id in rules.groupSets) "" else " · list off",
-                        rules.groups(set).take(6).joinToString(", ") + if (rules.groups(set).size > 6) "…" else "") {
-                        navigate { playbackPage("group:${set.id}") }
+                    settingsToggle(playback, set.label, rules.activeGroups(set).take(8).joinToString(", ").ifEmpty { "Every group in this list is off" } +
+                        if (rules.activeGroups(set).size > 8) "…" else "", set.id in rules.groupSets) { on ->
+                        sort.rules = sort.rules.let { it.copy(groupSets = if (on) it.groupSets + set.id else it.groupSets - set.id) }
                     }
                 }
+                settingsRow(playback, "Edit a list", "", "Switch single groups on or off, reorder, add or remove them.") {
+                    val labels = LinkRules.GROUP_SETS.map { "${it.label} · ${rules.activeGroups(it).size} of ${rules.groups(it).size} on" }
+                    AlertDialog.Builder(this).setTitle("Edit which list?").setItems(labels.toTypedArray()) { _, which ->
+                        navigate { playbackPage("group:${LinkRules.GROUP_SETS[which].id}") }
+                    }.setNegativeButton("Cancel", null).show()
+                }
             }
-            "filters" -> linkFiltersPage(playback)
             "autoplay" -> {
             val searchPreferences = SourceSearchPreferences(this)
             val mode = searchPreferences.mode(store.get(AUTOPLAY_FIRST) == "true")
@@ -5715,18 +5767,14 @@ class MainActivity : Activity() {
                 store.get(AUTOPLAY_LIMIT_ON) == "true") { on -> store.put(AUTOPLAY_LIMIT_ON, on.toString()); refreshSettings() }
             if (store.get(AUTOPLAY_LIMIT_ON) == "true") {
                 settingsRow(playback, "Highest bitrate", "${autoplayMaxMbps()} Mbps", "For movies and episodes. Pick it from your internet speed, e.g. 25 Mbps on a 40 Mbps connection.") {
-                    inputSetting("Highest bitrate for Auto-play (Mbps)", "A whole number of Mbps, e.g. 25", autoplayMaxMbps().toString()) { value ->
-                        val mbps = value.trim().toIntOrNull()
-                        if (mbps == null || mbps !in 1..500) toast("Enter a whole number of Mbps, such as 25")
-                        else { store.put(AUTOPLAY_MAX_MBPS, mbps.toString()); toast("Auto-play limited to $mbps Mbps"); refreshSettings() }
+                    NumberStepper.show(this, "Highest bitrate", "Auto-play picks links up to this bitrate. Hold ▲ or ▼ to go faster.", autoplayMaxMbps(), 1..500, { "$it Mbps" }) { mbps ->
+                        store.put(AUTOPLAY_MAX_MBPS, mbps.toString()); refreshSettings()
                     }
                 }
                 listOf(false to "Movie", true to "Episode").forEach { (episode, kind) ->
                     settingsRow(playback, "$kind size fallback", "${autoplayLimitGb(episode)} GB", "Used when the ${kind.lowercase()}'s runtime is unknown.") {
-                        inputSetting("Largest $kind file (GB)", "A whole number of GB, e.g. ${if (episode) 5 else 20}", autoplayLimitGb(episode).toString()) { value ->
-                            val gb = value.trim().toIntOrNull()
-                            if (gb == null || gb !in 1..1000) toast("Enter a whole number of GB, such as ${if (episode) 5 else 20}")
-                            else { store.put(if (episode) AUTOPLAY_MAX_GB_EPISODE else AUTOPLAY_MAX_GB, gb.toString()); toast("$kind size fallback set to $gb GB"); refreshSettings() }
+                        NumberStepper.show(this, "$kind size fallback", "Largest ${kind.lowercase()} file when its runtime is unknown. Hold ▲ or ▼ to go faster.", autoplayLimitGb(episode), 1..1000, { "$it GB" }) { gb ->
+                            store.put(if (episode) AUTOPLAY_MAX_GB_EPISODE else AUTOPLAY_MAX_GB, gb.toString()); refreshSettings()
                         }
                     }
                 }
@@ -5820,44 +5868,90 @@ class MainActivity : Activity() {
                 picked(index); dialog.dismiss(); changed()
             }.setNegativeButton("Cancel", null).show()
         }
-        val looks = settingsGroup("Look", "series", heading = false)
-        settingsRow(looks, "Presets", "", "One tap sets the font, colors, outline and background together. Change any part afterwards.") {
-            choose("Subtitle presets", SubtitlePreferences.PRESETS.map { it.second }, -1) { index -> preferences.applyPreset(SubtitlePreferences.PRESETS[index].first) }
-        }
-        val fonts = listOf(SubtitlePreferences.Companion.Font("", "Device default", "Your TV's caption font")) + SubtitlePreferences.FONTS
-        settingsRow(looks, "Font", preferences.fontLabel, "Free look-alikes of the fonts streaming apps use, plus YouTube's extra styles.") {
-            subtitleFontPicker(preferences, fonts) { changed() }
-        }
-        settingsToggle(looks, "Bold text", "Thicker letters read better from the sofa.", preferences.boldText) { on -> preferences.boldText = on; InAppPlaybackSession.refreshSubtitleStyle(); refreshSettings() }
-        settingsRow(looks, "Size", preferences.sizeLabel) {
-            choose("Subtitle size", SubtitlePreferences.SIZE_LABELS, SubtitlePreferences.SIZES.indexOf(preferences.sizePercent)) { index -> preferences.sizePercent = SubtitlePreferences.SIZES[index] }
-        }
-        val colorLabels = listOf("Device default") + SubtitlePreferences.COLORS.map { it.second }
-        fun colorIndex(color: Int?) = if (color == null) 0 else SubtitlePreferences.COLORS.indexOfFirst { it.first == color } + 1
-        settingsRow(looks, "Text color", SubtitlePreferences.colorName(preferences.textColor)) {
-            choose("Text color", colorLabels, colorIndex(preferences.textColor)) { index -> preferences.textColor = if (index == 0) null else SubtitlePreferences.COLORS[index - 1].first }
-        }
-        val edges = listOf(-1 to "Device default") + SubtitlePreferences.EDGE_TYPES
-        settingsRow(looks, "Outline type", preferences.edgeLabel, "Outline draws a border round each letter; Drop shadow is the Netflix look; Raised and Depressed look embossed or pressed in.") {
-            choose("Outline type", edges.map { it.second }, edges.indexOfFirst { it.first == preferences.edgeType }) { index -> preferences.edgeType = edges[index].first }
-        }
-        settingsRow(looks, "Outline color", SubtitlePreferences.colorName(preferences.edgeColor)) {
-            choose("Outline color", colorLabels, colorIndex(preferences.edgeColor)) { index -> preferences.edgeColor = if (index == 0) null else SubtitlePreferences.COLORS[index - 1].first }
-        }
-        val opacities = listOf(-1) + SubtitlePreferences.OPACITIES
-        settingsRow(looks, "Background box", preferences.backgroundLabel, "A box behind the text. None keeps the picture clear; 75% is the YouTube look.") {
-            choose("Background box", opacities.map { when (it) { -1 -> "Device default"; 0 -> "None"; else -> "$it%${if (it == 100) " (solid)" else ""}" } },
-                opacities.indexOf(preferences.backgroundOpacity)) { index -> preferences.backgroundOpacity = opacities[index] }
-        }
-        if (preferences.backgroundOpacity > 0) settingsRow(looks, "Box color", SubtitlePreferences.colorName(preferences.backgroundColor)) {
-            choose("Box color", SubtitlePreferences.COLORS.map { it.second }, SubtitlePreferences.COLORS.indexOfFirst { it.first == preferences.backgroundColor }) { index ->
-                preferences.backgroundColor = SubtitlePreferences.COLORS[index].first
+        fun sample(view: TextView, font: String, bold: Boolean, color: Int, edge: Int, edgeColor: Int, box: Int) {
+            view.typeface = if (font.isEmpty()) android.graphics.Typeface.DEFAULT_BOLD else SubtitlePreferences.typeface(this, font, bold)
+            view.setTextColor(color)
+            when (edge) {
+                androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE -> view.setShadowLayer(0f, 0f, 0f, 0)
+                androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW -> view.setShadowLayer(dp(2).toFloat(), dp(1).toFloat(), dp(1).toFloat(), edgeColor)
+                else -> view.setShadowLayer(dp(2).toFloat(), 0f, 0f, edgeColor)
             }
+            if (box != 0) { view.background = rounded(box, 3); view.setPadding(dp(5), dp(1), dp(5), dp(1)) }
         }
-        settingsRow(looks, "Position", preferences.positionLabel) {
+        val presets = settingsGroup("Presets · one tap sets font, colors and outline", null)
+        data class Look(val id: String, val name: String, val font: String, val bold: Boolean, val color: Int, val edge: Int, val edgeColor: Int, val box: Int)
+        val looks = listOf(
+            Look("default", "App default", "lato", true, Color.WHITE, androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW, Color.BLACK, 0),
+            Look("netflix", "Netflix-style", "inter", false, Color.WHITE, androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW, Color.BLACK, 0),
+            Look("prime", "Prime-style", "arimo", true, Color.WHITE, androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE, 0xFF1A1A1A.toInt(), 0),
+            Look("youtube", "YouTube-style", "roboto", false, Color.WHITE, androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE, Color.BLACK, 0xBF000000.toInt()),
+            Look("classic", "Classic yellow", "open-sans", true, 0xFFFFE600.toInt(), androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE, Color.BLACK, 0),
+        )
+        gridRows(presets, looks.map { look ->
+            choiceTile("preset:${look.id}", look.name, false, 74, { box ->
+                val stage = FrameLayout(this).apply { background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF3A5A78.toInt(), 0xFF8C7A5B.toInt())).apply { cornerRadius = dp(6).toFloat() } }
+                stage.addView(text("Sample", 14, Color.WHITE).apply { sample(this, look.font, look.bold, look.color, look.edge, look.edgeColor, look.box) },
+                    FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+                box.addView(stage, margin(-1, 36))
+                box.addView(text(look.name, 12, ink, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 6))
+            }) { preferences.applyPreset(look.id); changed() }
+        }, if (DeviceLayout.phone) 3 else 5)
+
+        val fontCard = settingsGroup("Font", null)
+        val fonts = listOf(SubtitlePreferences.Companion.Font("", "Device default", "Your TV's caption font")) + SubtitlePreferences.FONTS
+        gridRows(fontCard, fonts.map { font ->
+            choiceTile("font:${font.id}", font.label, font.id == preferences.font, 52, { box ->
+                box.addView(text(font.label, 15, ink).apply {
+                    gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+                    typeface = if (font.id.isEmpty()) android.graphics.Typeface.DEFAULT_BOLD else SubtitlePreferences.typeface(this@MainActivity, font.id, bold = true)
+                })
+            }) { preferences.font = font.id; changed() }
+        }, tileColumns())
+
+        fun swatches(title: String, colors: List<Pair<Int?, String>>, selected: Int?, pick: (Int?) -> Unit) {
+            val swatchCard = settingsGroup(title, null)
+            gridRows(swatchCard, colors.map { (color, name) ->
+                choiceTile("color:$title:$name", "$title $name", color == selected, 44, { box ->
+                    box.addView(View(this).apply {
+                        background = if (color == null) rounded(withAlpha(Color.WHITE, 30), 6) else rounded(color, 6).apply { setStroke(dp(1), withAlpha(Color.WHITE, 60)) }
+                    }, margin(-1, 22))
+                    box.addView(text(name, 10, muted).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 4))
+                }) { pick(color); changed() }
+            }, if (DeviceLayout.phone) 4 else 10, gap = 6)
+        }
+        val palette: List<Pair<Int?, String>> = listOf<Pair<Int?, String>>(null to "Device") + SubtitlePreferences.COLORS.map { it.first to it.second }
+        swatches("Text color", palette, preferences.textColor) { preferences.textColor = it }
+        val outline = settingsGroup("Outline", null)
+        val edges = listOf(-1 to "Device default") + SubtitlePreferences.EDGE_TYPES
+        gridRows(outline, edges.map { (type, name) ->
+            choiceTile("edge:$type", name, type == preferences.edgeType, 44, { box ->
+                box.addView(text(name, 13, ink, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+            }) { preferences.edgeType = type; changed() }
+        }, tileColumns())
+        if (preferences.edgeType != androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE) swatches("Outline color", palette, preferences.edgeColor) { preferences.edgeColor = it }
+        val boxCard = settingsGroup("Box behind text", null)
+        val opacities = listOf(-1) + SubtitlePreferences.OPACITIES
+        gridRows(boxCard, opacities.map { value ->
+            val name = when (value) { -1 -> "Device default"; 0 -> "None"; 100 -> "Solid"; else -> "$value%" }
+            choiceTile("box:$value", "Box $name", value == preferences.backgroundOpacity, 44, { box ->
+                box.addView(text(name, 13, ink, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+            }) { preferences.backgroundOpacity = value; changed() }
+        }, tileColumns())
+        if (preferences.backgroundOpacity > 0) swatches("Box color", SubtitlePreferences.COLORS.map { it.first to it.second }, preferences.backgroundColor) { preferences.backgroundColor = it ?: Color.BLACK }
+        val sizeCard = settingsGroup("Size", null)
+        gridRows(sizeCard, SubtitlePreferences.SIZES.mapIndexed { index, size ->
+            choiceTile("size:$size", SubtitlePreferences.SIZE_LABELS[index], size == preferences.sizePercent, 56, { box ->
+                box.addView(text("Aa", (12 * size / 100f).toInt().coerceAtLeast(10) + 4, ink, true).apply { gravity = Gravity.CENTER })
+                box.addView(text(SubtitlePreferences.SIZE_LABELS[index], 11, muted).apply { gravity = Gravity.CENTER }, margin(-1, -2, top = 2))
+            }) { preferences.sizePercent = size; changed() }
+        } + switchTile(Tile("subtitle_bold", "Bold text", "Reads better from the sofa", preferences.boldText) { on ->
+            preferences.boldText = on; InAppPlaybackSession.refreshSubtitleStyle(); refreshSettings()
+        }), tileColumns())
+        val looks2 = settingsGroup("Position", null)
+        settingsRow(looks2, "Position", preferences.positionLabel) {
             SubtitlePositionPicker.show(this, liveVideo = false, changed = { InAppPlaybackSession.refreshSubtitleStyle() }, dismissed = { refreshSettings() })
         }
-        settingsRow(looks, "Reset subtitle style", "", "Back to the app's default: bold white Lato, medium, black drop shadow, no box.", danger = true) {
+        settingsRow(looks2, "Reset subtitle style", "", "Back to the app's default: bold white Lato, medium, black drop shadow, no box.", danger = true) {
             preferences.applyPreset("default"); changed()
         }
     }
@@ -5924,7 +6018,27 @@ class MainActivity : Activity() {
         fun saveList(list: List<String>) { change { it.copy(customGroups = it.customGroups + (id to list.map(String::trim).filter(String::isNotBlank).distinctBy { name -> name.lowercase() }.take(80))) }; refreshSettings() }
         val groups = rules.groups(set)
         val hold = if (DeviceLayout.tv) "Hold OK" else "Press and hold"
-        groups.forEachIndexed { index, group ->
+        // Hidden groups have no order, so they are tiles: a name and a switch each; hold for Remove.
+        if (!trusted) {
+            val tiles = groups.map { group ->
+                switchTile(Tile("group:$group", group, "", rules.groupOn(set, group)) { on ->
+                    change { current ->
+                        val off = current.disabledGroups[id].orEmpty().let { names -> if (on) names - group.lowercase() else names + group.lowercase() }
+                        current.copy(disabledGroups = current.disabledGroups + (id to off))
+                    }
+                }).apply {
+                    setOnLongClickListener {
+                        AlertDialog.Builder(this@MainActivity).setTitle(group).setItems(arrayOf("Remove")) { _, _ -> saveList(groups.filterNot { it == group }) }
+                            .setNegativeButton("Cancel", null).show()
+                        true
+                    }
+                }
+            }
+            card.addView(text("${rules.activeGroups(set).size} of ${groups.size} on · links from groups that are on are hidden · $hold a tile to remove it.", 11, muted),
+                margin(-1, -2, top = 6).apply { leftMargin = dp(10); rightMargin = dp(10) })
+            gridRows(card, tiles, tileColumns())
+        }
+        if (trusted) groups.forEachIndexed { index, group ->
             settingsDivider(card)
             val row = toggleRow(if (trusted) "${index + 1}.  $group" else group, "$hold to move or remove.", rules.groupOn(set, group)) { on ->
                 change { current ->
@@ -5952,84 +6066,70 @@ class MainActivity : Activity() {
         }
     }
 
-    /** Preferred links: the viewer's words, the ready-made switches, trusted release groups and an optional pattern. */
-    private fun preferredLinksPage(card: LinearLayout) {
+    /**
+     * Link filters, one page of tiles: qualities to show, what to hide and what to prefer, then the rules that are lists
+     * (words, release groups, patterns) as rows. Each tile saves at once.
+     */
+    private fun linkFilterTiles(card: LinearLayout) {
         val sort = SourceSortPreferences(this)
         val rules = sort.rules
         fun change(edit: (LinkRules.Rules) -> LinkRules.Rules) { sort.rules = edit(sort.rules) }
-        settingsRow(card, "Link sorting", sort.label, "Where Preferred sits among Library, Language, Quality and File size. Above Quality, a preferred 1080p link beats a 4K one.") {
+        fun hidePreset(id: String, on: Boolean) = change { it.copy(hidePresets = if (on) it.hidePresets + id else it.hidePresets - id, touched = it.touched + "hide:$id") }
+        fun preferPreset(id: String, on: Boolean) = change { it.copy(preferPresets = if (on) it.preferPresets + id else it.preferPresets - id, touched = it.touched + "prefer:$id") }
+        val device = if (DeviceLayout.tv) "TV" else "device"
+
+        val qualities = settingsGroup("Qualities to show · off = those links are hidden", null)
+        tileGrid(qualities, LinkRules.QUALITIES.map { (key, label) ->
+            val short = when (key) { "4k" -> "4K"; "sd" -> "SD"; "unknown" -> "Unknown"; else -> label }
+            val hint = when (key) { "4k" -> "2160p"; "1080" -> "Full HD"; "720" -> "HD"; "sd" -> "576p, 480p, lower"; else -> "No quality in name" }
+            Tile("quality:$key", short, hint, key !in rules.hiddenQualities) { on ->
+                change { it.copy(hiddenQualities = if (on) it.hiddenQualities - key else it.hiddenQualities + key) }
+            }
+        })
+
+        val hide = settingsGroup("Hide · on = links with these are left out", null)
+        val hideLabels = mapOf("sample" to "Samples & trailers", "threed" to "3D", "upscale" to "Upscales", "hardsub" to "Hardcoded subs",
+            "dubbed" to "Dubbed", "hdtv" to "TV recordings", "remux" to "Remux", "av1" to "AV1", "x264" to "x264 / AVC")
+        val hideHints = mapOf("sample" to "Sample, Trailer, Extras", "remux" to "Very large files", "av1" to "Older TVs can't decode", "x264" to "Bigger than HEVC")
+        val hideTiles = mutableListOf(
+            Tile("hide:badcopies", "Bad copies", "CAM, TS, screeners", LowQualityReleases.hidden(store)) { on -> store.put(LowQualityReleases.KEY, on.toString()) })
+        hideTiles += hideLabels.keys.mapNotNull { id -> LinkRules.HIDE.firstOrNull { it.id == id } }.map { preset ->
+            Tile("hide:${preset.id}", hideLabels[preset.id] ?: preset.label, hideHints[preset.id] ?: preset.example, preset.id in rules.hidePresets) { on -> hidePreset(preset.id, on) }
+        }
+        hideTiles += Tile("hide:${LinkRules.HIDE_DV_ONLY}", "Dolby Vision only", "When this $device can't play DV", LinkRules.HIDE_DV_ONLY in rules.hidePresets) { on -> hidePreset(LinkRules.HIDE_DV_ONLY, on) }
+        hideTiles += Tile("hide:years", "Other years", "Movies · another film, same name", rules.hideOtherYears) { on -> change { it.copy(hideOtherYears = on) } }
+        hideTiles += Tile("hide:${LinkRules.HIDE_GROUPS}", "Release groups", "Low-quality encoders", LinkRules.HIDE_GROUPS in rules.hidePresets) { on -> hidePreset(LinkRules.HIDE_GROUPS, on) }
+        tileGrid(hide, hideTiles)
+
+        val prefer = settingsGroup("Prefer · moves links up in Link sorting and auto-play", null)
+        val preferLabels = mapOf("dv" to "Dolby Vision", "hdr" to "HDR", "atmos" to "Atmos", "lossless" to "Lossless audio", "remux" to "Remux / Blu-ray",
+            "webdl" to "WEB-DL", "hevc" to "HEVC / x265", "tenbit" to "10-bit", "proper" to "Proper / Repack")
+        val preferTiles = preferLabels.keys.mapNotNull { id -> LinkRules.PREFER.firstOrNull { it.id == id } }.map { preset ->
+            val hint = if (preset.id in LinkRules.unsupportedPrefer) "Not on this $device · ignored" else preset.example
+            Tile("prefer:${preset.id}", preferLabels[preset.id] ?: preset.label, hint, preset.id in rules.preferPresets) { on -> preferPreset(preset.id, on) }
+        } + Tile("prefer:${LinkRules.GROUPS}", "Trusted groups", "FLUX, NTb, PSA…", LinkRules.GROUPS in rules.preferPresets) { on -> preferPreset(LinkRules.GROUPS, on) }
+        tileGrid(prefer, preferTiles)
+
+        val more = settingsGroup("More rules", null)
+        settingsToggle(more, "Use Prefer", "Switch off to keep the Prefer rules but stop them moving links.", sort.preferredFirst) { on -> sort.preferredFirst = on }
+        settingsRow(more, "Link sorting", sort.label, "Where Preferred sits among Library, Language, Quality and File size. Above Quality, a preferred 1080p link beats a 4K one.") {
             SourceSortPreferences.show(this, { refreshSettings() })
         }
-        settingsToggle(card, "Use Preferred", "Switch off to keep the rules below but stop them moving links.", sort.preferredFirst) { on -> sort.preferredFirst = on }
-        val words = settingsGroup("Your words · ranked first, in this order", null)
-        wordRows(words, rules.preferWords, "preferred word", "PSA") { list -> change { it.copy(preferWords = list) } }
-        settingsToggle(words, "Your words beat cached links", "A link with one of your words keeps its place among the links that play at once, even when it isn't cached (it may need a transfer). Auto-play still only picks links that play at once.",
+        settingsRow(more, "Your words to prefer", rules.preferWords.take(3).joinToString(", ").ifEmpty { "None" } + if (rules.preferWords.size > 3) "…" else "",
+            "Your own keywords, ranked first in their order, e.g. PSA, FLUX.") { navigate { playbackPage("words:prefer") } }
+        settingsToggle(more, "Your words beat cached links", "A link with one of your words keeps its place among the links that play at once, even when it isn't cached (it may need a transfer). Auto-play still only picks links that play at once.",
             sort.wordsBeatCached) { on -> sort.wordsBeatCached = on }
-        val switches = settingsGroup("Ready-made", null)
-        LinkRules.PREFER.forEach { preset ->
-            settingsToggle(switches, preset.label, "Moves up links with ${preset.example}…", preset.id in rules.preferPresets) { on ->
-                change { it.copy(preferPresets = if (on) it.preferPresets + preset.id else it.preferPresets - preset.id) }
+        settingsRow(more, "Your words to hide", rules.hideWords.take(3).joinToString(", ").ifEmpty { "None" } + if (rules.hideWords.size > 3) "…" else "",
+            "Links with any of these words are left out, e.g. YIFY.") { navigate { playbackPage("words:hide") } }
+        settingsRow(more, "Trusted release groups", "${LinkRules.GROUP_SETS.count { it.id in rules.groupSets }} of ${LinkRules.GROUP_SETS.size} lists on",
+            "Well-known groups, best first. Only a name's release tag counts (…x265-PSA.mkv, [SubsPlease] …).") { navigate { playbackPage("groups") } }
+        LinkRules.HIDE_GROUP_SETS.forEach { set ->
+            settingsRow(more, "Hide release groups", "${rules.activeGroups(set).size} of ${rules.groups(set).size} on", "${set.label}: switch single groups on or off, add or remove them.") {
+                navigate { playbackPage("group:${set.id}") }
             }
         }
-        settingsToggle(switches, "Trusted release groups", "Well-known release groups, best first. Only a name's release tag counts (…x265-PSA.mkv, [SubsPlease] …), so ordinary words never match.",
-            LinkRules.GROUPS in rules.preferPresets) { on ->
-            change { it.copy(preferPresets = if (on) it.preferPresets + LinkRules.GROUPS else it.preferPresets - LinkRules.GROUPS) }; refreshSettings()
-        }
-        if (LinkRules.GROUPS in rules.preferPresets) {
-            val groups = settingsGroup("Trusted release groups · top of the list ranks first", null)
-            LinkRules.GROUP_SETS.forEach { set ->
-                settingsToggle(groups, set.label, rules.activeGroups(set).joinToString(", ").ifEmpty { "Every group in this list is off" }, set.id in rules.groupSets) { on ->
-                    change { it.copy(groupSets = if (on) it.groupSets + set.id else it.groupSets - set.id) }
-                }
-            }
-            settingsRow(groups, "Edit trusted release groups", "", "Pick a list to switch single groups on or off, reorder, add or remove them.") {
-                navigate { playbackPage("groups") }
-            }
-        }
-        val advanced = settingsGroup("Advanced", null)
-        patternRow(advanced, "Prefer pattern", rules.preferPattern) { value -> change { it.copy(preferPattern = value) } }
-    }
-
-    /** Link filters: ready-made hide switches, the viewer's own hide words and an optional pattern. */
-    private fun linkFiltersPage(card: LinearLayout) {
-        val sort = SourceSortPreferences(this)
-        val rules = sort.rules
-        fun change(edit: (LinkRules.Rules) -> LinkRules.Rules) { sort.rules = edit(sort.rules) }
-        settingsToggle(card, "Hide bad copies", "Theatre recordings and early copies: CAM, HDCAM, TS/telesync, TC/telecine, screeners, workprints and HDRip. On by default.",
-            LowQualityReleases.hidden(store)) { on -> store.put(LowQualityReleases.KEY, on.toString()) }
-        LinkRules.HIDE.forEach { preset ->
-            val extra = if (preset.id == "dubbed") " Off by default: turn on only if you never want dubbed audio." else ""
-            settingsToggle(card, preset.label, "Leaves out links with ${preset.example}….$extra", preset.id in rules.hidePresets) { on ->
-                change { it.copy(hidePresets = if (on) it.hidePresets + preset.id else it.hidePresets - preset.id) }
-            }
-        }
-        settingsToggle(card, "Hide Dolby Vision only links", "Only on devices that can't play Dolby Vision; links with an HDR10 fallback stay. When off, they are listed last and marked.",
-            LinkRules.HIDE_DV_ONLY in rules.hidePresets) { on ->
-            change { it.copy(hidePresets = if (on) it.hidePresets + LinkRules.HIDE_DV_ONLY else it.hidePresets - LinkRules.HIDE_DV_ONLY) }
-        }
-        settingsToggle(card, "Hide links for a different year", "Movies only: a link naming another year is usually another film with the same name (Street Fighter 1994 for Street Fighter 2026). " +
-            "A year either side is allowed, numbers in the title (1917, Blade Runner 2049) are skipped, and links with no year stay. On by default.", rules.hideOtherYears) { on ->
-            change { it.copy(hideOtherYears = on) }
-        }
-        settingsToggle(card, "Hide release groups", "Leaves out links from the groups in the lists below. Only a name's release tag counts (…-YIFY.mp4, [Group] …), so ordinary words never match. Off by default.",
-            LinkRules.HIDE_GROUPS in rules.hidePresets) { on ->
-            change { it.copy(hidePresets = if (on) it.hidePresets + LinkRules.HIDE_GROUPS else it.hidePresets - LinkRules.HIDE_GROUPS) }; refreshSettings()
-        }
-        if (LinkRules.HIDE_GROUPS in rules.hidePresets) {
-            val groups = settingsGroup("Release groups to hide", null)
-            LinkRules.HIDE_GROUP_SETS.forEach { set ->
-                settingsToggle(groups, set.label, rules.activeGroups(set).joinToString(", ").ifEmpty { "Every group in this list is off" }, set.id in rules.hideGroupSets) { on ->
-                    change { it.copy(hideGroupSets = if (on) it.hideGroupSets + set.id else it.hideGroupSets - set.id) }
-                }
-                settingsRow(groups, "Edit ${set.label}", "${rules.activeGroups(set).size} of ${rules.groups(set).size} on", "Switch single groups on or off, add or remove them.") {
-                    navigate { playbackPage("group:${set.id}") }
-                }
-            }
-        }
-        val words = settingsGroup("Hide words", null)
-        wordRows(words, rules.hideWords, "hide word", "YIFY") { list -> change { it.copy(hideWords = list) } }
-        val advanced = settingsGroup("Advanced", null)
-        patternRow(advanced, "Hide pattern", rules.hidePattern) { value -> change { it.copy(hidePattern = value) } }
+        patternRow(more, "Prefer pattern", rules.preferPattern) { value -> change { it.copy(preferPattern = value) } }
+        patternRow(more, "Hide pattern", rules.hidePattern) { value -> change { it.copy(hidePattern = value) } }
     }
 
     /** One row per word (OK opens Edit / Move up / Move down / Remove), then "Add a …". */
@@ -6147,6 +6247,83 @@ class MainActivity : Activity() {
     }
 
     /** A settings row with a sliding switch that changes in place; the page never reloads. */
+    /** One switch in a tile grid: a short name, a hint line and a switch below; off tiles are dimmed and struck through. */
+    private class Tile(val key: String, val label: String, val hint: String, val on: Boolean, val enabled: Boolean = true, val change: (Boolean) -> Unit)
+
+    /** Tiles per row: six on a TV, three on a phone. */
+    private fun tileColumns(tv: Int = 6) = if (DeviceLayout.phone) 3 else tv
+
+    /** Lays [views] out in rows of [columns] equal cells inside a settings card. */
+    private fun gridRows(card: LinearLayout, views: List<View>, columns: Int, gap: Int = 8) {
+        card.clipChildren = false; card.clipToPadding = false
+        views.chunked(columns).forEachIndexed { rowIndex, chunk ->
+            val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; setPadding(dp(4), 0, dp(4), 0) }
+            chunk.forEachIndexed { index, view -> line.addView(view, LinearLayout.LayoutParams(0, -2, 1f).apply { if (index > 0) leftMargin = dp(gap) }) }
+            repeat(columns - chunk.size) { line.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f).apply { leftMargin = dp(gap) }) }
+            card.addView(line, margin(-1, -2, top = if (rowIndex == 0) 6 else gap, bottom = 0))
+        }
+        card.addView(View(this), margin(-1, 6))
+    }
+
+    private fun tileGrid(card: LinearLayout, tiles: List<Tile>, columns: Int = tileColumns()) = gridRows(card, tiles.map(::switchTile), columns)
+
+    /** A focusable grid cell: brighter and outlined with focus, slightly larger on TV. */
+    private fun tileFocus(view: View, selected: () -> Boolean = { false }, filled: () -> Boolean = { true }) {
+        fun paint(focused: Boolean) {
+            view.background = rounded(withAlpha(Color.WHITE, when { focused -> 40; filled() -> 22; else -> 9 }), 10).apply {
+                if (selected()) setStroke(dp(2), accent)
+            }
+            view.foreground = if (focused) FocusRingDrawable(Color.WHITE, dp(10).toFloat(), true, dp(1).toFloat()) else null
+            if (DeviceLayout.tv) view.animate().scaleX(if (focused) 1.04f else 1f).scaleY(if (focused) 1.04f else 1f).setDuration(120).start()
+        }
+        view.setOnFocusChangeListener { _, focused -> paint(focused) }
+        paint(false)
+
+    }
+
+    private fun switchTile(tile: Tile): View {
+        var on = tile.on
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(10), dp(8), dp(10), dp(9)); minimumHeight = dp(66)
+            isFocusable = tile.enabled; isFocusableInTouchMode = DeviceLayout.tv && tile.enabled; isClickable = tile.enabled; tag = "tile:${tile.key}"
+            if (!tile.enabled) alpha = 0.4f
+        }
+        val name = text(tile.label, 13, ink, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
+        box.addView(name)
+        if (tile.hint.isNotBlank()) box.addView(text(tile.hint, 10, muted).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 2))
+        box.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
+        val track = FrameLayout(this)
+        val knob = View(this).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) } }
+        track.addView(knob, FrameLayout.LayoutParams(dp(14), dp(14), Gravity.CENTER_VERTICAL).apply { leftMargin = dp(3) })
+        box.addView(track, margin(36, 20, top = 7))
+        fun paint(animate: Boolean) {
+            name.paintFlags = if (on) name.paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG.inv() else name.paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
+            name.setTextColor(if (on) ink else withAlpha(muted, 200))
+            track.background = rounded(if (on) accent else withAlpha(Color.WHITE, 50), 10)
+            (knob.background as? GradientDrawable)?.setColor(if (on) Color.WHITE else withAlpha(Color.WHITE, 170))
+            val offset = if (on) dp(16).toFloat() else 0f
+            if (animate) knob.animate().translationX(offset).setDuration(140).start() else knob.translationX = offset
+            box.contentDescription = "${tile.label} · ${if (on) "On" else "Off"}"
+        }
+        tileFocus(box, filled = { on })
+        box.setOnClickListener { on = !on; tile.change(on); paint(true); box.onFocusChangeListener?.onFocusChange(box, box.isFocused) }
+        paint(false)
+        return box
+    }
+
+    /** A pick-one grid cell (subtitle preset, font, color, size): the chosen one has an accent outline. */
+    private fun choiceTile(key: String, description: String, selected: Boolean, height: Int, fill: (LinearLayout) -> Unit, action: () -> Unit): View {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(dp(8), dp(6), dp(8), dp(6)); minimumHeight = dp(height)
+            isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true; tag = "tile:$key"
+            contentDescription = description + if (selected) " · selected" else ""
+        }
+        fill(box)
+        tileFocus(box, selected = { selected })
+        box.setOnClickListener { action() }
+        return box
+    }
+
     private fun toggleRow(label: String, description: String, initial: Boolean, contentLabel: String = label, changed: (Boolean) -> Unit): View {
         var on = initial
         val row = LinearLayout(this).apply {
@@ -6513,6 +6690,21 @@ class MainActivity : Activity() {
         .toIntOrNull()?.takeIf { it in 1..1000 } ?: if (episode) 5 else 20
     /** Highest estimated bitrate Auto-play may pick, for movies and episodes alike. */
     private fun autoplayMaxMbps() = store.get(AUTOPLAY_MAX_MBPS).toIntOrNull()?.takeIf { it in 1..500 } ?: 25
+    /**
+     * Prefer switches that can't help on this device are ignored when ranking: Dolby Vision without a DV decoder, HDR
+     * without 10-bit HEVC, Atmos when the audio can't be passed through (decoded here, Atmos is lost anyway).
+     */
+    private fun markUnsupportedPrefer() {
+        val app = applicationContext
+        Thread {
+            val caps = DeviceVideoSupport.caps()
+            @Suppress("DEPRECATION")
+            val audio = runCatching { androidx.media3.exoplayer.audio.AudioCapabilities.getCapabilities(app) }.getOrNull()
+            val atmos = audio != null && (audio.supportsEncoding(androidx.media3.common.C.ENCODING_E_AC3_JOC) || audio.supportsEncoding(androidx.media3.common.C.ENCODING_DOLBY_TRUEHD))
+            LinkRules.unsupportedPrefer = setOfNotNull("dv".takeUnless { caps.dolbyVision }, "hdr".takeUnless { caps.hevc10 }, "atmos".takeUnless { atmos })
+        }.start()
+    }
+
 
     private fun resumeCards() = flix && store.get(RESUME_CARDS) != "false"  // on unless the viewer turns it off
     private fun continueSlot() = margin(if (resumeCards()) (if (DeviceLayout.phone) 260 else RESUME_CARD_WIDTH) else cardWidth(), theme.layout.cardHeightDp, right = theme.layout.cardGapDp)

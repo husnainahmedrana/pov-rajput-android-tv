@@ -19,7 +19,7 @@ import dev.pov.tv.data.SourceSortOrder
 internal class SourceSortPreferences(private val context: Context) {
     private val prefs = context.getSharedPreferences("pov_sources", Context.MODE_PRIVATE)
     var order: SourceSortOrder
-        get() = SourceSortOrder(prefs.getBoolean("quality_descending", true), prefs.getBoolean("size_ascending", true),
+        get() = SourceSortOrder(prefs.getBoolean("quality_descending", true), prefs.getBoolean("size_ascending", false),
             SourceSortOrder.priority(prefs.getString("priority", null)), prefs.getBoolean("library_first", true),
             rules.takeIf { preferredFirst && it.preferActive }?.let { rules ->
                 val ranks = HashMap<String, Int>()
@@ -77,6 +77,7 @@ internal class SourceSortPreferences(private val context: Context) {
     fun sorted(sources: List<SourceItem>): List<SourceItem> = languages?.sorted(sources, order) ?: order.sorted(sources)
 
     companion object {
+        private const val EDIT_WIDTH = 52
         private fun languageName(code: String) = SubtitlePreferences.LANGUAGES.firstOrNull { it.first == code }?.second ?: code
 
         /**
@@ -155,6 +156,8 @@ internal class SourceSortPreferences(private val context: Context) {
                         SourceSortOrder.QUALITY -> if (order.qualityDescending) "Highest first" else "Lowest first"
                         else -> if (order.sizeAscending) "Smallest first" else "Largest first"
                     }
+                    // The Preferred row's Edit shares the direction button's width, so every row's buttons line up.
+                    val withEdit = key == SourceSortOrder.PREFERRED && editPreferred != null
                     controls.addView(button(direction, "way:$key", true) {
                         when (key) {
                             SourceSortOrder.LIBRARY -> preferences.libraryFirst = !preferences.libraryFirst
@@ -164,10 +167,10 @@ internal class SourceSortPreferences(private val context: Context) {
                             else -> preferences.order = preferences.order.copy(sizeAscending = !order.sizeAscending)
                         }
                         modified = true; render("way:$key")
-                    }, if (phone) LinearLayout.LayoutParams(0, dp(40), 1f) else LinearLayout.LayoutParams(dp(150), dp(40)).apply { leftMargin = dp(8) })
-                    if (key == SourceSortOrder.PREFERRED && editPreferred != null) controls.addView(button("Edit", "edit:$key", true) {
-                        dialog?.dismiss(); editPreferred()
-                    }, LinearLayout.LayoutParams(-2, dp(40)).apply { leftMargin = dp(8) })
+                    }, if (phone) LinearLayout.LayoutParams(0, dp(40), 1f) else LinearLayout.LayoutParams(dp(if (withEdit) 150 - 8 - EDIT_WIDTH else 150), dp(40)).apply { leftMargin = dp(8) })
+                    if (withEdit) controls.addView(button("Edit", "edit:$key", true) {
+                        dialog?.dismiss(); editPreferred?.invoke()
+                    }, if (phone) LinearLayout.LayoutParams(-2, dp(40)).apply { leftMargin = dp(8) } else LinearLayout.LayoutParams(dp(EDIT_WIDTH), dp(40)).apply { leftMargin = dp(8) })
                     fun move(step: Int) {
                         val keys = order.priority.toMutableList(); keys.add(index + step, keys.removeAt(index))
                         preferences.order = preferences.order.copy(priority = keys); modified = true
@@ -193,7 +196,7 @@ internal class SourceSortPreferences(private val context: Context) {
             dialog = created
             created.setOnDismissListener { if (modified) changed() }
             created.show()
-            // Back to the default: library, language, then quality (highest first), then size (smallest first).
+            // Back to the default: library, language, then quality (highest first), then size (largest first).
             created.getButton(android.content.DialogInterface.BUTTON_NEUTRAL)?.setOnClickListener {
                 preferences.order = SourceSortOrder(); preferences.languageFirst = true; preferences.libraryFirst = true; preferences.preferredFirst = true; modified = true
                 render("way:${SourceSortOrder.LIBRARY}")

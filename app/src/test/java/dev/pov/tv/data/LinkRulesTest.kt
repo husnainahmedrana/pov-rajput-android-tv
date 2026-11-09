@@ -51,7 +51,9 @@ class LinkRulesTest {
         assertTrue(rules.hides("Movie 2024 Hindi Dubbed 720p"))
         assertFalse(rules.hides("Movie.2024.1080p.WEB-DL-FLUX.mkv"))
         assertTrue(rules.hideActive)
-        assertFalse(LinkRules.Rules().hideActive)
+        // Samples and trailers are hidden by default.
+        assertTrue(LinkRules.Rules().hideActive)
+        assertFalse(LinkRules.Rules(hidePresets = emptySet()).hideActive)
     }
 
     @Test fun `hidden release groups only count when switched on and only as the release tag`() {
@@ -94,7 +96,34 @@ class LinkRulesTest {
         assertTrue(rules.hidesQuality(720)); assertTrue(rules.hidesQuality(480)); assertFalse(rules.hidesQuality(1080)); assertFalse(rules.hidesQuality(null))
         assertEquals(rules, LinkRules.Rules.fromJson(rules.toJson()))
         val old = LinkRules.Rules.fromJson("""{"hidePresets":["lowres","threed"]}""")
-        assertEquals(setOf("720", "sd"), old.hiddenQualities); assertEquals(setOf("threed"), old.hidePresets)
+        assertEquals(setOf("720", "sd"), old.hiddenQualities); assertEquals(setOf("threed", "sample"), old.hidePresets)
+    }
+
+    @Test fun `older rules get samples hidden and the split prefer switches`() {
+        val old = LinkRules.Rules.fromJson("""{"preferPresets":["hdr","lossless"],"hidePresets":["threed"]}""")
+        assertEquals(setOf("hdr", "dv", "lossless", "atmos"), old.preferPresets)
+        assertTrue("sample" in old.hidePresets)
+        // Saved by this version with samples switched off by the viewer: stays off.
+        val chosen = LinkRules.Rules(hidePresets = emptySet(), touched = setOf("hide:sample"))
+        assertEquals(chosen, LinkRules.Rules.fromJson(chosen.toJson()))
+        assertFalse("sample" in LinkRules.Rules.fromJson(chosen.toJson()).hidePresets)
+        // An HDR-only preference no longer turns into Dolby Vision once saved again.
+        val hdrOnly = LinkRules.Rules(preferPresets = setOf("hdr"))
+        assertEquals(setOf("hdr"), LinkRules.Rules.fromJson(hdrOnly.toJson()).preferPresets)
+    }
+
+    @Test fun `dolby vision and hdr prefer separately and a switch this device cannot use is ignored`() {
+        val dv = LinkRules.Rules(preferPresets = setOf("dv"))
+        assertTrue(dv.preferred("Movie.2024.2160p.DV.HEVC-FLUX.mkv"))
+        assertFalse(dv.preferred("Movie.2024.2160p.HDR10.HEVC-FLUX.mkv"))
+        val hdr = LinkRules.Rules(preferPresets = setOf("hdr"))
+        assertTrue(hdr.preferred("Movie.2024.2160p.HDR10.HEVC-FLUX.mkv"))
+        val atmos = LinkRules.Rules(preferPresets = setOf("atmos"))
+        assertTrue(atmos.preferred("Movie.2024.1080p.DDP5.1.Atmos-FLUX.mkv"))
+        try {
+            LinkRules.unsupportedPrefer = setOf("dv")
+            assertFalse(dv.preferred("Movie.2024.2160p.DV.HEVC-FLUX.mkv"))
+        } finally { LinkRules.unsupportedPrefer = emptySet() }
     }
 
     @Test fun `bad patterns are refused with a reason and rules survive saving`() {

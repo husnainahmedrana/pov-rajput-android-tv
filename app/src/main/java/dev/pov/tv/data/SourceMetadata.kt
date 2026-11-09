@@ -71,7 +71,7 @@ object SourceMetadata {
  * How links are ordered: [priority] says which comes first (language, quality, size, in any order), and each keeps its
  * own direction. The language step only applies when a language rank is given (a preferred language is set).
  */
-data class SourceSortOrder(val qualityDescending: Boolean = true, val sizeAscending: Boolean = true,
+data class SourceSortOrder(val qualityDescending: Boolean = true, val sizeAscending: Boolean = false,
                            val priority: List<String> = DEFAULT_PRIORITY, val libraryFirst: Boolean = true,
                            /** The Preferred row (Link sorting): lower ranks first; null when the row is off or has no rules. */
                            val preferredRank: ((SourceItem) -> Int)? = null) {

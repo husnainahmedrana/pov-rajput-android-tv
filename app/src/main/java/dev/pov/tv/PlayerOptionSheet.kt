@@ -45,8 +45,9 @@ internal object PlayerOptionSheet {
         val content = LinearLayout(context).apply {
             tag = "pov_player_sheet"; orientation = LinearLayout.VERTICAL
             setPadding(dp(32), dp(22), dp(32), dp(24))
-            // Same card as the app's dialogs: neutral gradient, hairline border, rounded top.
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xFF2A2A30.toInt(), 0xFF17171A.toInt())).apply {
+            // See-through like the Streams panel (80% black), so the video and subtitles show faintly behind; rounded top.
+            background = GradientDrawable().apply {
+                setColor(0xCC000000.toInt())
                 cornerRadii = floatArrayOf(dp(20).toFloat(), dp(20).toFloat(), dp(20).toFloat(), dp(20).toFloat(), 0f, 0f, 0f, 0f)
                 setStroke(dp(1), 0x2EFFFFFF)
             }
@@ -125,8 +126,9 @@ internal object PlayerOptionSheet {
         dialog.setContentView(content)
         dialog.window?.apply {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            attributes = attributes.apply { dimAmount = 0.35f; gravity = Gravity.BOTTOM }
+            // No extra dimming: the sheet's own 80% black matches the Streams panel.
+            clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            attributes = attributes.apply { gravity = Gravity.BOTTOM }
             // Full width from the first frame and a soft fade in and out instead of the zoom-in, so the sheet never opens
             // small and grows. (The player panels keep this softer fade; hold-OK menus use the quicker QuickFade.)
             setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT)

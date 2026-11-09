@@ -21,11 +21,19 @@ object LinkRules {
         Preset("webdl", "WEB-DL over WEBRip", "WEB-DL, WEB", words("web[ ._-]?dl", "webdl")),
         Preset("hevc", "HEVC / x265", "HEVC, x265, H.265", words("hevc", "x265", "h[ .]?265")),
         Preset("tenbit", "10-bit", "10bit, Hi10", words("10[ ._-]?bits?", "hi10p?")),
-        Preset("hdr", "HDR / Dolby Vision", "HDR10, HDR10+, DV", words("hdr10\\+?", "hdr", "dv", "dovi", "dolby[ ._-]?vision")),
-        Preset("lossless", "Atmos / lossless audio", "Atmos, TrueHD, DTS-HD MA", words("atmos", "truehd", "dts[ ._-]?hd([ ._-]?ma)?", "dts[ ._-]?x", "flac", "l?pcm")),
+        Preset("dv", "Dolby Vision", "DV, DoVi", words("dv", "dovi", "dolby[ ._-]?vision")),
+        Preset("hdr", "HDR", "HDR10, HDR10+", words("hdr10\\+?", "hdr10plus", "hdr", "hlg")),
+        Preset("atmos", "Atmos", "Needs passthrough", words("atmos")),
+        Preset("lossless", "Lossless audio", "TrueHD, DTS-HD MA", words("truehd", "true[ ._-]hd", "dts[ ._-]?hd([ ._-]?ma)?", "dts[ ._-]?x", "flac", "l?pcm")),
         Preset("proper", "Proper / Repack", "PROPER, REPACK", words("proper", "repack", "rerip")),
     )
     const val GROUPS = "groups"
+    /**
+     * Prefer switches this device can't use (set by the app at start): Dolby Vision without a DV decoder, HDR without
+     * 10-bit HEVC, Atmos without passthrough. They stay on in Settings but don't move links, so auto-play never
+     * favours a file the device can't show or hear as intended.
+     */
+    @Volatile var unsupportedPrefer: Set<String> = emptySet()
 
     /** Every group list, trusted and hidden, by id. */
     fun groupSet(id: String): GroupSet? = (GROUP_SETS + HIDE_GROUP_SETS).firstOrNull { it.id == id }
@@ -121,7 +129,7 @@ object LinkRules {
         val groupSets: Set<String> = GROUP_SETS.filter { it.onByDefault }.map { it.id }.toSet(),
         val customGroups: Map<String, List<String>> = emptyMap(),
         val preferPattern: String = "",
-        val hidePresets: Set<String> = emptySet(),
+        val hidePresets: Set<String> = setOf("sample"),
         val hideWords: List<String> = emptyList(),
         val hidePattern: String = "",
         val hideGroupSets: Set<String> = HIDE_GROUP_SETS.filter { it.onByDefault }.map { it.id }.toSet(),
@@ -131,6 +139,8 @@ object LinkRules {
         val disabledGroups: Map<String, Set<String>> = emptyMap(),
         /** Qualities switched off in Link filters (keys of [QUALITIES]). */
         val hiddenQualities: Set<String> = emptySet(),
+        /** Switches the viewer changed (preset ids), so a later default change leaves their choice alone. */
+        val touched: Set<String> = emptySet(),
     ) {
         /** How many Hide rules are on, for the Link rules summary ([badCopies]: the app's "Hide bad copies" switch). */
         fun hideCount(badCopies: Boolean) = (if (badCopies) 1 else 0) + hidePresets.size + hideWords.size +
@@ -166,7 +176,7 @@ object LinkRules {
             preferMatchers.forEachIndexed { index, matcher -> if (matcher.containsMatchIn(name)) return index }
             var base = MAX_WORDS
             for (preset in PREFER) {
-                if (preset.id in preferPresets && preset.pattern.containsMatchIn(name)) return base
+                if (preset.id in preferPresets && preset.id !in unsupportedPrefer && preset.pattern.containsMatchIn(name)) return base
                 base++
             }
             if (trusted.isNotEmpty()) releaseGroup(name)?.lowercase(Locale.ROOT)?.let { group ->
@@ -191,23 +201,34 @@ object LinkRules {
             .put("hideWords", JSONArray(hideWords)).put("hidePattern", hidePattern)
             .put("hideGroupSets", JSONArray(hideGroupSets.toList())).put("hideOtherYears", hideOtherYears)
             .put("disabledGroups", JSONObject().apply { disabledGroups.forEach { (id, names) -> put(id, JSONArray(names.toList())) } })
-            .put("hiddenQualities", JSONArray(hiddenQualities.toList())).toString()
+            .put("hiddenQualities", JSONArray(hiddenQualities.toList()))
+            .put("touched", JSONArray(touched.toList())).put("v", VERSION).toString()
 
         companion object {
+            /** 2: separate Dolby Vision / HDR and Atmos / lossless switches; samples and trailers hidden by default. */
+            const val VERSION = 2
             fun fromJson(raw: String?): Rules {
                 if (raw.isNullOrBlank()) return Rules()
                 return runCatching {
                     val json = JSONObject(raw)
                     fun list(name: String) = json.optJSONArray(name)?.let { array -> (0 until array.length()).map { array.optString(it).trim() }.filter(String::isNotBlank) }
+                    val old = json.optInt("v", 1) < 2
+                    val touched = list("touched").orEmpty().toSet()
+                    val savedPrefer = list("preferPresets").orEmpty().toSet()
+                    val savedHide = list("hidePresets").orEmpty().toSet() - "lowres"
                     Rules(
                         preferWords = list("preferWords").orEmpty().take(MAX_WORDS),
-                        preferPresets = list("preferPresets").orEmpty().toSet(),
+                        // The combined "HDR / Dolby Vision" and "Atmos / lossless audio" switches became two each.
+                        preferPresets = savedPrefer + (if (old && "hdr" in savedPrefer) setOf("dv") else emptySet()) +
+                            (if (old && "lossless" in savedPrefer) setOf("atmos") else emptySet()),
+                        touched = touched,
                         groupSets = list("groupSets")?.toSet() ?: Rules().groupSets,
                         customGroups = json.optJSONObject("customGroups")?.let { custom ->
                             custom.keys().asSequence().associateWith { id -> custom.optJSONArray(id)?.let { array -> (0 until array.length()).map { array.optString(it).trim() }.filter(String::isNotBlank) }.orEmpty() }
                         }.orEmpty(),
                         preferPattern = json.optString("preferPattern"),
-                        hidePresets = list("hidePresets").orEmpty().toSet() - "lowres",
+                        // Samples and trailers are hidden by default since version 2, unless the viewer changed that switch.
+                        hidePresets = savedHide + (if (old && "hide:sample" !in touched) setOf("sample") else emptySet()),
                         // The older "Hide 720p and lower" switch became the 720p and SD quality switches.
                         hiddenQualities = list("hiddenQualities").orEmpty().toSet() +
                             (if ("lowres" in list("hidePresets").orEmpty()) setOf("720", "sd") else emptySet()),
