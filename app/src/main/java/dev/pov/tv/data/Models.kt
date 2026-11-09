@@ -77,6 +77,13 @@ data class SourceItem(
     val newsProvider: String = "",
     /** Already in the viewer's library (AIOStreams says so in its stream data): plays at once, nothing new is added. */
     val inLibrary: Boolean = false,
+    /**
+     * A ready-made link from an add-on holding the viewer's debrid key ("[TB+]", "[RD download]"): true cached, false the
+     * add-on must download it first (it won't play at once), null unknown or not such a link. [servedBy] names the service.
+     */
+    val addonCached: Boolean? = null,
+    /** A torrent from a scraper add-on (Torrentio, Comet…) that POV's own debrid plays: the scraper, for its logo. */
+    val scraper: String? = null,
 )
 
 /** A selected source either streams directly or offers stable TorBox file identities. */

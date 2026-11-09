@@ -186,16 +186,22 @@ class CloudAccount(private val context: Context, private val store: Store) {
         private val pair = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
         private var id = ""
 
-        /** Returns the address for the QR code. Its #fragment holds the TV's public key and never reaches the server. */
-        fun start(): String {
+        /**
+         * Returns the address for the QR code. Its #fragment holds the TV's public key and never reaches the server.
+         * [mode] picks what the phone page asks for: sign-in (blank) or "addon" (an add-on link to add on the TV).
+         */
+        fun start(mode: String = ""): String {
             id = post("/v1/link", JSONObject()).getString("id")
             val pub = pair.public as ECPublicKey
             val raw = byteArrayOf(4) + fixed(pub.w.affineX) + fixed(pub.w.affineY)
-            return "$server/l/$id#${BackupCrypto.encode(raw)}"
+            return "$server/l/$id${if (mode.isBlank()) "" else "?m=$mode"}#${BackupCrypto.encode(raw)}"
         }
 
         /** Null while the phone has not sent anything yet. */
-        fun poll(): Pair<String, String>? {
+        fun poll(): Pair<String, String>? = pollJson()?.let { json -> json.optString("email") to json.optString("password") }
+
+        /** What the phone sent, decrypted; null while it has not sent anything yet. */
+        fun pollJson(): JSONObject? {
             val result = request("GET", "/v1/link/$id", null)
             val payload = result.optString("payload").ifBlank { return null }
             val parts = payload.split('.')
@@ -214,8 +220,7 @@ class CloudAccount(private val context: Context, private val store: Store) {
                 cipher.updateAAD(id.toByteArray(Charsets.UTF_8))
                 cipher.doFinal(BackupCrypto.decode(parts[2]))
             } catch (_: Exception) { throw IllegalStateException("The phone sent something unreadable. Try again.") }
-            val json = JSONObject(String(plain, Charsets.UTF_8))
-            return json.optString("email") to json.optString("password")
+            return JSONObject(String(plain, Charsets.UTF_8))
         }
 
         private fun fixed(value: BigInteger): ByteArray {

@@ -50,9 +50,14 @@ internal class SourceProviders(private val get: (String) -> String, private val 
             }
             return clean
         }
+        private val UNSAFE = Regex("""[|{}^`\\\[\]"<> ]""")
+
         fun endpoint(value: String): String {
             require(value.isNotBlank()) { "Add a source provider in Settings before searching for links." }
+            // Add-on settings in the path often hold characters an address can't carry as they are (Torrentio's
+            // "providers=yts|sort=quality", raw JSON): written percent-encoded, which the add-on reads the same way.
             val candidate = value.trim().trimEnd('/').removeSuffix("/manifest.json").trimEnd('/')
+                .replace(UNSAFE) { "%" + "%02X".format(it.value[0].code) }
             val uri = try { URI(candidate) } catch (_: Exception) { throw IllegalArgumentException("Enter a valid HTTPS Stremio-compatible add-on address.") }
             require(candidate.length <= 4096 && uri.scheme.equals("https", true) && !uri.host.isNullOrBlank() && uri.userInfo == null && uri.query == null && uri.fragment == null) {
                 "Use an HTTPS add-on base or manifest URL, without a query or fragment."

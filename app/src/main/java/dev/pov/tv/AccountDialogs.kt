@@ -284,35 +284,47 @@ internal class AccountDialogs(
     // ---------- phone sign-in ----------
 
     /** Shows a QR for the phone page; the phone's email and password arrive encrypted for this TV only. */
-    private fun phone(filled: (String, String) -> Unit) {
+    private fun phone(filled: (String, String) -> Unit) = phoneDialog("Use your phone",
+        "Scan this with your phone's camera, then type your email and password there. They are encrypted on the phone for this TV only.",
+        "QR code for the phone sign-in page", "") { json -> filled(json.optString("email"), json.optString("password")) }
+
+    /**
+     * Adding a source provider on the TV: the add-on link (and an optional name) is pasted on the phone, encrypted
+     * there for this TV only, and relayed by the backup server, which cannot read it. Works without an account.
+     */
+    fun phoneAddon(filled: (address: String, name: String) -> Unit) = phoneDialog("Add an add-on from your phone",
+        "Scan this with your phone's camera, then paste the add-on's install link there. It is encrypted on the phone for this TV only.",
+        "QR code for the phone add-on page", "addon") { json -> filled(json.optString("url").trim(), json.optString("name").trim()) }
+
+    private fun phoneDialog(title: String, intro: String, description: String, mode: String, received: (org.json.JSONObject) -> Unit) {
         if (!alive()) return
         val link = account.PhoneLink()
         val content = column()
-        val image = ImageView(activity).apply { visibility = View.GONE; setBackgroundColor(Color.WHITE); setPadding(dp(8), dp(8), dp(8), dp(8)); contentDescription = "QR code for the phone sign-in page" }
+        val image = ImageView(activity).apply { visibility = View.GONE; setBackgroundColor(Color.WHITE); setPadding(dp(8), dp(8), dp(8), dp(8)); contentDescription = description }
         val status = label("Preparing…", 14, MUTED)
-        content.addView(label("Scan this with your phone's camera, then type your email and password there. They are encrypted on the phone for this TV only.", 14, Color.WHITE))
+        content.addView(label(intro, 14, Color.WHITE))
         content.addView(image, LinearLayout.LayoutParams(dp(190), dp(190)).apply { topMargin = dp(14); gravity = Gravity.CENTER_HORIZONTAL })
         content.addView(status, params(12))
         var open = true
-        val dialog = AlertDialog.Builder(activity).setCustomTitle(titleBar("Use your phone")).setView(scroll(content))
+        val dialog = AlertDialog.Builder(activity).setCustomTitle(titleBar(title)).setView(scroll(content))
             .setNegativeButton("Cancel", null).setOnDismissListener { open = false }.show()
         val started = System.currentTimeMillis()
         fun poll() {
             if (!open || !alive()) return
             if (System.currentTimeMillis() - started > 9 * 60_000) { status.text = "This code expired. Close and try again."; return }
             worker.execute {
-                val outcome = runCatching { link.poll() }
+                val outcome = runCatching { link.pollJson() }
                 handler.post {
                     if (!open || !alive()) return@post
-                    outcome.onSuccess { credentials ->
-                        if (credentials == null) handler.postDelayed(::poll, 2_000)
-                        else { dialog.dismiss(); filled(credentials.first, credentials.second) }
+                    outcome.onSuccess { json ->
+                        if (json == null) handler.postDelayed(::poll, 2_000)
+                        else { dialog.dismiss(); received(json) }
                     }.onFailure { error -> status.text = uiErrorMessage(error as? Exception ?: Exception()) }
                 }
             }
         }
         worker.execute {
-            val outcome = runCatching { link.start() }
+            val outcome = runCatching { link.start(mode) }
             handler.post {
                 if (!open || !alive()) return@post
                 outcome.onSuccess { address ->

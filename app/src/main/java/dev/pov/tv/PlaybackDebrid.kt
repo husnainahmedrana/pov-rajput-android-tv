@@ -20,7 +20,7 @@ internal object PlaybackDebrid {
     fun addon(source: SourceItem): String? = source.addon ?: if (source.directUrl.isNotEmpty()) AddonBadges.of("", source.provider) else null
     /** A logo id's name; unknown ids give the id itself. */
     fun describe(id: String) = label(id)
-    private fun label(id: String) = when (id) { EASYNEWS -> "Easynews"; PENGUPLAY -> "PenguPlay"; CNCVERSE -> "CNCVerse"; PLAVIO -> "PlavioHD"; AIOSTREAMS -> "AIOStreams"; AddonBadges.ALTMOUNT -> "AltMount"; AddonBadges.STREAMNZB -> "StreamNZB";in AddonBadges.NEWS_PROVIDER_IDS -> AddonBadges.NEWS_PROVIDERS.first { it.first == id }.second
+    private fun label(id: String) = when (id) { EASYNEWS -> "Easynews"; PENGUPLAY -> "PenguPlay"; CNCVERSE -> "CNCVerse"; PLAVIO -> "PlavioHD"; AIOSTREAMS -> "AIOStreams"; AddonBadges.ALTMOUNT -> "AltMount"; AddonBadges.STREAMNZB -> "StreamNZB"; AddonBadges.DEBRIDIO -> "Debridio"; AddonBadges.TORRENTIO -> "Torrentio"; AddonBadges.COMET -> "Comet"; AddonBadges.METEOR -> "Meteor"; AddonBadges.STREMTHRU -> "StremThru";in AddonBadges.NEWS_PROVIDER_IDS -> AddonBadges.NEWS_PROVIDERS.first { it.first == id }.second
         in AddonBadges.INDEXER_NAMES -> AddonBadges.INDEXER_NAMES.getValue(id)
         // Never crash on a logo id without a name (it only feeds the spoken description).
         else -> if (id in DebridServices.IDS) DebridServices.name(id) else id }
@@ -39,6 +39,11 @@ internal object PlaybackDebrid {
         AIOSTREAMS -> R.drawable.pov_aiostreams_logo
         AddonBadges.ALTMOUNT -> R.drawable.pov_altmount_logo
         AddonBadges.STREAMNZB -> R.drawable.pov_streamnzb_logo
+        AddonBadges.DEBRIDIO -> R.drawable.pov_debridio_logo
+        AddonBadges.TORRENTIO -> R.drawable.pov_torrentio_logo
+        AddonBadges.COMET -> R.drawable.pov_comet_logo
+        AddonBadges.METEOR -> R.drawable.pov_meteor_logo
+        AddonBadges.STREMTHRU -> R.drawable.pov_stremthru_logo
         AddonBadges.NEWSHOSTING -> R.drawable.pov_newshosting_logo
         "eweka" -> R.drawable.pov_eweka_logo
         "giganews" -> R.drawable.pov_giganews_logo
@@ -77,8 +82,10 @@ internal object PlaybackDebrid {
      * from ("aiostreams|easynews,nzbgeek": news provider or debrid, then indexer), the same logos as on its link card.
      */
     fun tag(source: SourceItem): String? {
-        val addon = addon(source) ?: return null
-        if (!AddonBadges.usenet(addon)) return addon
+        // A debrid add-on's link without an add-on logo: the service's logo.
+        val addon = addon(source) ?: return source.servedBy?.takeIf { it in DebridServices.IDS }
+        // Other add-ons: their logo, then the debrid service a debrid add-on named for the link (Debridio · TorBox).
+        if (!AddonBadges.usenet(addon)) return source.servedBy?.takeIf { it in DebridServices.IDS && it != addon }?.let { "$addon|$it" } ?: addon
         val more = SourceBadges.cachedOn(source).drop(1)
         return if (more.isEmpty()) addon else "$addon|${more.joinToString(",")}"
     }
@@ -87,24 +94,32 @@ internal object PlaybackDebrid {
         val tagged = addon?.substringBefore('|')
         // Logo ids only; a tag saved by an older preview held words ("Usenet · Newshosting"), which are skipped.
         val more = addon?.substringAfter('|', "").orEmpty().split(',').filter { it.matches(Regex("[a-z]+")) }
-        val id = normalize(service) ?: EASYNEWS.takeIf { Easynews.isHost(url) } ?: tagged?.takeIf { it in ADDONS }
+        // A scraper's torrent played on the viewer's debrid: the scraper's logo first, then the service's (Torrentio · TorBox).
+        val scraperLead = tagged?.takeIf { it in AddonBadges.SCRAPERS && normalize(service) != null }
+        val id = scraperLead ?: normalize(service) ?: EASYNEWS.takeIf { Easynews.isHost(url) } ?: tagged?.takeIf { it in ADDONS || it in DebridServices.IDS }
         val badge = root.findViewById<android.view.ViewGroup>(R.id.pov_debrid_badge)
         badge.visibility = if (id == null) View.GONE else View.VISIBLE
         // AIOStreams shows only logos (its own, the news provider or debrid, the indexer), no words.
         val logosOnly = AddonBadges.usenet(id) && id == tagged
+        // The tag's extra logos (news provider, indexer, or the debrid service behind an add-on's link) follow its own.
+        val extras = if (scraperLead != null) (listOfNotNull(normalize(service)) + more).distinct().filter { it != id }
+            else if (id == tagged) more.filter { it != id } else emptyList()
         val label = if (id == null) "" else label(id)
         root.findViewById<TextView>(R.id.pov_debrid_name).apply {
-            text = label; visibility = if (wordmark(id) || logosOnly) View.GONE else View.VISIBLE
+            // Scrapers (Debridio, Torrentio, Comet…): their logo alone, no name (the viewer asked for that).
+            text = label; visibility = if (wordmark(id) || logosOnly || id in AddonBadges.SCRAPERS) View.GONE else View.VISIBLE
         }
         val density = root.resources.displayMetrics.density
         root.findViewById<ImageView>(R.id.pov_debrid_logo).apply {
-            layoutParams = layoutParams.apply { width = ((if (wordmark(id)) 72 else 20) * density).toInt() }
+            // Torrentio's thin ring reads small beside solid logos, so it gets a slightly larger box.
+            val box = if (id == AddonBadges.TORRENTIO) 22 else 20
+            layoutParams = layoutParams.apply { width = ((if (wordmark(id)) 72 else box) * density).toInt(); height = (box * density).toInt() }
             setImageResource(if (id == null) 0 else logo(id))
-            contentDescription = if (id == null) null else "Streaming with " + (listOf(label) + if (logosOnly) more.map(::label) else emptyList()).joinToString(", ")
+            contentDescription = if (id == null) null else "Streaming with " + (listOf(label) + extras.map(::label)).joinToString(", ")
         }
         // The extra logos from a previous video are replaced.
         (badge.childCount - 1 downTo 0).map(badge::getChildAt).filter { it.tag == EXTRA_LOGO }.forEach(badge::removeView)
-        if (logosOnly) more.forEach { extra ->
+        extras.forEach { extra ->
             badge.addView(ImageView(root.context).apply {
                 tag = EXTRA_LOGO; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 scaleType = ImageView.ScaleType.FIT_CENTER; adjustViewBounds = true; maxWidth = (120 * density).toInt()

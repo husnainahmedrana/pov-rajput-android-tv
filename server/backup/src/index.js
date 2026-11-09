@@ -368,7 +368,8 @@ async function readLink(env, id) {
 async function fillLink(request, env, id) {
   const body = await readBody(request);
   const payload = String(body.payload || "");
-  if (!payload || payload.length > 4096 || !/^[A-Za-z0-9_\-.]+$/.test(payload)) fail(400, "Bad request.");
+  // Add-on links (AIOStreams and other configured add-ons) can be several KB long; sign-in payloads are small.
+  if (!payload || payload.length > 32768 || !/^[A-Za-z0-9_\-.]+$/.test(payload)) fail(400, "Bad request.");
   const result = await env.DB.prepare("UPDATE links SET payload = ? WHERE id = ? AND payload = '' AND expires > ?")
     .bind(payload, id, Date.now()).run();
   if (!result.meta.changes) fail(410, "This sign-in code has expired or was already used. Make a new one on the TV.");
@@ -522,17 +523,26 @@ body{font:16px/1.45 system-ui,sans-serif;margin:0;background:#141414;color:#eee}
 main{max-width:420px;margin:0 auto;padding:28px 16px}
 h1{font-size:22px;margin:0 0 6px}p{color:#aaa;margin:0 0 18px}
 label{display:block;font-size:14px;margin:14px 0 6px;color:#ccc}
-input{box-sizing:border-box;width:100%;padding:12px;font-size:16px;border-radius:10px;border:1px solid #444;background:#1f1f1f;color:#fff}
+input,textarea{box-sizing:border-box;width:100%;padding:12px;font-size:16px;border-radius:10px;border:1px solid #444;background:#1f1f1f;color:#fff}
+textarea{resize:vertical;font-family:ui-monospace,monospace;font-size:13px;word-break:break-all}
+.hint{font-size:13px;color:#888;margin-top:4px}
 button{margin-top:22px;width:100%;padding:13px;font-size:16px;font-weight:600;border:0;border-radius:10px;background:#e50914;color:#fff}
 button:disabled{opacity:.5}
 #status{margin-top:16px;min-height:22px}.ok{color:#46d369}.bad{color:#ff8a80}
 </style>
 <main>
-<h1>POV Rajput on your TV</h1>
-<p>Type your POV Rajput email and password here. They are encrypted on this phone for your TV only.</p>
+<h1 id="h">POV Rajput on your TV</h1>
+<p id="i">Type your POV Rajput email and password here. They are encrypted on this phone for your TV only.</p>
 <form id="f">
+<div id="signin">
 <label for="e">Email</label><input id="e" type="email" autocomplete="username" required>
 <label for="p">Password</label><input id="p" type="password" autocomplete="current-password" required minlength="8">
+</div>
+<div id="addon" hidden>
+<label for="u">Add-on link</label><textarea id="u" rows="5" maxlength="16000" placeholder="https://…/manifest.json or stremio://…" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+<div class="hint">Copy it from the add-on's setup page ("Copy install URL" or "Copy manifest").</div>
+<label for="n">Name (optional)</label><input id="n" maxlength="60" placeholder="Leave empty to use the add-on's own name">
+</div>
 <button id="b" type="submit">Send to TV</button>
 </form>
 <div id="status" role="status"></div>
@@ -544,6 +554,16 @@ const b64u = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))).repl
 const unb64u = (text) => Uint8Array.from(atob(text.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((text.length + 3) % 4)), (c) => c.charCodeAt(0));
 const id = location.pathname.split("/").pop();
 const tvKey = location.hash.slice(1);
+// ?m=addon: the TV is adding a source provider, so the page asks for an add-on link instead of a sign-in.
+const addonMode = new URLSearchParams(location.search).get("m") === "addon";
+if (addonMode) {
+  document.title = "Add an add-on to POV Rajput";
+  document.getElementById("h").textContent = "Add an add-on to your TV";
+  document.getElementById("i").textContent = "Paste the add-on's install link here. It is encrypted on this phone for your TV only, so it can hold your debrid key safely.";
+  document.getElementById("signin").remove();
+  document.getElementById("addon").hidden = false;
+  document.getElementById("u").required = true;
+}
 if (!crypto.subtle || !/^[A-Za-z0-9_-]{80,100}$/.test(tvKey)) { say("Scan the QR code on your TV again.", "bad"); document.getElementById("b").disabled = true; }
 document.getElementById("f").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -556,14 +576,20 @@ document.getElementById("f").addEventListener("submit", async (event) => {
     const key = await crypto.subtle.deriveKey({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(32), info: new TextEncoder().encode("pov-link:v1") },
       hkdf, { name: "AES-GCM", length: 256 }, false, ["encrypt"]);
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const plain = new TextEncoder().encode(JSON.stringify({ email: document.getElementById("e").value.trim(), password: document.getElementById("p").value }));
+    let message;
+    if (addonMode) {
+      const link = document.getElementById("u").value.trim();
+      if (!/^(https?|stremio):\\/\\/\\S+$/i.test(link)) throw new Error("Paste a link that starts with https:// or stremio://");
+      message = { url: link, name: document.getElementById("n").value.trim() };
+    } else message = { email: document.getElementById("e").value.trim(), password: document.getElementById("p").value };
+    const plain = new TextEncoder().encode(JSON.stringify(message));
     const sealed = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(id) }, key, plain);
     const pub = await crypto.subtle.exportKey("raw", mine.publicKey);
     const response = await fetch("/v1/link/" + id, { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ payload: b64u(pub) + "." + b64u(iv) + "." + b64u(sealed) }) });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || "Could not reach the TV.");
-    document.getElementById("p").value = "";
+    if (!addonMode) document.getElementById("p").value = "";
     say("Sent. Look at your TV.", "ok");
   } catch (error) { say(error.message || String(error), "bad"); button.disabled = false; }
 });

@@ -200,7 +200,7 @@ class MainActivity : Activity() {
         InAppPlaybackSession.addListener(playbackChanged)
         if (savedInstanceState == null && !publicPreview && !sourcePreview) showSplash()
         if (!publicPreview) refreshWatched()
-        shell(); if (sourcePreview) sourceChoiceAudit() else home(); body.post { openLauncherResume(intent) }; if (!publicPreview) { retrySync(); checkStartupUpdate() }
+        shell(); if (sourcePreview) sourceChoiceAudit() else home(); body.post { openLauncherResume(intent); openAddonLink(intent) }; if (!publicPreview) { retrySync(); checkStartupUpdate() }
         window.decorView.viewTreeObserver.addOnGlobalFocusChangeListener(contentFocusChanged)
         // A restore reopens the app; say what happened once it is back.
         store.get(ACCOUNT_NOTICE).takeIf { it.isNotBlank() }?.let { notice -> store.remove(ACCOUNT_NOTICE); body.postDelayed({ toast(notice) }, 1_800) }
@@ -1812,8 +1812,23 @@ class MainActivity : Activity() {
     }
 
     override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent); setIntent(intent); openLauncherResume(intent)
+        super.onNewIntent(intent); setIntent(intent); openLauncherResume(intent); openAddonLink(intent)
     }
+    /**
+     * A stremio:// install link, or an https add-on link shared to POV: "Add source provider" opens with it filled in.
+     * Nothing is added until the viewer presses Save, so a web page can't add an add-on on its own.
+     */
+    private fun openAddonLink(launch: Intent) {
+        if (publicPreview || !::store.isInitialized) return
+        val link = AddonLinks.from(launch.action, launch.data?.toString(), launch.getStringExtra(Intent.EXTRA_TEXT)) ?: run {
+            if (launch.action == Intent.ACTION_SEND) toast("That isn't an add-on link (it should start with https:// or stremio://).")
+            return
+        }
+        // Consume once so rotating or resuming can't open it again.
+        intent = Intent(this, MainActivity::class.java)
+        editSourceProvider(null, link)
+    }
+
     private fun openLauncherResume(launch: Intent) {
         val identity = LauncherResumeLink.parse(this,launch) ?: return
         // Consume once so rotating/resuming the activity cannot start it again.
@@ -3727,7 +3742,10 @@ class MainActivity : Activity() {
             }
         }
         autoplayCountdown = tick
-        if (search.countdownSeconds <= 0) { tick.run(); return }
+        // No countdown (the player's Next episode): still posted, not run here. This is called while the link list is
+        // being drawn, before renderSearch() records the new page's generation, so running now would see a "different
+        // page" and silently drop the auto-play.
+        if (search.countdownSeconds <= 0) { countdownHandler.post(tick); return }
         updateCountdownLine(search); countdownHandler.postDelayed(tick, 1_000L)
     }
 
@@ -3859,7 +3877,7 @@ class MainActivity : Activity() {
         val chipKeys = HashMap<View, String?>()
         fun matchesSource(source: SourceItem, key: String?): Boolean = key == null || when (key) {
             PlaybackDebrid.EASYNEWS -> Easynews.isHost(source.directUrl)
-            in DebridServices.IDS -> key in source.cachedServices
+            in DebridServices.IDS -> key in source.cachedServices || source.servedBy == key && source.directUrl.isNotEmpty()
             else -> PlaybackDebrid.addon(source) == key
         }
         val total = text("", 14, muted, true)
@@ -3904,14 +3922,22 @@ class MainActivity : Activity() {
             holder.addView(text(value, 16, ink, true), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(6) })
             counts.addView(holder, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(6) })
         }
-        connected.forEach { service ->
+        // Ready-made links from add-ons that hold the viewer's debrid key ("[TB+] Torrentio") count under that service too,
+        // also when the service isn't connected in POV itself.
+        fun viaAddon(source: SourceItem, service: String) = source.directUrl.isNotEmpty() && source.servedBy == service && source.addonCached != false
+        val addonServices = DebridServices.IDS.filter { service -> service !in connected && ordered.any { viaAddon(it, service) } }
+        // A service with nothing to show is left out: e.g. every link came ready-made from add-ons holding their own
+        // debrid key, so the services connected in POV had no torrents to check.
+        val torrents = ordered.any { it.directUrl.isEmpty() && it.infoHash.isNotBlank() }
+        (connected + addonServices).forEach { service ->
             val name = DebridServices.name(service)
-            // Real-Debrid-style services can't say in advance what is cached.
-            if (service in checkOnPlay) count(service, "?", "$name checks the cache when a link is played")
-            else ordered.count { service in it.cachedServices }.let { count(service, "$it", "$it links cached on $name") }
+            val fromAddons = ordered.count { viaAddon(it, service) }
+            // Real-Debrid-style services can't say in advance what is cached (unless a debrid add-on already did).
+            if (service in checkOnPlay && fromAddons == 0) { if (torrents) count(service, "?", "$name checks the cache when a link is played") }
+            else ordered.count { service in it.cachedServices || viaAddon(it, service) }.takeIf { it > 0 }?.let { count(service, "$it", "$it links cached on $name") }
         }
         if (Easynews.active(store)) ordered.count { Easynews.isHost(it.directUrl) }.let { count(PlaybackDebrid.EASYNEWS, "$it", "$it Easynews links") }
-        // Add-ons with their own logo show their count when they returned links.
+        // Add-ons with their own logo show their count when they returned links (scrapers' logos stay on their links only).
         listOf(PlaybackDebrid.AIOSTREAMS to "AIOStreams", PlaybackDebrid.PENGUPLAY to "PenguPlay", PlaybackDebrid.CNCVERSE to "CNCVerse", PlaybackDebrid.PLAVIO to "PlavioHD", AddonBadges.ALTMOUNT to "AltMount", AddonBadges.STREAMNZB to "StreamNZB").forEach { (addon, name) ->
             ordered.count { PlaybackDebrid.addon(it) == addon }
                 .takeIf { it > 0 }?.let { count(addon, "$it", "$it $name links") }
@@ -3986,7 +4012,7 @@ class MainActivity : Activity() {
             val limited = store.get(AUTOPLAY_LIMIT_ON) == "true"
             val maxBytes = autoplayLimitGb(episode = identity.type == "series") * 1_000_000_000L
             fun tooBig(source: SourceItem) = limited && AutoplayLimit.tooBig(source.sizeBytes, minutes, autoplayMaxMbps(), maxBytes)
-            fun fits(source: SourceItem) = (source.cached || source.directUrl.isNotEmpty()) && !tooTall(source) && !tooBig(source)
+            fun fits(source: SourceItem) = (source.cached || source.directUrl.isNotEmpty()) && source.addonCached != false && !tooTall(source) && !tooBig(source)
             // The short list (Best per quality) first; when none of it fits the Auto-play limit, every found link in the same order.
             search.good = ordered.filter(::fits).ifEmpty { fullOrder.filter(::fits) }
             search.tryOnPlay = ordered.filterNot { tooTall(it) || tooBig(it) }.ifEmpty { fullOrder.filterNot { tooTall(it) || tooBig(it) } }
@@ -4055,7 +4081,8 @@ class MainActivity : Activity() {
     }
 
     /** Cached somewhere, or a direct link: plays at once. */
-    private fun playsAtOnce(source: SourceItem) = source.cached || source.cachedServices.isNotEmpty() || source.directUrl.isNotEmpty()
+    private fun playsAtOnce(source: SourceItem) = source.addonCached != false &&
+        (source.cached || source.cachedServices.isNotEmpty() || source.directUrl.isNotEmpty())
 
     /** The links of [sources] as the source list shows them: playable ones, in the viewer's order, too-tall last. */
     private fun orderForStreams(sources: List<SourceItem>, identity: PlaybackIdentity? = null): List<SourceItem> {
@@ -4202,7 +4229,8 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     if (request == generation && !isFinishing && !isDestroyed) {
                         resolvingGeneration = null; body.removeView(progress)
-                        playingAddon = if (prepared is PreparedSource.Direct) PlaybackDebrid.tag(source) else null
+                        // A scraper's torrent played by POV's own debrid: the scraper's logo goes before the service's in the player.
+                        playingAddon = if (prepared is PreparedSource.Direct) PlaybackDebrid.tag(source) else source.scraper
                         when (prepared) {
                             is PreparedSource.Direct -> play(prepared.url, prepared.identity.title, prepared.identity,
                                 "media:${prepared.identity.imdbId}:${prepared.identity.season}:${prepared.identity.episode}",
@@ -6526,7 +6554,7 @@ class MainActivity : Activity() {
             }.setNegativeButton("Cancel", null).show()
     }
 
-    private fun editSourceProvider(provider: SourceProvider?) {
+    private fun editSourceProvider(provider: SourceProvider?, prefill: String? = null) {
         val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
         val name = TvEditText(this).apply { hint = "Provider name"; setSingleLine(); setText(provider?.name.orEmpty()) }
         val address = TvEditText(this).apply {
@@ -6536,10 +6564,33 @@ class MainActivity : Activity() {
         }
         val status = text("", 14, muted)
         content.addView(name, margin(-1, -2)); content.addView(address, margin(-1, -2, top = 8)); content.addView(status, margin(-1, -2, top = 8))
-        val dialog = AlertDialog.Builder(this).setTitle(if (provider == null) "Add source provider" else "Edit source provider")
-            .setView(content).setPositiveButton("Save", null).setNegativeButton("Cancel", null).create()
+        val builder = AlertDialog.Builder(this).setTitle(if (provider == null) "Add source provider" else "Edit source provider")
+            .setView(content).setPositiveButton("Save", null).setNegativeButton("Cancel", null)
+        // Long add-on links are hard to type with a remote: paste them on the phone instead.
+        if (DeviceLayout.tv && !publicPreview) builder.setNeutralButton("Use phone", null)
+        val dialog = builder.create()
         dialog.show(); dialog.submitOnEnter(name, address)
         val save = dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE)
+        /** Fills in a link from the phone or from a stremio:// / shared link, and the add-on's own name when none was given. */
+        fun fill(link: String, sentName: String) {
+            if (!dialog.isShowing) return
+            val typed = AddonLinks.https(link)
+            address.setText(typed)
+            if (sentName.isNotBlank()) name.setText(sentName)
+            if (!name.text.isNullOrBlank()) { status.text = "Check it, then Save."; save.requestFocus(); return }
+            status.text = "Reading the add-on's name…"
+            worker.execute {
+                val found = runCatching { Net.json(AddonLinks.manifest(typed)).optString("name").trim().take(60) }.getOrDefault("")
+                runOnUiThread {
+                    if (!dialog.isShowing) return@runOnUiThread
+                    if (found.isNotBlank() && name.text.isNullOrBlank()) name.setText(found)
+                    status.text = if (name.text.isNullOrBlank()) "Give it a name, then Save." else "Check it, then Save."
+                    save.requestFocus()
+                }
+            }
+        }
+        dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL)?.setOnClickListener { accountDialogs.phoneAddon(::fill) }
+        prefill?.let { fill(it, "") }
         save.setOnClickListener {
             val typedName = name.text.toString(); val typedAddress = address.text.toString()
             try { SourceProviders.name(typedName); SourceProviders.endpoint(typedAddress) }

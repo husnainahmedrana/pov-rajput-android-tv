@@ -152,10 +152,13 @@ class SourceResolver internal constructor(
             val title = filename.ifBlank { description.lineSequence().firstOrNull().orEmpty() }
                 .ifBlank { stream.optString("name").ifBlank { "Video source" } }.take(500)
             if (identity.type == "series" && EpisodeFilename.isExplicitMismatch(title, identity.season, identity.episode)) return@mapNotNull null
+            // An add-on that holds the viewer's debrid key says which service in the link's name ("[TB+] Torrentio").
+            val debridTag = if (direct.isBlank()) null else AddonDebridTag.of(stream.optString("name"))
             val fileIndex = if (stream.has("fileIdx") && !stream.isNull("fileIdx")) stream.optInt("fileIdx", -1).takeIf { it >= 0 } else null
             SourceItem(title = title, provider = provider, infoHash = hash, fileIndex = fileIndex, directUrl = direct,
                 sizeBytes = SourceMetadata.sizeBytes(stream), qualityHeight = SourceMetadata.qualityHeight(stream), headers = headers,
                 addon = linkAddon?.takeIf { direct.isNotBlank() },
+                scraper = linkAddon?.takeIf { direct.isBlank() && it in AddonBadges.SCRAPERS },
                 usenet = AddonBadges.standaloneUsenet(linkAddon) || linkAddon == AddonBadges.AIOSTREAMS && (data?.optString("type")?.let { it == "usenet" || it == "stremio-usenet" }
                     ?: USENET_TITLE.containsMatchIn("${stream.optString("name")} $description")),
                 indexer = when (linkAddon) {
@@ -168,7 +171,9 @@ class SourceResolver internal constructor(
                     else -> ""
                 },
                 servedBy = data?.optJSONObject("service")?.optString("id")?.takeIf { it in DebridServices.IDS || it == AddonBadges.ALTMOUNT }
-                    ?: AddonBadges.ALTMOUNT.takeIf { linkAddon == AddonBadges.AIOSTREAMS && data == null && ALTMOUNT_TITLE.containsMatchIn("${stream.optString("name")} $description") },
+                    ?: AddonBadges.ALTMOUNT.takeIf { linkAddon == AddonBadges.AIOSTREAMS && data == null && ALTMOUNT_TITLE.containsMatchIn("${stream.optString("name")} $description") }
+                    ?: debridTag?.service?.takeUnless { AddonBadges.usenet(linkAddon) && USENET_TITLE.containsMatchIn("${stream.optString("name")} $description") },
+                addonCached = debridTag?.cached?.takeIf { data?.optJSONObject("service") == null },
                 newsProvider = if (AddonBadges.usenet(linkAddon)) newsProvider else "",
                 // AIOStreams says so in its stream data; StreamNZB names its kept releases "StreamNZB Library" in the
                 // indexer line; AltMount labels files it already holds "💾 Local Library".

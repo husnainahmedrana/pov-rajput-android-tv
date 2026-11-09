@@ -1,10 +1,9 @@
 package dev.pov.tv.data
 
-import java.net.URI
 import java.util.Locale
 
 /**
- * Add-ons with their own logo (PenguPlay, CNCVerse, PlavioHD). They are known by the add-on's address, which stays the same
+ * Add-ons with their own logo (PenguPlay, CNCVerse, PlavioHD, Debridio…). They are known by the add-on's address, which stays the same
  * however the viewer names the add-on; the name is only a fallback, e.g. for a self-hosted copy.
  */
 object AddonBadges {
@@ -16,7 +15,19 @@ object AddonBadges {
     const val ALTMOUNT = "altmount"
     /** StreamNZB: the self-hosted Usenet streaming add-on ("StreamNZB · …", manifest id community.streamnzb). */
     const val STREAMNZB = "streamnzb"
-    val IDS = setOf(PENGUPLAY, CNCVERSE, PLAVIO, AIOSTREAMS, ALTMOUNT, STREAMNZB)
+    /** Debridio: the paid scraper add-on (debridio.com), set up there with the viewer's debrid service and key. */
+    const val DEBRIDIO = "debridio"
+    /** Debrid scrapers whose links come ready-made when the viewer set them up with a debrid key. */
+    const val TORRENTIO = "torrentio"
+    const val COMET = "comet"
+    const val METEOR = "meteor"
+    const val STREMTHRU = "stremthru"
+    val IDS = setOf(PENGUPLAY, CNCVERSE, PLAVIO, AIOSTREAMS, ALTMOUNT, STREAMNZB, DEBRIDIO, TORRENTIO, COMET, METEOR, STREMTHRU)
+    /**
+     * Torrent scrapers: their logo goes on their own links only (never in the link list's header), on ready-made debrid
+     * links and on plain torrents the viewer's own debrid plays alike, and in the player before the debrid service's logo.
+     */
+    val SCRAPERS = setOf(DEBRIDIO, TORRENTIO, COMET, METEOR, STREMTHRU)
     /** Usenet add-ons on their own (not behind AIOStreams): their logo, the news provider, then the indexer. */
     fun standaloneUsenet(addon: String?) = addon == ALTMOUNT || addon == STREAMNZB
     /** Usenet add-ons whose links show their logo, the news provider and the indexer. */
@@ -39,11 +50,18 @@ object AddonBadges {
     /** An indexer's logo id from its name ("NZBgeek", "NzbNest", "Usenet-Crawler"…), when we have one. */
     fun indexer(name: String): String? = name.lowercase(Locale.ROOT).let { lower -> INDEXERS.firstOrNull { it.first in lower }?.second }
 
-    private val HOSTS = mapOf("pengu.uk" to PENGUPLAY, "cncverse.dpdns.org" to CNCVERSE, "plavio.site" to PLAVIO)
+    private val HOSTS = mapOf("pengu.uk" to PENGUPLAY, "cncverse.dpdns.org" to CNCVERSE, "plavio.site" to PLAVIO, "debridio.com" to DEBRIDIO, "torrentio.strem.fun" to TORRENTIO,
+        "meteorfortheweebs.midnightignite.me" to METEOR)
+    /** Self-hosted and public copies named after the add-on: comet.elfhosted.com, stremthru.example.org… */
+    private val HOST_LABELS = listOf("stremthru" to STREMTHRU, "comet" to COMET, "torrentio" to TORRENTIO, "meteor" to METEOR)
+
+    private val HOST = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^/?#@]*@)?([^/?#:|]+)")
 
     fun of(address: String, name: String = ""): String? {
-        val host = try { URI(address.trim()).host?.lowercase(Locale.ROOT) } catch (_: Exception) { null }.orEmpty()
+        // Not java.net.URI: add-on addresses often hold characters it rejects (Torrentio's "torbox=…|qualityfilter=…").
+        val host = HOST.find(address.trim())?.groupValues?.get(1)?.lowercase(Locale.ROOT).orEmpty()
         HOSTS.entries.firstOrNull { (domain, _) -> host == domain || host.endsWith(".$domain") }?.let { return it.value }
+        host.split('.').dropLast(1).firstNotNullOfOrNull { label -> HOST_LABELS.firstOrNull { label == it.first || label.startsWith(it.first + "-") }?.second }?.let { return it }
         return when {
             name.contains("pengu", ignoreCase = true) -> PENGUPLAY
             name.contains("cncverse", ignoreCase = true) -> CNCVERSE
@@ -51,6 +69,11 @@ object AddonBadges {
             name.contains("aiostreams", ignoreCase = true) -> AIOSTREAMS
             name.contains("altmount", ignoreCase = true) -> ALTMOUNT
             name.contains("streamnzb", ignoreCase = true) -> STREAMNZB
+            name.contains("debridio", ignoreCase = true) -> DEBRIDIO
+            name.contains("torrentio", ignoreCase = true) -> TORRENTIO
+            name.contains("stremthru", ignoreCase = true) -> STREMTHRU
+            Regex("(?i)(?<![a-z])comet(?![a-z])").containsMatchIn(name) -> COMET
+            Regex("(?i)(?<![a-z])meteor(?![a-z])").containsMatchIn(name) -> METEOR
             else -> null
         }
     }

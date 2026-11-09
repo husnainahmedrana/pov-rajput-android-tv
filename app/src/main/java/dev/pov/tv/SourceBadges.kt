@@ -101,6 +101,11 @@ internal object SourceBadges {
     fun status(source: SourceItem, checkOnPlay: List<String>): SourceBadge {
         val cachedOn = source.cachedServices.map(DebridServices::name)
         return when {
+            // A debrid add-on's link: the service it comes from, and whether it is cached there.
+            source.directUrl.isNotEmpty() && source.addonCached == false && source.servedBy in DebridServices.IDS ->
+                SourceBadge("NOT CACHED · ${DebridServices.name(source.servedBy!!).uppercase()}", SourceBadgeTone.UNCACHED)
+            source.directUrl.isNotEmpty() && source.servedBy in DebridServices.IDS ->
+                SourceBadge("CACHED · ${DebridServices.name(source.servedBy!!).uppercase()}", SourceBadgeTone.CACHED)
             source.directUrl.isNotEmpty() -> SourceBadge("DIRECT", SourceBadgeTone.CACHED)
             cachedOn.isNotEmpty() -> SourceBadge("CACHED · ${cachedOn.joinToString(" + ").uppercase()}", SourceBadgeTone.CACHED)
             checkOnPlay.isNotEmpty() -> SourceBadge("CHECK ON PLAY", SourceBadgeTone.UNCACHED)
@@ -122,9 +127,12 @@ internal object SourceBadges {
                 source.servedBy?.takeIf { it == AddonBadges.ALTMOUNT },
                 if (source.usenet || source.servedBy == AddonBadges.ALTMOUNT) source.newsProvider.ifBlank { null } else source.servedBy,
                 AddonBadges.indexer(source.indexer)).distinct()
-            else listOfNotNull(PlaybackDebrid.EASYNEWS.takeIf { Easynews.isHost(source.directUrl) } ?: addon)
+            // Other add-ons: their logo (or Easynews), then the debrid service a debrid add-on named for the link.
+            else listOfNotNull(PlaybackDebrid.EASYNEWS.takeIf { Easynews.isHost(source.directUrl) } ?: addon,
+                source.servedBy?.takeIf { it in DebridServices.IDS }).distinct()
         }
-        else source.cachedServices.distinct()
+        // Torrents: the scraper that found it (Torrentio, Comet…), then where it is cached.
+        else (listOfNotNull(source.scraper) + source.cachedServices).distinct()
 
     /**
      * The clean badge set for a link row: quality and size, then whether it plays at once, then the rest. With [logos]
@@ -132,7 +140,10 @@ internal object SourceBadges {
      */
     fun forRow(source: SourceItem, languages: SourceLanguageOrder?, runtimeMinutes: Int?, checkOnPlay: List<String>, logos: Boolean = false): List<SourceBadge> =
         from(source, languages, runtimeMinutes).toMutableList().apply {
-            if (!logos || cachedOn(source).isEmpty()) add(minOf(2, size), status(source, checkOnPlay))
+            // Logos say where a link plays from, but not that a debrid add-on still has to download it.
+            // A scraper's logo on a torrent says where it came from, not that it is cached.
+            if (!logos || cachedOn(source).isEmpty() || source.addonCached == false ||
+                source.directUrl.isEmpty() && source.cachedServices.isEmpty()) add(minOf(2, size), status(source, checkOnPlay))
             if (source.inLibrary) add(minOf(1, size), SourceBadge("IN LIBRARY", SourceBadgeTone.CACHED))
         }
 
