@@ -50,7 +50,7 @@ class NewsProviders(private val get: (String) -> String, private val put: (Strin
 
         /** Well-known providers' secure servers. Every field stays editable after picking one. */
         val PRESETS = listOf(
-            Preset("Newshosting", "news.newshosting.com", 100), Preset("Easynews", "news.easynews.com", 60), Preset("Tweaknews", "news.tweaknews.eu", 40),
+            Preset("Newshosting", "news.newshosting.com", 100), Preset("Easynews", "news.easynews.com", 60), Preset("Tweaknews", "newshosting.tweaknews.eu", 40), Preset("Tweaknews (older accounts)", "news.tweaknews.eu", 40),
             Preset("Eweka", "news.eweka.nl", 50), Preset("UsenetServer", "news.usenetserver.com", 20), Preset("Giganews", "news.giganews.com", 100),
             Preset("Frugal Usenet", "news.frugalusenet.com", 100), Preset("NewsDemon", "news.newsdemon.com", 50), Preset("Usenet.Farm", "news.usenet.farm", 40),
             Preset("UsenetExpress", "news.usenetexpress.com", 50), Preset("NewsgroupDirect", "news.newsgroupdirect.com", 100),

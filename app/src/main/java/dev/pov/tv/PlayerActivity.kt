@@ -90,8 +90,10 @@ class PlayerActivity : Activity() {
     private val showSplashLater = Runnable { setSplash(true) }
     private val miniPlayer by lazy { MiniPlayerPreferences(this).enabled }
     /** pov_browse is the Streams button: the title's other links, over the playing video. */
+    private var endedAt = 0L
     private val rowIds = listOf(R.id.pov_stop, androidx.media3.ui.R.id.exo_rew, androidx.media3.ui.R.id.exo_play_pause,
-        androidx.media3.ui.R.id.exo_ffwd, R.id.pov_next_episode, R.id.pov_audio, R.id.pov_speed, R.id.pov_browse,
+        androidx.media3.ui.R.id.exo_ffwd, R.id.pov_next_episode, R.id.pov_jump_30, R.id.pov_jump_60, R.id.pov_jump_90, R.id.pov_jump_120,
+        R.id.pov_audio, R.id.pov_speed, R.id.pov_browse,
         R.id.pov_info, R.id.pov_episodes)
     private var streamsDialog: Dialog? = null
     private val streamsChanged: () -> Unit = { if (!stopped && streamsDialog != null && streamsDialog === activeDialog && activeDialog?.isShowing == true) showStreams() }
@@ -220,6 +222,8 @@ class PlayerActivity : Activity() {
             button.nextFocusRightId = rowIds[(index + 1).coerceAtMost(rowIds.lastIndex)]
             button.setOnFocusChangeListener { _, focused -> pill.focusChanged(button, focused) }
         }
+        // Jump buttons: straight to 30 minutes, 1 hour, 1h 30m or 2 hours (shown when the video is that long).
+        JUMPS.forEach { id -> view.findViewById<View>(id).setOnClickListener { button -> (button.tag as? Long)?.let { at -> player?.seekTo(at); controls.userInteraction() } } }
         view.findViewById<View>(R.id.pov_audio).setOnClickListener { showTracks(C.TRACK_TYPE_AUDIO) }
         speedButton = view.findViewById(R.id.pov_speed)
         // One press steps through the common speeds; holding OK opens the full list (with the slower ones).
@@ -378,6 +382,11 @@ class PlayerActivity : Activity() {
         // Auto-play next episode: an episode that plays to its very end goes straight on to the next.
         if (exo != null && series && preferences.autoNext && exo.playbackState == Player.STATE_ENDED && "next" !in skipUsed &&
             InAppPlaybackSession.error == null) { playNextEpisode(); return }
+        // A movie, or an episode with auto-next off, that plays to its end: back to the links after a moment.
+        if (exo != null && exo.playbackState == Player.STATE_ENDED && InAppPlaybackSession.error == null && !(series && preferences.autoNext)) {
+            if (endedAt == 0L) endedAt = android.os.SystemClock.elapsedRealtime()
+            else if (android.os.SystemClock.elapsedRealtime() - endedAt >= END_CLOSE_MS && !isFinishing) { endedAt = 0L; InAppPlaybackSession.stop(); finish(); return }
+        } else endedAt = 0L
         if (exo == null || duration == null || !preferences.enabled || seekPreview.active ||
             activeDialog?.isShowing == true || InAppPlaybackSession.error != null) { hideSkip(); nextCountdownFrom = 0L; return }
         val position = exo.currentPosition
@@ -498,6 +507,18 @@ class PlayerActivity : Activity() {
     }
 
     private fun updateControls() {
+        // A jump button shows only when the video runs past that point (and on TV: the phone's row has no room).
+        val length = player?.duration?.takeIf { it > 0 && it != C.TIME_UNSET } ?: 0L
+        // Up to four points spread over this video's own length, so a short episode gets useful buttons too.
+        val points = if (DeviceLayout.tv) jumpPoints(length) else emptyList()
+        JUMPS.forEachIndexed { index, id ->
+            val button = view.findViewById<android.widget.Button>(id) ?: return@forEachIndexed
+            val at = points.getOrNull(index)
+            button.visibility = if (at == null) View.GONE else View.VISIBLE
+            if (at != null && button.tag != at) {
+                button.tag = at; button.text = jumpLabel(at); button.contentDescription = "Jump to ${jumpLabel(at)}"
+            }
+        }
         updateSplash()
         updatePauseLogo()
         updateEndTime()
@@ -515,8 +536,11 @@ class PlayerActivity : Activity() {
             if (params.marginStart != start) { params.marginStart = start; badges.layoutParams = params }
         }
         PlaybackDebrid.bind(view, InAppPlaybackSession.debridService, InAppPlaybackSession.sourceUrl, InAppPlaybackSession.sourceAddon)
+        // Usenet links end the row with a USENET badge; their provider and indexer logos sit with the service logos.
+        val usenet = InAppPlaybackSession.sourceAddon?.substringBefore('|') == PlaybackDebrid.USENET
         view.findViewById<PlayerBadgeRow>(R.id.pov_media_badges)?.show(PlayerMediaBadges.from(PlayerMediaFacts.from(
-            InAppPlaybackSession.mediaName, InAppPlaybackSession.mediaSize, player?.videoFormat, player?.audioFormat)))
+            InAppPlaybackSession.mediaName, InAppPlaybackSession.mediaSize, player?.videoFormat, player?.audioFormat)) +
+            listOfNotNull(PlayerBadge("USENET", PlayerBadgeKind.USENET).takeIf { usenet }))
         speedButton.text = "Speed · ${speedLabel(player?.playbackParameters?.speed ?: 1f)}"
         controls.refreshPlaybackState()
     }
@@ -1311,6 +1335,26 @@ class PlayerActivity : Activity() {
         const val QUIET_SEEK_MS = 4_000L
         /** Auto-play next episode: how long the Next Episode button counts down before starting it. */
         const val NEXT_COUNTDOWN_MS = 10_000L
+        /** How long the player waits on a finished video before going back to the links. */
+        const val END_CLOSE_MS = 3_000L
+        private val JUMPS = listOf(R.id.pov_jump_30, R.id.pov_jump_60, R.id.pov_jump_90, R.id.pov_jump_120)
+
+        /**
+         * The jump points for a video [lengthMs] long: about 20, 40, 60 and 80 % of the way, rounded to 5 minutes (to
+         * 1 minute under 25 minutes), each at least a minute before the end. Empty while the length is unknown.
+         */
+        internal fun jumpPoints(lengthMs: Long): List<Long> {
+            if (lengthMs < 4 * 60_000L) return emptyList()
+            val step = if (lengthMs >= 25 * 60_000L) 5 * 60_000L else 60_000L
+            return listOf(0.2, 0.4, 0.6, 0.8).map { share -> Math.round(lengthMs * share / step) * step }
+                .filter { it >= step && it <= lengthMs - 60_000L }.distinct()
+        }
+
+        /** "10m", "1h", "1h 25m". */
+        internal fun jumpLabel(atMs: Long): String {
+            val minutes = (atMs / 60_000L).toInt()
+            return when { minutes < 60 -> "${minutes}m"; minutes % 60 == 0 -> "${minutes / 60}h"; else -> "${minutes / 60}h ${minutes % 60}m" }
+        }
         val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
         val TRACK_TYPES = listOf(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_TEXT)
         /** Set by Next episode: the identity (JSON) of the episode that just ended; Home consumes it once. */

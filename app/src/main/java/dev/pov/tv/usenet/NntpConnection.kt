@@ -140,6 +140,16 @@ internal class NntpConnection(
         return Segment(data, filled, begin, fileSize, name, crcOk = ended && filled.toLong() == partSize && (expected == null || expected == crc.value))
     }
 
+    /** Which of [ids] the server doesn't have, asked all at once (pipelined STAT). */
+    fun missing(ids: List<String>): List<String> {
+        ids.forEach { send("STAT <$it>") }
+        flush()
+        return ids.filter { id ->
+            val (code, _) = status()
+            when (code) { 223 -> false; 430, 423 -> true; else -> throw IOException("The news server answered $code to a check.") }
+        }
+    }
+
     /** Skips the article that follows a 222 answer without decoding it. */
     fun skipBody() {
         while (true) {
@@ -220,6 +230,13 @@ internal class NntpConnection(
 /** A one-off sign-in, for the Test button in Settings. */
 object Nntp {
     /** Connects and signs in; returns how long it took in milliseconds, or throws with the reason. */
+    /** Which of [ids] [server] doesn't have. */
+    fun missing(server: NntpServer, ids: List<String>): List<String> {
+        if (ids.isEmpty()) return ids
+        val connection = NntpConnection(server)
+        try { connection.connect(); return connection.missing(ids) } finally { connection.close() }
+    }
+
     fun check(server: NntpServer): Long {
         val started = System.nanoTime()
         val connection = NntpConnection(server)

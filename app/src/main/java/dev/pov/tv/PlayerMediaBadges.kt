@@ -16,7 +16,7 @@ import androidx.media3.common.MimeTypes
 import dev.pov.tv.data.SourceMetadata
 import kotlin.math.roundToInt
 
-internal enum class PlayerBadgeKind { QUALITY, SIZE, SOURCE, CODEC, DOLBY_VISION, HDR, AUDIO, CHANNELS }
+internal enum class PlayerBadgeKind { QUALITY, SIZE, SOURCE, CODEC, DOLBY_VISION, HDR, AUDIO, CHANNELS, /** Streaming from Usenet: turquoise. */ USENET }
 internal data class PlayerBadge(val label: String, val kind: PlayerBadgeKind)
 
 /** What the decoder reports wins; the link's file name and size fill in what a stream cannot tell the player. */
@@ -165,6 +165,7 @@ internal class PlayerBadgeRow @JvmOverloads constructor(context: Context, attrs:
             PlayerBadgeKind.HDR -> Triple(0xFFFF8959.toInt(), 0xFFB9E2FF.toInt(), 0xFFFFC066.toInt())
             PlayerBadgeKind.AUDIO -> Triple(0xFFA6FBE2.toInt(), 0xFF41EEC5.toInt(), 0xFF2DE4B8.toInt())
             PlayerBadgeKind.CHANNELS -> Triple(0xFFEDF1F8.toInt(), 0xFFC8D4E5.toInt(), 0xFFB7C4D8.toInt())
+            PlayerBadgeKind.USENET -> Triple(0xFF9FF7EE.toInt(), 0xFF40E0D0.toInt(), 0xFF40E0D0.toInt())
         }
         return GradientLabel(context, start, end, badge.kind == PlayerBadgeKind.HDR).apply {
             text = badge.label; tag = "player-badge:${badge.label}"

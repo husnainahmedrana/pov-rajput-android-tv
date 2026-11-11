@@ -67,6 +67,14 @@
                 android:contentDescription="Next episode" android:padding="10dp" android:src="@drawable/pov_ic_next"
                 android:scaleType="fitCenter" android:background="@drawable/pov_player_button" android:focusable="true"
                 android:visibility="gone" android:nextFocusUp="@id/exo_progress" />
+            <Button android:id="@+id/pov_jump_30" style="@style/POVPlayerAction" android:text="30m" android:visibility="gone"
+                android:layout_marginStart="10dp" android:contentDescription="Jump to 30 minutes" android:nextFocusUp="@id/exo_progress" />
+            <Button android:id="@+id/pov_jump_60" style="@style/POVPlayerAction" android:text="1h" android:visibility="gone"
+                android:contentDescription="Jump to 1 hour" android:nextFocusUp="@id/exo_progress" />
+            <Button android:id="@+id/pov_jump_90" style="@style/POVPlayerAction" android:text="1h 30m" android:visibility="gone"
+                android:contentDescription="Jump to 1 hour 30 minutes" android:nextFocusUp="@id/exo_progress" />
+            <Button android:id="@+id/pov_jump_120" style="@style/POVPlayerAction" android:text="2h" android:visibility="gone"
+                android:contentDescription="Jump to 2 hours" android:nextFocusUp="@id/exo_progress" />
             <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
             <Button android:id="@+id/pov_audio" style="@style/POVPlayerAction" android:text="Audio &amp; Subtitles"
                 android:drawableStart="@drawable/pov_ic_subtitles" android:nextFocusUp="@id/exo_progress" />

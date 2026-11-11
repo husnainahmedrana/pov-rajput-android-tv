@@ -108,6 +108,8 @@ internal object SourceBadges {
             source.directUrl.isNotEmpty() && source.servedBy in DebridServices.IDS ->
                 SourceBadge("CACHED · ${DebridServices.name(source.servedBy!!).uppercase()}", SourceBadgeTone.CACHED)
             // An indexer's link, streamed from the viewer's own news providers.
+            // A Usenet link that already failed this session (taken down, an archive): greyed, so it isn't picked again.
+            UsenetPlayback.failed(source.directUrl) -> SourceBadge("UNAVAILABLE", SourceBadgeTone.UNCACHED)
             UsenetLinks.isNzb(source.directUrl) -> SourceBadge("USENET", SourceBadgeTone.USENET)
             source.directUrl.isNotEmpty() -> SourceBadge("DIRECT", SourceBadgeTone.CACHED)
             cachedOn.isNotEmpty() -> SourceBadge("CACHED · ${cachedOn.joinToString(" + ").uppercase()}", SourceBadgeTone.CACHED)

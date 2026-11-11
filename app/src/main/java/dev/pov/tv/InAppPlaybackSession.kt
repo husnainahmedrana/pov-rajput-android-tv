@@ -383,7 +383,7 @@ object InAppPlaybackSession {
                     val media = identity; val account = playbackAccount
                     // Header-bound links keep their headers; if those have expired, resuming falls back to a fresh search.
                     if (media != null && account != null) runCatching {
-                        dev.pov.tv.data.LastPlayedLinks(SecureStore(application!!)).save(media, sourceUrl, sourceKey, debridService, account, mediaName, mediaSize, sourceHeaders)
+                        dev.pov.tv.data.LastPlayedLinks(SecureStore(application!!)).save(media, sourceUrl, sourceKey, debridService, account, mediaName, mediaSize, sourceHeaders, sourceAddon)
                     }
                 }
                 if (state == Player.STATE_READY && remotePercent > 0 && exo.duration > 0) {

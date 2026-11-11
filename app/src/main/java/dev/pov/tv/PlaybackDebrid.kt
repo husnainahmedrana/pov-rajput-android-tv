@@ -11,6 +11,8 @@ import dev.pov.tv.data.Easynews
 /** Explicit resolution provenance, never guessed from the account priority or filename. */
 internal object PlaybackDebrid {
     const val EASYNEWS = "easynews"
+    /** The player tag of the viewer's own indexer links. */
+    const val USENET = "usenet"
     const val PENGUPLAY = AddonBadges.PENGUPLAY
     const val CNCVERSE = AddonBadges.CNCVERSE
     const val PLAVIO = AddonBadges.PLAVIO
@@ -82,6 +84,8 @@ internal object PlaybackDebrid {
      * from ("aiostreams|easynews,nzbgeek": news provider or debrid, then indexer), the same logos as on its link card.
      */
     fun tag(source: SourceItem): String? {
+        // The viewer's own indexer links: "usenet|newshosting,usenetcrawler" (provider, then indexer).
+        if (dev.pov.tv.data.UsenetLinks.isNzb(source.directUrl)) return "$USENET|" + SourceBadges.cachedOn(source).joinToString(",")
         // A debrid add-on's link without an add-on logo: the service's logo.
         val addon = addon(source) ?: return source.servedBy?.takeIf { it in DebridServices.IDS }
         // Other add-ons: their logo, then the debrid service a debrid add-on named for the link (Debridio · TorBox).
@@ -92,6 +96,32 @@ internal object PlaybackDebrid {
 
     fun bind(root: View, service: String?, url: String = "", addon: String? = null) {
         val tagged = addon?.substringBefore('|')
+        val badge0 = root.findViewById<android.view.ViewGroup>(R.id.pov_debrid_badge)
+        val name0 = root.findViewById<TextView>(R.id.pov_debrid_name)
+        val logo0 = root.findViewById<ImageView>(R.id.pov_debrid_logo)
+        val density0 = root.resources.displayMetrics.density
+        // Undo the Usenet look a previous video left behind.
+        logo0.visibility = View.VISIBLE; badge0.contentDescription = null
+        name0.background = null; name0.setTextColor(0xFFECEFF3.toInt()); name0.setPadding(0, 0, 0, 0); name0.letterSpacing = 0f
+        (name0.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { it.marginStart = (6 * density0).toInt(); name0.layoutParams = it }
+        if (tagged == USENET) {
+            // The news provider's and the indexer's logos (the USENET badge is in the media badge row).
+            val logos = addon.substringAfter('|', "").split(',').filter { it.matches(Regex("[a-z]+")) }
+            badge0.visibility = if (logos.isEmpty()) View.GONE else View.VISIBLE
+            logo0.visibility = View.GONE; logo0.setImageResource(0)
+            name0.visibility = View.GONE
+            logo0.contentDescription = null
+            badge0.contentDescription = "Streaming from Usenet" + if (logos.isEmpty()) "" else " with " + logos.joinToString(", ", transform = ::label)
+            (badge0.childCount - 1 downTo 0).map(badge0::getChildAt).filter { it.tag == EXTRA_LOGO }.forEach(badge0::removeView)
+            logos.forEach { extra ->
+                badge0.addView(ImageView(root.context).apply {
+                    tag = EXTRA_LOGO; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    scaleType = ImageView.ScaleType.FIT_CENTER; adjustViewBounds = true; maxWidth = (120 * density0).toInt()
+                    setImageResource(logo(extra))
+                }, android.widget.LinearLayout.LayoutParams(-2, (20 * density0).toInt()).apply { leftMargin = if (badge0.childCount <= 2) 0 else (8 * density0).toInt() })
+            }
+            return
+        }
         // Logo ids only; a tag saved by an older preview held words ("Usenet · Newshosting"), which are skipped.
         val more = addon?.substringAfter('|', "").orEmpty().split(',').filter { it.matches(Regex("[a-z]+")) }
         // A scraper's torrent played on the viewer's debrid: the scraper's logo first, then the service's (Torrentio · TorBox).

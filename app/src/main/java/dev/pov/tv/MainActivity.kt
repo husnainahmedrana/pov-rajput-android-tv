@@ -244,7 +244,12 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume(); resumed = true; launchingPlayer = false
         // Links that arrived while the player was in front: the list catches up once, now that it is seen.
-        activeSearch?.let { search -> if (search.needsRender && search.rendered && generation == search.generation) { search.needsRender = false; renderSearch(search) } }
+        activeSearch?.let { search ->
+            // A Usenet link that failed in the player shows UNAVAILABLE as soon as the list is back.
+            val failed = search.items.count { UsenetPlayback.failed(it.directUrl) }
+            if (failed != search.failedUsenet) { search.failedUsenet = failed; search.needsRender = true }
+            if (search.needsRender && search.rendered && generation == search.generation) { search.needsRender = false; renderSearch(search) }
+        }
         if (!publicPreview) { TvContinueWatching.schedule(this); TvContinueWatching.request(this) }
         // Back from approving a sign-in code in the browser: check for it straight away.
         authorization?.takeIf { it.isShowing }?.pollNow()
@@ -1855,6 +1860,8 @@ class MainActivity : Activity() {
         cachedPlayback = identity
         // The saved file name and size give the resumed video its badges.
         playingMedia = link.name to link.size
+        // The logos it played with (an add-on's, or Usenet's provider and indexer) come back with it.
+        playingAddon = link.addon.ifBlank { null }
         play(link.url, identity.title, identity, link.key, link.service, resumeImmediately = true, headers = link.headers)
     }
     private fun retainedRoots(): List<View> = listOf(body) + backStack.flatMap { it.retained?.children.orEmpty() }
@@ -3616,6 +3623,8 @@ class MainActivity : Activity() {
         var topKey: String? = null
         /** Links arrived while the list was hidden (player in front): redraw once on return. */
         var needsRender = false
+        /** How many of its Usenet links had failed when the list was last drawn. */
+        var failedUsenet = 0
         var lastRender = 0L; var renderQueued = false; var countdownEndsAt = 0L
         /** Links that may auto-play (play at once, fit this device, under the size limit), best first. */
         var good: List<SourceItem> = emptyList()
@@ -4026,7 +4035,8 @@ class MainActivity : Activity() {
             val limited = store.get(AUTOPLAY_LIMIT_ON) == "true"
             val maxBytes = autoplayLimitGb(episode = identity.type == "series") * 1_000_000_000L
             fun tooBig(source: SourceItem) = limited && AutoplayLimit.tooBig(source.sizeBytes, minutes, autoplayMaxMbps(), maxBytes)
-            fun fits(source: SourceItem) = (source.cached || source.directUrl.isNotEmpty()) && source.addonCached != false && !tooTall(source) && !tooBig(source)
+            fun fits(source: SourceItem) = (source.cached || source.directUrl.isNotEmpty()) && source.addonCached != false && !tooTall(source) && !tooBig(source) &&
+                !UsenetPlayback.failed(source.directUrl)
             // The short list (Best per quality) first; when none of it fits the Auto-play limit, every found link in the same order.
             search.good = ordered.filter(::fits).ifEmpty { fullOrder.filter(::fits) }
             search.tryOnPlay = ordered.filterNot { tooTall(it) || tooBig(it) }.ifEmpty { fullOrder.filterNot { tooTall(it) || tooBig(it) } }

@@ -11,7 +11,9 @@ object UsenetMedia {
 
     private val VIDEO = setOf("mkv", "mp4", "avi", "m2ts", "ts", "wmv", "mov", "mpg", "mpeg", "m4v", "webm")
     private val QUOTED = Regex("\"([^\"]{3,240})\"")
-    private val LOOSE = Regex("(?i)([\\w.\\-\\[\\]() ]{1,200}\\.(?:mkv|mp4|avi|m2ts|ts|wmv|mov|mpg|mpeg|m4v|webm|rar|r\\d{2,3}|s\\d{2}|par2|nfo|sfv|srt))(?![\\w.])")
+    private val LOOSE = Regex("(?i)([\\w.\\-\\[\\]() ]{1,200}\\.(?:mkv|mp4|avi|m2ts|ts|wmv|mov|mpg|mpeg|m4v|webm|rar|r\\d{2,3}|s\\d{2}|7z|\\d{3}|par2|nfo|sfv|srt))(?![\\w.])")
+    /** Plain split parts: "name.mkv.001", "name.7z.002". */
+    private val SPLIT = Regex("(?i)^(.*)\\.(\\d{3})$")
     private val PART = Regex("(?i)^(.*)\\.part(\\d{1,4})\\.rar$")
     private val OLD_PART = Regex("(?i)^(.*)\\.([rs])(\\d{2,3})$")
 
@@ -31,25 +33,56 @@ object UsenetMedia {
 
     private fun isVideo(name: String) = name.substringAfterLast('.', "").lowercase(Locale.ROOT) in VIDEO
 
+    /** A split part's base name and number ("film.mkv.002" → "film.mkv", 2), or null. */
+    internal fun splitOrder(name: String): Pair<String, Int>? = SPLIT.find(name)?.let { it.groupValues[1] to it.groupValues[2].toInt() }
+
+    private val SEVEN_ZIP = byteArrayOf(0x37, 0x7A, 0xBC.toByte(), 0xAF.toByte(), 0x27, 0x1C)
+    internal fun isSevenZip(head: ByteArray) = head.size >= 6 && (0 until 6).all { head[it] == SEVEN_ZIP[it] }
+
+    /** Whether a file starts like a video the player can read: Matroska/WebM, MP4/MOV, AVI, MPEG-TS (also M2TS), MPEG-PS, FLV. */
+    internal fun looksLikeVideo(head: ByteArray): Boolean {
+        fun at(index: Int, vararg bytes: Int) = head.size >= index + bytes.size && bytes.indices.all { head[index + it] == bytes[it].toByte() }
+        return at(0, 0x1A, 0x45, 0xDF, 0xA3) || at(4, 'f'.code, 't'.code, 'y'.code, 'p'.code) || at(4, 'm'.code, 'o'.code, 'o'.code, 'v'.code) ||
+            at(4, 'm'.code, 'd'.code, 'a'.code, 't'.code) || at(4, 'f'.code, 'r'.code, 'e'.code, 'e'.code) || at(4, 'w'.code, 'i'.code, 'd'.code, 'e'.code) ||
+            at(0, 'R'.code, 'I'.code, 'F'.code, 'F'.code) || at(0, 0x47) || at(4, 0x47) || at(0, 0x00, 0x00, 0x01, 0xBA) || at(0, 'F'.code, 'L'.code, 'V'.code)
+    }
+
+    private fun refuseArchive(head: ByteArray, name: String): Nothing = throw UnsupportedSetException(when {
+        isSevenZip(head) -> "This release is a 7z archive, which can't be streamed yet. Choose another link."
+        else -> "This release isn't a video file the app can read${if (name.isNotBlank()) " (${name.take(50)})" else ""}. Choose another link."
+    })
+
     fun open(pool: ArticleSource, nzb: Nzb, log: (String) -> Unit = {}): Opened {
         val files = nzb.files
         if (files.isEmpty()) throw UnsupportedSetException("The article list is empty.")
         fun stream(file: NzbFile, pin: Boolean) = UsenetStream(pool, file.segments, pinEnds = pin, log = log)
         val names = files.map { subjectName(it.subject) }
+        // What the NZB holds, biggest first: enough to tell from the log why a link didn't play.
+        log("NZB: ${files.size} files · " + files.indices.sortedByDescending { files[it].statedBytes }.take(8).joinToString(" | ") { index ->
+            "${names[index] ?: files[index].subject.take(60)} (${files[index].statedBytes / 1_000_000} MB, ${files[index].segments.size} articles)" })
 
         // Volumes named in the subjects: the biggest RAR set, in volume order.
         val named = files.indices.mapNotNull { index -> names[index]?.let(::rarOrder)?.let { Triple(it.first, it.second, files[index]) } }
             .groupBy { it.first }.values.maxByOrNull { set -> set.sumOf { it.third.statedBytes } }?.sortedBy { it.second }?.map { it.third }
+        // Plain split parts ("film.mkv.001", "film.7z.001"): the biggest such set, in part order.
+        val splits = files.indices.mapNotNull { index -> names[index]?.let(::splitOrder)?.let { Triple(it.first.lowercase(Locale.ROOT), it.second, files[index]) } }
+            .groupBy { it.first }.maxByOrNull { (_, set) -> set.sumOf { it.third.statedBytes } }
         val video = files.indices.filter { names[it]?.let(::isVideo) == true }.maxByOrNull { files[it].statedBytes }?.let { files[it] }
-        if (named != null && (video == null || named.sumOf { it.statedBytes } > video.statedBytes)) return openSet(named, ::stream, log, trusted = true)
-        if (video != null) return openPlain(video, ::stream, log)
+        val sizes = listOf(named?.sumOf { it.statedBytes } ?: 0L, splits?.value?.sumOf { it.third.statedBytes } ?: 0L, video?.statedBytes ?: 0L)
+        when (sizes.indices.maxByOrNull { sizes[it] }?.takeIf { sizes[it] > 0 }) {
+            0 -> return openSet(named!!, ::stream, log, trusted = true)
+            1 -> return openSplit(splits!!.key, splits.value.sortedBy { it.second }.map { it.third }, ::stream, log)
+            2 -> return openPlain(video!!, ::stream, log)
+        }
 
         // No usable names (some services scramble subjects): the biggest file decides.
         val biggest = files.maxByOrNull { it.statedBytes }!!
         val first = stream(biggest, true)
         first.prepare()
-        if (!Rar.isRar(head(first))) {
-            log("plain file: ${first.name}")
+        val start = head(first)
+        if (!Rar.isRar(start)) {
+            log("plain file: ${first.name} · starts ${hex(start)}")
+            if (!looksLikeVideo(start)) { first.close(); refuseArchive(start, first.name) }
             return Opened(first, first.name, "single file")
         }
         // A RAR volume: take the listed order from it on, and check it really is where the set starts.
@@ -71,18 +104,56 @@ object UsenetMedia {
 
     private class OutOfOrderException : java.io.IOException("The set's parts are out of order.")
 
+    private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
+
     private fun head(source: ByteSource): ByteArray {
-        val out = ByteArray(8)
-        val count = source.read(0, out, 0, 8)
-        return if (count == 8) out else out.copyOf(maxOf(count, 0))
+        val out = ByteArray(16)
+        val count = source.read(0, out, 0, 16)
+        return if (count == 16) out else out.copyOf(maxOf(count, 0))
     }
 
     private fun openPlain(file: NzbFile, stream: (NzbFile, Boolean) -> UsenetStream, log: (String) -> Unit): Opened {
         val opened = stream(file, true)
         opened.prepare()
-        if (Rar.isRar(head(opened))) { opened.close(); return openSet(listOf(file), stream, log, trusted = true) }
-        log("plain file: ${opened.name}")
+        val start = head(opened)
+        if (Rar.isRar(start)) { opened.close(); return openSet(listOf(file), stream, log, trusted = true) }
+        log("plain file: ${opened.name} · starts ${hex(start)}")
+        if (!looksLikeVideo(start)) { opened.close(); refuseArchive(start, opened.name) }
         return Opened(opened, opened.name, "single file")
+    }
+
+    /**
+     * Plain split parts laid end to end make the original file: a split video plays straight through them. A split 7z
+     * archive is refused, after logging what kind of header it has (to tell later whether 7z support would help).
+     */
+    private fun openSplit(base: String, parts: List<NzbFile>, stream: (NzbFile, Boolean) -> UsenetStream, log: (String) -> Unit): Opened {
+        val streams = parts.mapIndexed { index, part -> stream(part, index == 0 || index == parts.lastIndex) }
+        try {
+            val first = streams[0]
+            first.prepare()
+            // Middle parts are all the size of the first; the last one says its own size.
+            streams.forEachIndexed { index, part ->
+                if (index > 0 && index < streams.lastIndex && parts[index].segments.size == parts[0].segments.size) part.assumeLike(first) else part.begin()
+            }
+            streams.forEach { it.prepare() }
+            val set = VolumeSet(streams.sumOf { it.size }, streams.map { VolumeSet.Piece(it, 0, it.size) })
+            val start = head(set)
+            log("split set: $base · ${parts.size} parts · ${set.size} bytes · starts ${hex(start)}")
+            if (isSevenZip(start)) {
+                // The start header names where the archive's own header is; its first byte says plain (01) or packed (17).
+                val kind = try {
+                    val fixed = ByteArray(32); set.read(0, fixed, 0, 32)
+                    var offset = 0L; for (shift in 0 until 8) offset = offset or ((fixed[12 + shift].toLong() and 0xFF) shl (8 * shift))
+                    val one = ByteArray(1); if (set.read(32 + offset, one, 0, 1) == 1) "%02x".format(one[0]) else "?"
+                } catch (_: Exception) { "?" }
+                log("7z archive: header kind $kind (01 plain, 17 packed or encrypted)")
+            }
+            if (Rar.isRar(start) || !looksLikeVideo(start)) refuseArchive(start, base)
+            return Opened(set, base, "split · ${parts.size} parts")
+        } catch (error: Exception) {
+            streams.forEach { it.close() }
+            throw error
+        }
     }
 
     /** [volumes] in order. When the order is only the NZB's listing ([trusted] false), the first two volumes must prove it. */

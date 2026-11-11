@@ -16,6 +16,7 @@ import dev.pov.tv.usenet.NntpPool
 import dev.pov.tv.usenet.NntpServer
 import dev.pov.tv.usenet.Nzb
 import dev.pov.tv.usenet.ProviderChain
+import dev.pov.tv.usenet.Nntp
 import dev.pov.tv.usenet.ByteSource
 import dev.pov.tv.usenet.UnsupportedSetException
 import dev.pov.tv.usenet.UsenetMedia
@@ -62,7 +63,8 @@ internal object UsenetPlayback {
     fun session(address: String, store: SecureStore, cache: java.io.File?, notify: (String) -> Unit): UsenetSessions.Session? {
         if (!UsenetLinks.isNzb(address)) return EasynewsNntp.session(address, store, notify)
         val key = sha1(address)
-        UsenetSessions.reason(key)?.let { throw IOException(it.ifBlank { "This Usenet link couldn't be streamed." }) }
+        // Tried before this session: say why again, every time.
+        UsenetSessions.reason(key)?.let { why -> val reason = why.ifBlank { "This Usenet link couldn't be streamed." }; notify(reason); throw IOException(reason) }
         val made = try {
             UsenetSessions.get(key) {
                 val providers = NewsProviders(store).active()
@@ -76,6 +78,7 @@ internal object UsenetPlayback {
                 })
                 try {
                     val opened = UsenetMedia.open(chain, nzb) { android.util.Log.i(TAG, it) }
+                    checkHealth(nzb, providers)
                     notify("Streaming from ${providers[0].name} · ${providers[0].connections} connections · ${opened.kind}" +
                         if (providers.size > 1) " · ${providers.size - 1} backup" else "")
                     UsenetSessions.Session(key, chain, opened.source)
@@ -93,6 +96,31 @@ internal object UsenetPlayback {
         }
         return made ?: throw IOException("This Usenet link couldn't be streamed.")
     }
+
+    /**
+     * Asks the providers whether a spread of the release's articles still exist (about a second, all asked at once).
+     * A release that has been taken down fails here, with the reason, instead of stopping partway through the video.
+     */
+    private fun checkHealth(nzb: Nzb, providers: List<dev.pov.tv.data.NewsProvider>) {
+        val biggest = nzb.files.maxOf { it.statedBytes }
+        // The files that hold the video: skip repair files, text and samples, which are far smaller.
+        val segments = nzb.files.filter { it.statedBytes * 5 >= biggest }.flatMap { it.segments }
+        if (segments.isEmpty()) return
+        val count = minOf(SAMPLE, segments.size)
+        val sample = (0 until count).map { segments[(it.toLong() * (segments.size - 1) / maxOf(1, count - 1)).toInt()].messageId }.distinct()
+        var missing = sample
+        val started = System.nanoTime()
+        for (provider in providers) {
+            if (missing.isEmpty()) break
+            missing = try { Nntp.missing(NntpServer(provider.host, provider.port, provider.tls, provider.user, provider.password), missing) }
+                catch (error: IOException) { android.util.Log.w(TAG, "check on ${provider.name} failed: ${error.message}"); missing }
+        }
+        android.util.Log.i(TAG, "health: ${sample.size - missing.size} of ${sample.size} articles found in ${(System.nanoTime() - started) / 1_000_000} ms")
+        if (missing.isNotEmpty()) throw IOException("Your news providers are missing parts of this release (${missing.size} of ${sample.size} checked). It may have been taken down. Choose another link.")
+    }
+
+    /** Whether this Usenet link already failed this session (taken down, an archive it can't play…), for the link list. */
+    fun failed(address: String): Boolean = UsenetLinks.isNzb(address) && UsenetSessions.reason(sha1(address)) != null
 
     /** The NZB, from this device's small cache when it was played before (so resuming costs no grab), else from the indexer. */
     private fun nzbText(address: String, key: String, store: SecureStore, cache: java.io.File?): String {
@@ -118,6 +146,7 @@ internal object UsenetPlayback {
     private fun sha1(value: String) = java.security.MessageDigest.getInstance("SHA-1").digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     private const val KEEP_MS = 14L * 24 * 60 * 60 * 1000
     private const val KEEP_FILES = 40
+    private const val SAMPLE = 24
 }
 
 /** Easynews over its news servers (NNTP) instead of its web servers: experimental, switched on in Easynews settings. */

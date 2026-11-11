@@ -276,7 +276,7 @@ BODY evil</segment>
     }
 
     @Test fun `a video beside its repair files plays as a plain file`() {
-        val file = Random(21).nextBytes(400_000)
+        val file = byteArrayOf(0x1A, 0x45, 0xDF.toByte(), 0xA3.toByte()) + Random(21).nextBytes(400_000)
         val server = server()
         val nzb = Nzb(listOf(
             server.post(Random(1).nextBytes(90_000), even(90_000, 30_000), "Show.S01E02.1080p.vol00+01.par2"),
@@ -357,6 +357,33 @@ BODY evil</segment>
         // With no provider holding an article, the read fails with that reason.
         val alone = dev.pov.tv.usenet.ProviderChain(listOf(pool(main, 2), pool(server(missing = setOf("f1-p3@test")).also { it.post(file, even(file.size, 40_000), "a.mkv") }, 2)))
         try { readAll(UsenetStream(alone, posted.segments), 80_000, 50_000); fail("expected a missing article") } catch (_: MissingArticleException) {}
+    }
+
+    @Test fun `a video split into numbered parts plays straight through them`() {
+        val file = byteArrayOf(0x1A, 0x45, 0xDF.toByte(), 0xA3.toByte()) + Random(91).nextBytes(900_000)
+        val server = server()
+        val parts = (0 until 4).map { file.copyOfRange(it * 250_000, minOf(file.size, (it + 1) * 250_000)) }
+        // Listed out of order, as some NZBs are.
+        val nzb = Nzb(listOf(2, 0, 3, 1).map { server.post(parts[it], even(parts[it].size, 50_000), "Film.2024.mkv.%03d".format(it + 1)) }, null)
+        val opened = UsenetMedia.open(pool(server, 3), nzb)
+        assertEquals("split · 4 parts", opened.kind)
+        assertReadsLike(file, opened.source, 13)
+    }
+
+    @Test fun `a 7z set or a file that is not a video is refused with the reason, not handed to the player`() {
+        val server = server()
+        // A 7z start header: signature, version, then the archive header's offset (here just after the data).
+        val sevenZip = byteArrayOf(0x37, 0x7A, 0xBC.toByte(), 0xAF.toByte(), 0x27, 0x1C, 0, 4) + ByteArray(4) + le(600_000 - 32 - 10, 8) + ByteArray(12)
+        val archive = sevenZip + Random(5).nextBytes(600_000 - sevenZip.size)
+        archive[600_000 - 10] = 0x17
+        val parts = (0 until 3).map { archive.copyOfRange(it * 200_000, (it + 1) * 200_000) }
+        val named = Nzb(parts.mapIndexed { index, part -> server.post(part, even(part.size, 50_000), "lfjn00aB.7z.%03d".format(index + 1)) }, null)
+        try { UsenetMedia.open(pool(server, 2), named); fail("expected a refusal") } catch (error: UnsupportedSetException) { assertTrue(error.message, "7z" in error.message!!) }
+        // Scrambled names: the biggest file is a middle part, which starts like nothing the player knows.
+        val scrambled = Nzb(listOf(server.post(Random(6).nextBytes(300_000), even(300_000, 50_000), "x", subject = "ad79477ebe2c5d94")), null)
+        try { UsenetMedia.open(pool(server, 2), scrambled); fail("expected a refusal") } catch (error: UnsupportedSetException) { assertTrue(error.message, "isn't a video" in error.message!!) }
+        assertTrue(UsenetMedia.looksLikeVideo(byteArrayOf(0, 0, 0, 0x20, 'f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 'p'.code.toByte())))
+        assertEquals("film.mkv" to 2, UsenetMedia.splitOrder("film.mkv.002"))
     }
 
     @Test fun `subject names and volume order are read from the usual spellings`() {
