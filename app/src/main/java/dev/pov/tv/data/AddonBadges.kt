@@ -48,6 +48,9 @@ object AddonBadges {
         "nzbnest" to "NzbNest", "drunkenslug" to "DrunkenSlug", "nzbfinder" to "NZBFinder", "nzbplanet" to "NZBPlanet", "dognzb" to "DOGnzb",
         "althub" to "altHUB", "abnzb" to "abNZB", "tabularasa" to "Tabula Rasa", "omgwtfnzbs" to "omgwtfnzbs", "digitalcarnage" to "Digital Carnage")
     /** An indexer's logo id from its name ("NZBgeek", "NzbNest", "Usenet-Crawler"…), when we have one. */
+    /** The news provider (for its logo) that a provider's name or server address belongs to: "My Newshosting", "news.tweaknews.eu". */
+    fun newsProvider(text: String): String? = text.lowercase(Locale.ROOT).filter { it.isLetterOrDigit() }.let { plain -> NEWS_PROVIDER_IDS.firstOrNull { it in plain } }
+
     fun indexer(name: String): String? = name.lowercase(Locale.ROOT).let { lower -> INDEXERS.firstOrNull { it.first in lower }?.second }
 
     private val HOSTS = mapOf("pengu.uk" to PENGUPLAY, "cncverse.dpdns.org" to CNCVERSE, "plavio.site" to PLAVIO, "debridio.com" to DEBRIDIO, "torrentio.strem.fun" to TORRENTIO,

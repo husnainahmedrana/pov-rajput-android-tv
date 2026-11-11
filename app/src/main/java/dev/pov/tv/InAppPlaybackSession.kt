@@ -319,7 +319,8 @@ object InAppPlaybackSession {
         val exo = ExoPlayer.Builder(application!!, renderers)
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(application!!,
                 // Easynews links get the saved login inside the player; it is never in the link or the intent.
-                EasynewsRoutingDataSource.Factory(http, { if (easynewsSingle) 1 else dev.pov.tv.data.Easynews.connections(secureStore) }) { dev.pov.tv.data.Easynews.credentials(secureStore)?.let { (user, password) ->
+                EasynewsRoutingDataSource.Factory(http, { if (easynewsSingle) 1 else dev.pov.tv.data.Easynews.connections(secureStore) },
+                    usenet = { address -> UsenetPlayback.session(address, secureStore, application?.cacheDir) { note -> handler.post { application?.let { android.widget.Toast.makeText(it, note, android.widget.Toast.LENGTH_LONG).show() } } } }) { dev.pov.tv.data.Easynews.credentials(secureStore)?.let { (user, password) ->
                     runCatching { dev.pov.tv.data.Easynews.auth(user, password) }.getOrNull() } })))
             .setLoadControl(ReadAheadPreferences(application!!).loadControl())
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
@@ -537,6 +538,7 @@ object InAppPlaybackSession {
         targetView = null
         mediaSession?.release(); mediaSession = null
         exo?.release(); player = null
+        UsenetSessions.close()
         sourceUrl = ""; sourceKey = ""; sourceHeaders = emptyMap(); title = ""; mediaName = ""; mediaSize = null; identity = null; debridService = null; sourceAddon = null; playbackAccount = null; lastLinkSaved = false
         remotePercent = 0.0; error = null
         if (notify) notifyChanged()

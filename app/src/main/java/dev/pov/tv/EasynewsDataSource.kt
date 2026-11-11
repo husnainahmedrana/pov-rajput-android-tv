@@ -21,7 +21,9 @@ import java.net.URI
 internal class EasynewsRoutingDataSource(
     private val normal: DataSource,
     private val login: () -> Map<String, String>?,
-    private val connections: () -> Int = { 1 }
+    private val connections: () -> Int = { 1 },
+    /** The news-server (NNTP) stream for an Easynews address, when that experiment is on and the link allows it. */
+    private val usenet: (String) -> UsenetSessions.Session? = { null }
 ) : DataSource {
     private var active: DataSource? = null
     private val listeners = mutableListOf<TransferListener>()
@@ -32,7 +34,10 @@ internal class EasynewsRoutingDataSource(
     override fun open(dataSpec: DataSpec): Long {
         val headers = if (Easynews.isHost(dataSpec.uri.toString())) login() else null
         val count = connections()
+        // Usenet links (an indexer's NZB, or an Easynews file over NNTP) stream from news servers, not over HTTP.
+        val session = usenet(dataSpec.uri.toString())
         val source = when {
+            session != null -> UsenetDataSource(session)
             headers == null -> normal
             count > 1 -> EasynewsParallelDataSource(headers, count)
             else -> EasynewsHttpDataSource(headers)
@@ -47,8 +52,9 @@ internal class EasynewsRoutingDataSource(
     override fun close() { try { active?.close() } finally { active = null } }
 
     class Factory(private val normal: DataSource.Factory, private val connections: () -> Int = { 1 },
+                  private val usenet: (String) -> UsenetSessions.Session? = { null },
                   private val login: () -> Map<String, String>?) : DataSource.Factory {
-        override fun createDataSource(): DataSource = EasynewsRoutingDataSource(normal.createDataSource(), login, connections)
+        override fun createDataSource(): DataSource = EasynewsRoutingDataSource(normal.createDataSource(), login, connections, usenet)
     }
 }
 

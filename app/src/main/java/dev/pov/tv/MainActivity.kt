@@ -5103,10 +5103,271 @@ class MainActivity : Activity() {
             (if (on) "Turn off (keep the login)" else "Turn on") to { Easynews.setEnabled(store, !on); refreshSettings() },
             "Download server · ${Easynews.serverLabel(store)}" to { easynewsServer() },
             "Connections · ${Easynews.connections(store)}" to { easynewsConnections() },
+            "NNTP streaming (experimental) · ${if (EasynewsNntp.enabled(store)) "On" else "Off"}" to {
+                val now = !EasynewsNntp.enabled(store)
+                if (now) store.put(EasynewsNntp.ON, "true") else store.remove(EasynewsNntp.ON)
+                toast(if (now) "Easynews links from your next search stream over NNTP when they can" else "Easynews links stream from the web servers"); refreshSettings()
+            },
+            "NNTP connections · ${EasynewsNntp.connections(store)}" to {
+                NumberStepper.show(this, "NNTP connections", "Easynews allows 60 at once across all your devices and apps. Applies from the next video.",
+                    EasynewsNntp.connections(store), 1..EasynewsNntp.MAX_CONNECTIONS, { "$it ${if (it == 1) "connection" else "connections"}" }) { count ->
+                    store.put(EasynewsNntp.CONNECTIONS, count.toString()); refreshSettings()
+                }
+            },
+            "NNTP speed test" to { nntpSpeedTest() },
             "Change login" to { connectEasynews() },
             "Disconnect" to { confirm("Disconnect Easynews on this device?") { Easynews.disconnect(store); Easynews.setEnabled(store, true); refreshSettings() } })
         AlertDialog.Builder(this).setTitle("Easynews · ${if (on) "On" else "Off"}").setItems(actions.map { it.first }.toTypedArray()) { _, index -> actions[index].second() }
             .setNegativeButton("Cancel", null).show()
+    }
+
+    /** Downloads from the Easynews news server at several connection counts and lists the speeds; takes about 90 seconds. */
+    private fun nntpSpeedTest() {
+        val lines = TextView(this).apply { setPadding(dp(18), dp(10), dp(18), dp(10)); textSize = 14f; setTextColor(Color.WHITE); text = "Starting…" }
+        val dialog = AlertDialog.Builder(this).setTitle("NNTP speed test").setView(ScrollView(this).apply { addView(lines) })
+            .setPositiveButton("Close", null).show()
+        val shown = StringBuilder()
+        Thread({
+            EasynewsNntp.speedTest(store) { line -> runOnUiThread { if (dialog.isShowing) { shown.appendLine(line); lines.text = shown } } }
+        }, "nntp-speedtest").start()
+    }
+
+    // ---- Settings → Sources → Usenet: news providers, indexers and the indexer headers ----
+
+    private fun usenetPage(focusTag: String? = null) {
+        val keepScroll = scroller.scrollY
+        current = { usenetPage() }
+        destination = "settings"; refreshNavigation()
+        page("Usenet", "Search your indexers and stream straight from your news providers. Nothing is downloaded first; the article list is fetched only when you play a link.")
+        val providers = try { NewsProviders(store).load() } catch (error: Exception) { body.addView(text(uiErrorMessage(error), 15, muted)); emptyList() }
+        val providerCard = settingsGroup("News providers", "library")
+        providers.forEach { provider ->
+            settingsRow(providerCard, provider.name, listOf(if (provider.enabled) "On" else "Off", if (provider.backup) "Backup" else "Main").joinToString(" · "),
+                "${provider.host}:${provider.port} · ${if (provider.tls) "SSL" else "No SSL"} · ${provider.connections} connections", status = provider.enabled) { newsProviderActions(provider) }
+        }
+        settingsRow(providerCard, "Add news provider", "", "Pick yours from the list or enter any server by hand. A backup provider is asked only for articles the main one is missing.") { chooseNewsProviderPreset() }
+
+        val indexerConfig = NewznabIndexers(store)
+        val indexers = try { indexerConfig.load() } catch (error: Exception) { body.addView(text(uiErrorMessage(error), 15, muted)); emptyList() }
+        val indexerCard = settingsGroup("Indexers", "library")
+        indexers.forEach { indexer ->
+            val host = runCatching { java.net.URI(indexer.url).host }.getOrNull().orEmpty()
+            settingsRow(indexerCard, indexer.name, if (indexer.enabled) "On" else "Off",
+                listOf(host, indexerConfig.usage(indexer.id).takeIf { it.isNotBlank() }?.let { "Today: $it" }).filterNotNull().joinToString(" · "), status = indexer.enabled) { indexerActions(indexer) }
+        }
+        settingsRow(indexerCard, "Add indexer", "", if (providers.none { it.enabled }) "Add a news provider first: indexer links need one to play."
+            else "Pick a known indexer and enter your API key, or enter any Newznab address (NZBHydra2 and Prowlarr work too).") { chooseIndexerPreset() }
+
+        val headerCard = settingsGroup("Indexer headers", "library")
+        val checked = store.get(UsenetHeaders.CHECKED).toLongOrNull()
+        settingsRow(headerCard, "Search header", UsenetHeaders.query { store.get(it) }, "The client name sent with indexer searches. Many indexers only answer clients they know.") {
+            editUsenetHeader("Search header", UsenetHeaders.QUERY, UsenetHeaders.DEFAULT_QUERY) }
+        settingsRow(headerCard, "Download header", UsenetHeaders.grab { store.get(it) }, "The client name sent when a link's article list is fetched.") {
+            editUsenetHeader("Download header", UsenetHeaders.GRAB, UsenetHeaders.DEFAULT_GRAB) }
+        settingsRow(headerCard, "Update now", if (checked == null) "Not checked yet" else "Checked " + android.text.format.DateUtils.getRelativeTimeSpanString(checked, System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS),
+            "Moves both headers to their tools' newest versions. This also happens by itself about once a day while you have an indexer.") { updateUsenetHeaders() }
+        body.addView(View(this), margin(-1, 24))
+        if (focusTag != null) keepPlace(generation, focusTag, keepScroll) else focusAfterRender(generation)
+    }
+
+    private fun saveNewsProviders(providers: List<NewsProvider>, focus: String? = null) {
+        try { NewsProviders(store).save(providers); usenetPage(focus) } catch (error: Exception) { toast(uiErrorMessage(error)) }
+    }
+
+    private fun newsProviderActions(provider: NewsProvider) {
+        val all = runCatching { NewsProviders(store).load() }.getOrDefault(emptyList())
+        val index = all.indexOfFirst { it.id == provider.id }
+        val focus = "setting:${provider.name}"
+        val actions = mutableListOf<Pair<String, () -> Unit>>(
+            "Edit" to { editNewsProvider(provider, null) },
+            "Test the login" to { testNewsProvider(provider) },
+            (if (provider.enabled) "Turn off" else "Turn on") to { saveNewsProviders(all.map { if (it.id == provider.id) it.copy(enabled = !provider.enabled) else it }, focus) },
+            (if (provider.backup) "Use as a main provider" else "Use as a backup only") to { saveNewsProviders(all.map { if (it.id == provider.id) it.copy(backup = !provider.backup) else it }, focus) })
+        if (index > 0) actions += "Move up (asked earlier)" to { saveNewsProviders(all.toMutableList().apply { add(index - 1, removeAt(index)) }, focus) }
+        if (index in 0 until all.lastIndex) actions += "Move down (asked later)" to { saveNewsProviders(all.toMutableList().apply { add(index + 1, removeAt(index)) }, focus) }
+        actions += "Remove" to { confirm("Remove ${provider.name} from this device?") { saveNewsProviders(all.filter { it.id != provider.id }) } }
+        AlertDialog.Builder(this).setTitle(provider.name).setItems(actions.map { it.first }.toTypedArray()) { _, picked -> actions[picked].second() }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    private fun testNewsProvider(provider: NewsProvider) {
+        toast("Signing in to ${provider.name}…")
+        worker.execute {
+            val result = try {
+                val took = dev.pov.tv.usenet.Nntp.check(dev.pov.tv.usenet.NntpServer(provider.host, provider.port, provider.tls, provider.user, provider.password))
+                "${provider.name}: signed in ($took ms)"
+            } catch (error: Exception) { "${provider.name}: ${error.message ?: "couldn't connect"}" }
+            runOnUiThread { if (!isFinishing && !isDestroyed) toast(result) }
+        }
+    }
+
+    private fun chooseNewsProviderPreset() {
+        val presets = NewsProviders.PRESETS
+        val labels = (listOf("Custom (any server)") + presets.map { it.name }).toTypedArray()
+        AlertDialog.Builder(this).setTitle("Add news provider").setItems(labels) { _, picked ->
+            editNewsProvider(null, presets.getOrNull(picked - 1))
+        }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun usenetField(hint: String, value: String, type: Int) = TvEditText(this).apply {
+        this.hint = hint; setSingleLine(); inputType = type or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS; setText(value)
+    }
+
+    /** Add or edit a news provider: any server, port, SSL on or off, and how many connections to use. */
+    private fun editNewsProvider(provider: NewsProvider?, preset: NewsProviders.Preset?) {
+        val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
+        val plain = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        // Easynews members already gave this app their login: offer it for the Easynews news server.
+        val easynews = if (provider == null && preset?.name == "Easynews") Easynews.credentials(store) else null
+        val name = usenetField("Name", provider?.name ?: preset?.name.orEmpty(), plain)
+        val host = usenetField("Server address (news.example.com)", provider?.host ?: preset?.host.orEmpty(), InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
+        val port = usenetField("Port", (provider?.port ?: preset?.port ?: 563).toString(), InputType.TYPE_CLASS_NUMBER)
+        val user = usenetField("Username", provider?.user ?: easynews?.first.orEmpty(), plain)
+        val password = usenetField("Password", provider?.password ?: easynews?.second.orEmpty(), InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        val suggested = minOf(NewsProviders.DEFAULT_CONNECTIONS, preset?.maxConnections ?: NewsProviders.DEFAULT_CONNECTIONS)
+        val connections = usenetField("Connections", (provider?.connections ?: suggested).toString(), InputType.TYPE_CLASS_NUMBER)
+        val tls = android.widget.CheckBox(this).apply { text = "Use SSL (port 563; 119 without)"; isChecked = provider?.tls ?: true; setTextColor(ink) }
+        val backup = android.widget.CheckBox(this).apply { text = "Backup only (fills in what the main provider is missing)"; isChecked = provider?.backup ?: false; setTextColor(ink) }
+        // Switching SSL moves a standard port to its counterpart; a custom port is left alone.
+        tls.setOnCheckedChangeListener { _, on -> when (port.text.toString()) { "563", "443" -> if (!on) port.setText("119"); "119", "23", "80" -> if (on) port.setText("563") } }
+        val status = text(preset?.let { "${it.name} allows up to ${it.maxConnections} connections on most plans; 10–20 suit a TV." } ?: "Connections: 1–${NewsProviders.MAX_CONNECTIONS}.", 13, muted)
+        // Two fields to a row, so the whole form and its buttons fit a TV screen.
+        fun pair(left: View, right: View, leftShare: Float, rightShare: Float) = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(left, LinearLayout.LayoutParams(0, -2, leftShare)); addView(right, LinearLayout.LayoutParams(0, -2, rightShare).apply { leftMargin = dp(8) })
+        }
+        content.addView(name, margin(-1, -2))
+        content.addView(pair(host, port, 3f, 1f), margin(-1, -2, top = 4))
+        content.addView(pair(user, password, 1f, 1f), margin(-1, -2, top = 4))
+        content.addView(pair(connections, tls, 1f, 2f), margin(-1, -2, top = 4))
+        content.addView(backup, margin(-1, -2)); content.addView(status, margin(-1, -2, top = 4))
+        val dialog = AlertDialog.Builder(this).setTitle(if (provider == null) "Add news provider" else "Edit ${provider.name}")
+            .setView(CappedScroll(this, resources.displayMetrics.heightPixels * 58 / 100).apply { addView(content) })
+            .setPositiveButton("Save", null).setNegativeButton("Cancel", null).setNeutralButton("Test", null).create()
+        dialog.setOnDismissListener { password.setText("") }
+        dialog.show()
+        fun typed(): NewsProvider {
+            val made = NewsProviders.create(name.text.toString(), host.text.toString(), port.text.toString().trim().toIntOrNull() ?: 0, tls.isChecked,
+                user.text.toString(), password.text.toString(), connections.text.toString().trim().toIntOrNull() ?: 0, backup.isChecked)
+            return if (provider == null) made else made.copy(id = provider.id, enabled = provider.enabled)
+        }
+        dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
+            val candidate = try { typed() } catch (error: Exception) { status.text = uiErrorMessage(error); return@setOnClickListener }
+            status.text = "Signing in…"
+            worker.execute {
+                val result = try {
+                    "Signed in (${dev.pov.tv.usenet.Nntp.check(dev.pov.tv.usenet.NntpServer(candidate.host, candidate.port, candidate.tls, candidate.user, candidate.password))} ms). Save to keep it."
+                } catch (error: Exception) { error.message ?: "Couldn't connect." }
+                runOnUiThread { if (dialog.isShowing) status.text = result }
+            }
+        }
+        dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+            try {
+                val saved = typed()
+                val config = NewsProviders(store)
+                val existing = config.load()
+                config.save(if (provider == null) existing + saved else existing.map { if (it.id == provider.id) saved else it })
+                dialog.dismiss(); usenetPage("setting:${saved.name}")
+            } catch (error: Exception) { status.text = uiErrorMessage(error) }
+        }
+    }
+
+    private fun saveIndexers(indexers: List<NewznabIndexer>, focus: String? = null) {
+        try { NewznabIndexers(store).save(indexers); usenetPage(focus) } catch (error: Exception) { toast(uiErrorMessage(error)) }
+    }
+
+    private fun indexerActions(indexer: NewznabIndexer) {
+        val all = runCatching { NewznabIndexers(store).load() }.getOrDefault(emptyList())
+        val focus = "setting:${indexer.name}"
+        val actions = listOf<Pair<String, () -> Unit>>(
+            "Edit" to { editIndexer(indexer, null) },
+            "Test" to {
+                toast("Asking ${indexer.name}…")
+                worker.execute {
+                    val result = try { "${indexer.name}: " + Newznab().test(indexer, UsenetHeaders.query { store.get(it) }) } catch (error: Exception) { "${indexer.name}: ${error.message ?: "no answer"}" }
+                    runOnUiThread { if (!isFinishing && !isDestroyed) toast(result) }
+                }
+            },
+            (if (indexer.enabled) "Turn off" else "Turn on") to { saveIndexers(all.map { if (it.id == indexer.id) it.copy(enabled = !indexer.enabled) else it }, focus) },
+            "Remove" to { confirm("Remove ${indexer.name} from this device?") { saveIndexers(all.filter { it.id != indexer.id }) } })
+        AlertDialog.Builder(this).setTitle(indexer.name).setItems(actions.map { it.first }.toTypedArray()) { _, picked -> actions[picked].second() }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    private fun chooseIndexerPreset() {
+        val presets = NewznabIndexers.PRESETS
+        val labels = (listOf("Generic Newznab (any address)") + presets.map { it.name }).toTypedArray()
+        AlertDialog.Builder(this).setTitle("Add indexer").setItems(labels) { _, picked ->
+            editIndexer(null, presets.getOrNull(picked - 1))
+        }.setNegativeButton("Cancel", null).show()
+    }
+
+    /** Add or edit an indexer: a known one with its API key, or any Newznab address. */
+    private fun editIndexer(indexer: NewznabIndexer?, preset: NewznabIndexers.Preset?) {
+        val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
+        val plain = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        val name = usenetField("Name", indexer?.name ?: preset?.name?.substringBefore(" (").orEmpty(), plain)
+        val address = usenetField("API address (https://api.example.com/api)", indexer?.url ?: preset?.url.orEmpty(), InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
+        val key = usenetField(if (preset?.keyOptional == true) "API key (optional here)" else "API key", indexer?.apiKey.orEmpty(), plain)
+        val status = text(when {
+            preset == null -> if (indexer == null) "Your API key is on the indexer's website, usually under Profile or API." else ""
+            preset.url.startsWith("http://") -> "Change the address to your own server's, then enter its API key."
+            else -> "Enter your ${preset.name} API key. It is on their website, usually under Profile or API."
+        }, 13, muted)
+        content.addView(name, margin(-1, -2)); content.addView(address, margin(-1, -2, top = 6)); content.addView(key, margin(-1, -2, top = 6)); content.addView(status, margin(-1, -2, top = 8))
+        val dialog = AlertDialog.Builder(this).setTitle(if (indexer == null) "Add indexer" else "Edit ${indexer.name}")
+            .setView(CappedScroll(this, resources.displayMetrics.heightPixels * 58 / 100).apply { addView(content) })
+            .setPositiveButton("Save", null).setNegativeButton("Cancel", null).setNeutralButton("Test", null).create()
+        dialog.show()
+        // A known indexer only needs its key: start there.
+        if (preset != null && !preset.url.startsWith("http://")) key.requestFocus()
+        fun typed(): NewznabIndexer {
+            val made = NewznabIndexers.create(name.text.toString(), address.text.toString(), key.text.toString())
+            return if (indexer == null) made else made.copy(id = indexer.id, enabled = indexer.enabled)
+        }
+        dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
+            val candidate = try { typed() } catch (error: Exception) { status.text = uiErrorMessage(error); return@setOnClickListener }
+            status.text = "Asking the indexer…"
+            worker.execute {
+                val result = try { Newznab().test(candidate, UsenetHeaders.query { store.get(it) }) + ". Save to keep it." } catch (error: Exception) { error.message ?: "No answer." }
+                runOnUiThread { if (dialog.isShowing) status.text = result }
+            }
+        }
+        dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+            try {
+                val saved = typed()
+                val config = NewznabIndexers(store)
+                val existing = config.load()
+                require(existing.none { it.url == saved.url && it.apiKey == saved.apiKey && it.id != saved.id }) { "This indexer is already saved." }
+                config.save(if (indexer == null) existing + saved else existing.map { if (it.id == indexer.id) saved else it })
+                dialog.dismiss(); usenetPage("setting:${saved.name}")
+            } catch (error: Exception) { status.text = uiErrorMessage(error) }
+        }
+    }
+
+    private fun editUsenetHeader(label: String, key: String, default: String) {
+        val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
+        val field = usenetField(default, store.get(key).ifBlank { default }, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
+        content.addView(field, margin(-1, -2))
+        content.addView(text("A tool name and version, like $default. Names this app knows (Prowlarr, Sonarr, Radarr, SABnzbd, nzbget) keep up with new versions by themselves; anything else stays as you wrote it. Leave it empty for the default.", 13, muted), margin(-1, -2, top = 8))
+        val dialog = AlertDialog.Builder(this).setTitle(label).setView(content).setPositiveButton("Save", null).setNegativeButton("Cancel", null).create()
+        dialog.show(); dialog.submitOnEnter(field)
+        dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+            val typed = UsenetHeaders.clean(field.text.toString())
+            if (typed.isBlank() || typed == default) store.remove(key) else store.put(key, typed)
+            dialog.dismiss(); usenetPage("setting:$label")
+        }
+    }
+
+    private fun updateUsenetHeaders() {
+        toast("Checking for newer versions…")
+        worker.execute {
+            val result = try {
+                val changed = UsenetHeaders.refresh({ store.get(it) }, { key, value -> store.put(key, value) })
+                if (changed.isEmpty()) "Both headers are already current" else "Updated to ${changed.joinToString(" and ")}"
+            } catch (error: Exception) { "Couldn't check just now. Try again later." }
+            runOnUiThread { if (!isFinishing && !isDestroyed) { toast(result); if (destination == "settings") usenetPage("setting:Update now") } }
+        }
     }
 
     /** Which Easynews server links stream from. Easynews ignores the download port, so the server is the speed setting. */
@@ -5382,6 +5643,11 @@ class MainActivity : Activity() {
             settingsRow(sources, "Easynews", if (!easynewsLinked) "Not connected" else if (Easynews.enabled(store)) "On" else "Off",
                 "Search Usenet with your Easynews account. Its results play directly, listed with your add-ons' links. Experimental: it uses the Easynews members website.",
                 status = Easynews.active(store)) { easynewsActions() }
+            val newsOn = runCatching { NewsProviders(store).load().count { it.enabled } }.getOrDefault(0)
+            val indexersOn = runCatching { NewznabIndexers(store).load().count { it.enabled } }.getOrDefault(0)
+            settingsRow(sources, "Usenet", if (newsOn == 0 && indexersOn == 0) "Not set up" else "$newsOn ${if (newsOn == 1) "provider" else "providers"} · $indexersOn ${if (indexersOn == 1) "indexer" else "indexers"}",
+                "Stream straight from your news providers (Newshosting, Easynews, any server) with links from your own indexers. Experimental.",
+                status = newsOn > 0 && indexersOn > 0) { navigate { usenetPage() } }
             val providerList = runCatching { SourceProviders(store).load() }.getOrDefault(emptyList())
             settingsRow(sources, "Source providers", if (providerList.isEmpty()) "None added" else "${providerList.count { it.enabled }} of ${providerList.size} on",
                 "Your Stremio scraper add-ons, such as Torrentio. Switch each on or off, and add, edit or remove them.",
@@ -5722,12 +5988,14 @@ class MainActivity : Activity() {
             val until = untilPrefs.searchUntil(sortPreferences.keepSearching)
             settingsRow(playback, "Search goal", untilPrefs.untilLabel(until, sortPreferences.bestPerQuality),
                 "When the search is done: when the time limit ends, once enough good links are in, once best per quality is full, or whichever of those two comes first. " +
-                "Good links play at once, suit this device and fit your Auto-play limit. The max search time still ends it if the goal isn't reached.") {
+                "Good links play at once, suit this device and fit your Auto-play limit. The max search time still ends it if the goal isn't reached. " +
+                "Time limit ends is the default and finds the most links, so your preferred audio language is less likely to be missed. " +
+                "The other goals stop early and can miss links, including ones in your preferred audio language.") {
                 val modes = SourceSearchPreferences.UNTIL_MODES
-                val labels = listOf("Time limit ends · wait for every add-on, up to the time limit",
-                    "Good links needed · stop once this many good links are in",
-                    "Best per quality is full · stop once 4K, 1080p and 720p each have ${sortPreferences.bestPerQuality.takeIf { it > 0 } ?: "N"} good links",
-                    "Either one · good links needed or best per quality full, whichever comes first")
+                val labels = listOf("Time limit ends (default) · wait for every add-on, up to the time limit. Finds the most links, best for your preferred audio language",
+                    "Good links needed · stop once this many good links are in. May miss links in your preferred audio language",
+                    "Best per quality is full · stop once 4K, 1080p and 720p each have ${sortPreferences.bestPerQuality.takeIf { it > 0 } ?: "N"} good links. Doesn't find all links and can miss your preferred audio language",
+                    "Either one · good links needed or best per quality full, whichever comes first. Can miss your preferred audio language")
                 AlertDialog.Builder(this).setTitle("Search goal").setSingleChoiceItems(labels.toTypedArray(), modes.indexOf(until)) { dialog, index ->
                     dialog.dismiss()
                     val mode = modes[index]
@@ -7354,4 +7622,10 @@ class MainActivity : Activity() {
 
     private fun confirm(message: String, action: () -> Unit)
  { AlertDialog.Builder(this).setMessage(message).setPositiveButton("Continue") { _, _ -> action() }.setNegativeButton("Cancel", null).show() }
+}
+
+/** A scroll area that never grows past [maxHeight], so a dialog's buttons stay on screen under a long form. */
+private class CappedScroll(context: android.content.Context, private val maxHeight: Int) : android.widget.ScrollView(context) {
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) =
+        super.onMeasure(widthMeasureSpec, View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST))
 }

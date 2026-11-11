@@ -54,6 +54,9 @@ class EasynewsApi internal constructor(
         return query(identity.title, username, password).filter { matches(it.title, identity, year) }
     }
 
+    /** Any videos matching [text], unfiltered: test material for the NNTP speed test. */
+    internal fun sample(text: String): List<SourceItem> = credentials()?.let { (username, password) -> query(text, username, password) }.orEmpty()
+
     private fun query(text: String, username: String, password: String): List<SourceItem> {
         val params = listOf("gps" to text.take(300), "pby" to "100", "pno" to "1", "spamf" to "1", "u" to "1", "sb" to "1",
             "gx" to "1", "st" to "adv", "sS" to "3", "s1" to "relevance", "s1d" to "-", "s2" to "dsize", "s2d" to "-",
@@ -117,6 +120,7 @@ class EasynewsApi internal constructor(
             val hash = item.optString("0"); val name = item.optString("10"); val ext = item.optString("11")
             if (hash.isBlank() || name.isBlank() || ext.isBlank()) return@mapNotNull null
             val file = name + ext
+            EasynewsNzb.remember(hash, name, ext, item.optString("sig"))
             val link = "$down/" + listOf(farm, port, hash + ext, file).joinToString("/") { Net.encode(it) }
             if (!Easynews.isHost(link)) return@mapNotNull null
             // Easynews reports each file's audio and subtitle languages; written as 🌐 / 💬 lines (as add-ons such as

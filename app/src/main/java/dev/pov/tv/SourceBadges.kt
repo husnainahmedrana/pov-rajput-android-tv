@@ -14,6 +14,7 @@ import dev.pov.tv.data.AddonBadges
 import dev.pov.tv.data.DebridServices
 import dev.pov.tv.data.Easynews
 import dev.pov.tv.data.SourceItem
+import dev.pov.tv.data.UsenetLinks
 import dev.pov.tv.data.SourceLanguageOrder
 import dev.pov.tv.data.SourceLanguages
 import dev.pov.tv.data.SourceMetadata
@@ -24,7 +25,7 @@ import kotlin.math.roundToInt
  * Badge kinds. Quality, size, HDR, audio, languages and source each have their own gradient ("Aurora" set);
  * the cached / not cached status keeps its flat green and grey.
  */
-internal enum class SourceBadgeTone { UHD, FULL_HD, HD, OTHER, NEUTRAL, CACHED, UNCACHED, SIZE, HDR, AUDIO, LANGUAGE, SOURCE }
+internal enum class SourceBadgeTone { UHD, FULL_HD, HD, OTHER, NEUTRAL, CACHED, UNCACHED, SIZE, HDR, AUDIO, LANGUAGE, SOURCE, /** A link streamed from Usenet: turquoise. */ USENET }
 /** [mbps] (size badges only) picks the heat step of the size badge's gradient; [parts] are the grouped tags. */
 internal data class SourceBadge(val label: String, val tone: SourceBadgeTone = SourceBadgeTone.NEUTRAL, val quality: Boolean = false,
                                 val mbps: Double? = null, val parts: List<String> = listOf(label))
@@ -106,6 +107,8 @@ internal object SourceBadges {
                 SourceBadge("NOT CACHED · ${DebridServices.name(source.servedBy!!).uppercase()}", SourceBadgeTone.UNCACHED)
             source.directUrl.isNotEmpty() && source.servedBy in DebridServices.IDS ->
                 SourceBadge("CACHED · ${DebridServices.name(source.servedBy!!).uppercase()}", SourceBadgeTone.CACHED)
+            // An indexer's link, streamed from the viewer's own news providers.
+            UsenetLinks.isNzb(source.directUrl) -> SourceBadge("USENET", SourceBadgeTone.USENET)
             source.directUrl.isNotEmpty() -> SourceBadge("DIRECT", SourceBadgeTone.CACHED)
             cachedOn.isNotEmpty() -> SourceBadge("CACHED · ${cachedOn.joinToString(" + ").uppercase()}", SourceBadgeTone.CACHED)
             checkOnPlay.isNotEmpty() -> SourceBadge("CHECK ON PLAY", SourceBadgeTone.UNCACHED)
@@ -118,7 +121,9 @@ internal object SourceBadges {
      * add-on with its own logo (PenguPlay, CNCVerse).
      */
     fun cachedOn(source: SourceItem): List<String> =
-        if (source.directUrl.isNotEmpty()) {
+        // The viewer's own indexer links: the news provider they stream from, then the indexer.
+        if (UsenetLinks.isNzb(source.directUrl)) listOfNotNull(source.newsProvider.ifBlank { null }, AddonBadges.indexer(source.indexer)).distinct()
+        else if (source.directUrl.isNotEmpty()) {
             val addon = PlaybackDebrid.addon(source)
             // AIOStreams: its logo, then where it streams from (AltMount and the viewer's news provider, or the debrid), then the indexer.
             // The AltMount and StreamNZB add-ons: their logo, the news provider, then the indexer.
@@ -142,7 +147,8 @@ internal object SourceBadges {
         from(source, languages, runtimeMinutes).toMutableList().apply {
             // Logos say where a link plays from, but not that a debrid add-on still has to download it.
             // A scraper's logo on a torrent says where it came from, not that it is cached.
-            if (!logos || cachedOn(source).isEmpty() || source.addonCached == false ||
+            // The viewer's own indexer links keep their USENET badge beside the provider and indexer logos.
+            if (!logos || cachedOn(source).isEmpty() || source.addonCached == false || UsenetLinks.isNzb(source.directUrl) ||
                 source.directUrl.isEmpty() && source.cachedServices.isEmpty()) add(minOf(2, size), status(source, checkOnPlay))
             if (source.inLibrary) add(minOf(1, size), SourceBadge("IN LIBRARY", SourceBadgeTone.CACHED))
         }
@@ -260,6 +266,7 @@ internal object SourceBadges {
         SourceBadgeTone.SIZE -> heat(badge.mbps) ?: ("#22E1FF" to "#9B6BFF")
         SourceBadgeTone.HDR -> "#FF4FD8" to "#B45CFF"
         SourceBadgeTone.AUDIO -> "#34E89E" to "#19C3D6"
+        SourceBadgeTone.USENET -> "#5FF2E0" to "#19C3D6"
         SourceBadgeTone.LANGUAGE -> "#FFB347" to "#FF5E5E"
         SourceBadgeTone.SOURCE -> "#EEF2F8" to "#8496B3"
         SourceBadgeTone.NEUTRAL, SourceBadgeTone.CACHED, SourceBadgeTone.UNCACHED -> null
@@ -273,6 +280,7 @@ internal object SourceBadges {
         SourceBadgeTone.SIZE -> heat(badge.mbps) ?: ("#FF8A3D" to "#FF3D9A")
         SourceBadgeTone.HDR -> "#FF5F9E" to "#FF9A5C"
         SourceBadgeTone.AUDIO -> "#8F6BFF" to "#FF6FB5"
+        SourceBadgeTone.USENET -> "#5FF2E0" to "#3EC6FF"
         SourceBadgeTone.LANGUAGE -> "#FFD36B" to "#FF8A3D"
         SourceBadgeTone.SOURCE -> "#6C7CFF" to "#3EC6FF"
         SourceBadgeTone.NEUTRAL, SourceBadgeTone.CACHED, SourceBadgeTone.UNCACHED -> null
@@ -287,6 +295,7 @@ internal object SourceBadges {
         SourceBadgeTone.SIZE -> "#7FD6FF"
         SourceBadgeTone.HDR -> "#F59BFF"
         SourceBadgeTone.AUDIO -> "#5FE3CF"
+        SourceBadgeTone.USENET -> "#40E0D0"
         SourceBadgeTone.LANGUAGE -> "#FFB66E"
         SourceBadgeTone.SOURCE -> "#8DB6FF"
         SourceBadgeTone.NEUTRAL, SourceBadgeTone.CACHED, SourceBadgeTone.UNCACHED -> null

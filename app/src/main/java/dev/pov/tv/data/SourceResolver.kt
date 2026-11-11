@@ -16,8 +16,12 @@ class SourceResolver internal constructor(
     private val configuredProviders: (() -> List<SourceProvider>)? = null,
     private val links: LinkDebrids? = null,
     /** Easynews when connected and switched on; its results are direct links like an add-on's. */
-    private val easynews: () -> EasynewsApi? = { null }
+    private val easynews: () -> EasynewsApi? = { null },
+    /** The viewer's Usenet indexers, each with its id, name and search; their results are links like an add-on's. */
+    private val indexers: () -> List<IndexerSearch> = { emptyList() }
 ) {
+    class IndexerSearch(val id: String, val name: String, val search: (PlaybackIdentity) -> List<SourceItem>)
+
     constructor(store: SecureStore, torbox: TorBoxApi) : this({ store.get("sources.endpoint") }, object : SourceTorBox {
         override fun cached(hashes: List<String>) = torbox.cached(hashes)
         override fun addMagnet(hash: String) = torbox.addMagnet(hash)
@@ -25,7 +29,8 @@ class SourceResolver internal constructor(
         override fun streamUrl(kind: String, folderId: Long, fileId: Long) = torbox.streamUrl(kind, folderId, fileId)
         override fun prepareCached(source: SourceItem, identity: PlaybackIdentity) = torbox.prepareCached(source, identity)
     }, offcloud = { OffcloudApi(store) }, serviceOrder = { DebridServices.connected(store) }, configuredProviders = { SourceProviders(store).load() },
-        links = LinkDebrids(store), easynews = { if (Easynews.active(store)) EasynewsApi(store) else null })
+        links = LinkDebrids(store), easynews = { if (Easynews.active(store)) EasynewsApi(store) else null },
+        indexers = { UsenetSearch.sources(store) })
     fun sources(identity: PlaybackIdentity): List<SourceItem> = search(identity).items
 
     internal data class SearchResult(val items: List<SourceItem>, val unavailableProviders: List<String>, val lateProviders: List<String> = emptyList(),
@@ -49,12 +54,13 @@ class SourceResolver internal constructor(
         validateIdentity(identity)
         val providers = (configuredProviders?.invoke()
             ?: listOf(SourceProvider("legacy", "Source 1", sourceEndpoint()))).filter { it.enabled }
-        val usenet = easynews()
-        require(providers.isNotEmpty() || usenet != null) { "Add or enable a source provider in Settings before searching for links." }
+        // Searches that are not add-ons: Easynews' own search, then each Usenet indexer.
+        val extras = listOfNotNull(easynews()?.let { api -> IndexerSearch("easynews", "Easynews", api::search) }) + indexers()
+        require(providers.isNotEmpty() || extras.isNotEmpty()) { "Add or enable a source provider in Settings before searching for links." }
         // Validate before starting any requests; an empty legacy endpoint has the same setup guidance.
         val endpoints = providers.map { SourceProviders.endpoint(it.address) }
         val id = if (identity.type == "series") "${identity.imdbId}:${identity.season}:${identity.episode}" else identity.imdbId
-        val names = providers.map { it.name } + listOfNotNull(usenet?.let { "Easynews" })
+        val names = providers.map { it.name } + extras.map { it.name }
         val executor = java.util.concurrent.Executors.newFixedThreadPool(maxOf(1, names.size))
         val done = java.util.concurrent.ExecutorCompletionService<Pair<Int, List<SourceItem>?>>(executor)
         val failures = mutableListOf<String>()
@@ -74,7 +80,7 @@ class SourceResolver internal constructor(
                 detail = (listOf(source.detail) + unavailable).filter { it.isNotBlank() }.joinToString(" · "))
         }.sortedByDescending { it.cached }
         val pending = names.indices.toMutableSet()
-        val ids = providers.map { it.id } + listOfNotNull(usenet?.let { "easynews" })
+        val ids = providers.map { it.id } + extras.map { it.id }
         // Each add-on's deadline: its own limit, else the search time limit, else none.
         val deadlines = ids.map { id -> (ownLimitMs(id)?.takeIf { it > 0 } ?: timeLimitMs.takeIf { it > 0 }) ?: Long.MAX_VALUE }
         val expired = mutableListOf<Int>()
@@ -88,13 +94,13 @@ class SourceResolver internal constructor(
                 timing?.invoke(provider, if (items == null) null else (System.nanoTime() - began) / 1_000_000)
                 index to items
             } }
-            if (usenet != null) done.submit {
-                val items = try { usenet.search(identity) }
+            extras.forEachIndexed { offset, extra -> done.submit {
+                val items = try { extra.search(identity) }
                 catch (error: InterruptedException) { throw error }
                 catch (error: java.util.concurrent.CancellationException) { throw error }
                 catch (_: Exception) { null }
-                providers.size to items
-            }
+                providers.size + offset to items
+            } }
             while (pending.isNotEmpty()) {
                 val elapsed = (System.nanoTime() - started) / 1_000_000
                 // Add-ons past their deadline stop being waited for; the rest keep going.
