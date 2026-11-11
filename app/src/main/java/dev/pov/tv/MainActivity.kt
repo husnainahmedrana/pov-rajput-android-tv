@@ -5254,6 +5254,7 @@ class MainActivity : Activity() {
         val dialog = AlertDialog.Builder(this).setTitle(if (provider == null) "Add news provider" else "Edit ${provider.name}")
             .setView(CappedScroll(this, resources.displayMetrics.heightPixels * 58 / 100).apply { addView(content) })
             .setPositiveButton("Save", null).setNegativeButton("Cancel", null).setNeutralButton("Test", null).create()
+            .apply { window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE) }
         dialog.setOnDismissListener { password.setText("") }
         dialog.show()
         fun typed(): NewsProvider {
@@ -5328,6 +5329,7 @@ class MainActivity : Activity() {
         val dialog = AlertDialog.Builder(this).setTitle(if (indexer == null) "Add indexer" else "Edit ${indexer.name}")
             .setView(CappedScroll(this, resources.displayMetrics.heightPixels * 58 / 100).apply { addView(content) })
             .setPositiveButton("Save", null).setNegativeButton("Cancel", null).setNeutralButton("Test", null).create()
+            .apply { window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE) }
         dialog.show()
         // A known indexer only needs its key: start there.
         if (preset != null && !preset.url.startsWith("http://")) key.requestFocus()
@@ -7634,8 +7636,26 @@ class MainActivity : Activity() {
  { AlertDialog.Builder(this).setMessage(message).setPositiveButton("Continue") { _, _ -> action() }.setNegativeButton("Cancel", null).show() }
 }
 
-/** A scroll area that never grows past [maxHeight], so a dialog's buttons stay on screen under a long form. */
+/**
+ * A scroll area that never grows past [maxHeight], nor past what the on-screen keyboard leaves free, so a dialog's
+ * title and buttons stay in view above a long form and above the keyboard.
+ */
 private class CappedScroll(context: android.content.Context, private val maxHeight: Int) : android.widget.ScrollView(context) {
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) =
-        super.onMeasure(widthMeasureSpec, View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST))
+    private val frame = android.graphics.Rect()
+    private var lastVisible = 0
+    /** Room the dialog's title and button row need besides this form. */
+    private val chrome = (190 * resources.displayMetrics.density).toInt()
+    private val minimum = (90 * resources.displayMetrics.density).toInt()
+    // The keyboard opening or closing changes the free space: measure again.
+    private val watcher = android.view.ViewTreeObserver.OnGlobalLayoutListener {
+        getWindowVisibleDisplayFrame(frame)
+        if (frame.height() != lastVisible) { lastVisible = frame.height(); requestLayout() }
+    }
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); viewTreeObserver.addOnGlobalLayoutListener(watcher) }
+    override fun onDetachedFromWindow() { viewTreeObserver.removeOnGlobalLayoutListener(watcher); super.onDetachedFromWindow() }
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        getWindowVisibleDisplayFrame(frame)
+        val free = if (frame.height() > 0) frame.height() - chrome else maxHeight
+        super.onMeasure(widthMeasureSpec, View.MeasureSpec.makeMeasureSpec(minOf(maxHeight, free).coerceAtLeast(minimum), View.MeasureSpec.AT_MOST))
+    }
 }

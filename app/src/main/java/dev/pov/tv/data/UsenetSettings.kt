@@ -50,7 +50,7 @@ class NewsProviders(private val get: (String) -> String, private val put: (Strin
 
         /** Well-known providers' secure servers. Every field stays editable after picking one. */
         val PRESETS = listOf(
-            Preset("Newshosting", "news.newshosting.com", 100), Preset("Easynews", "news.easynews.com", 60), Preset("Tweaknews", "newshosting.tweaknews.eu", 40), Preset("Tweaknews (older accounts)", "news.tweaknews.eu", 40),
+            Preset("Newshosting", "news.newshosting.com", 100), Preset("Easynews", "news.easynews.com", 60), Preset("Tweaknews (Newshosting deal)", "newshosting.tweaknews.eu", 40), Preset("Tweaknews (standalone)", "news.tweaknews.eu", 40),
             Preset("Eweka", "news.eweka.nl", 50), Preset("UsenetServer", "news.usenetserver.com", 20), Preset("Giganews", "news.giganews.com", 100),
             Preset("Frugal Usenet", "news.frugalusenet.com", 100), Preset("NewsDemon", "news.newsdemon.com", 50), Preset("Usenet.Farm", "news.usenet.farm", 40),
             Preset("UsenetExpress", "news.usenetexpress.com", 50), Preset("NewsgroupDirect", "news.newsgroupdirect.com", 100),
@@ -115,7 +115,7 @@ class NewznabIndexers(private val get: (String) -> String, private val put: (Str
 
         /** Well-known indexers' API addresses; the two aggregators' addresses are examples to edit. */
         val PRESETS = listOf(
-            Preset("NZBgeek", "https://api.nzbgeek.info/api"), Preset("DrunkenSlug", "https://drunkenslug.com/api"), Preset("NZBFinder", "https://nzbfinder.ws/api"),
+            Preset("NZBgeek", "https://api.nzbgeek.info/api"), Preset("NzbNest", "https://nzbnest.com/api"), Preset("DrunkenSlug", "https://drunkenslug.com/api"), Preset("NZBFinder", "https://nzbfinder.ws/api"),
             Preset("NzbPlanet", "https://api.nzbplanet.net/api"), Preset("NinjaCentral", "https://ninjacentral.co.za/api"), Preset("DOGnzb", "https://api.dognzb.cr/api"),
             Preset("Usenet Crawler", "https://www.usenet-crawler.com/api"), Preset("altHUB", "https://api.althub.co.za/api"), Preset("abNZB", "https://abnzb.com/api"),
             Preset("SceneNZBs", "https://scenenzbs.com/api"), Preset("Tabula Rasa", "https://www.tabula-rasa.pw/api/v1/api"), Preset("NZBCat", "https://nzb.cat/api"),
