@@ -41,7 +41,7 @@ class UsenetIndexerTest {
             """<newznab:apilimits apicurrent="12" apimax="100" grabcurrent="1" grabmax="50"/>""") }
         var usage = ""
         val found = Newznab(recorder::get) { now }.search(indexer.copy(id = "movie"), PlaybackIdentity("tt15398776", "movie", "Oppenheimer"), 2023, "Prowlarr/9.9", "Newshosting") { usage = it }
-        assertEquals(listOf("Oppenheimer.2023.2160p.UHD.BluRay.REMUX-GRP", "Oppenheimer 2023 1080p BluRay x264-GRP"), found.map { it.title })
+        assertEquals(listOf("Oppenheimer.2023.2160p.UHD.BluRay.REMUX-GRP", "Oppenheimer.2023.1080p.WEB-DL.x264-GRP", "Oppenheimer 2023 1080p BluRay x264-GRP"), found.map { it.title })
         assertEquals("https://api.example.com/getnzb/abc.nzb&i=1&r=KEY123#pov-nzb", found[0].directUrl)
         assertTrue(UsenetLinks.isNzb(found[0].directUrl))
         assertEquals("https://api.example.com/getnzb/abc.nzb&i=1&r=KEY123", UsenetLinks.nzbAddress(found[0].directUrl))
@@ -53,6 +53,28 @@ class UsenetIndexerTest {
         val search = recorder.asked.last()
         assertEquals("https://api.example.com/api?t=movie&imdbid=15398776&cat=2000&extended=1&limit=100&apikey=KEY123", search.first)
         assertEquals("Prowlarr/9.9", search.second)
+    }
+
+    @Test fun `password flags stay eligible because downloaded NZBs may supply passwords`() {
+        val client = Newznab()
+        for (flag in listOf(
+            """<newznab:attr value="1" name="password"/>""",
+            """<nzbindex:attr name='password' value='2'/>""",
+            """<custom:attr extra="x" value = 'TRUE' name = 'Password'/>""",
+            """<attr name="passworded" value="yes"/>""",
+            """<newznab:attr name="encrypted" value="1"/>""",
+            """<newznab:attr name="password_protected" value="true"/>"""
+        )) assertEquals(flag, 1, client.parse(rss(item("Film.2024.1080p", 1000, flag))).releases.size)
+    }
+
+    @Test fun `false and unknown password flags keep ordinary titles including password in the name`() {
+        val client = Newznab()
+        for (value in listOf("0", "false", "no", "off", "", "unknown", "-1")) {
+            val found = client.parse(rss(item("Password.2024.1080p", 1000,
+                """<newznab:attr name="password" value="$value"/>"""))).releases
+            assertEquals(value, 1, found.size)
+        }
+        assertEquals(1, client.parse(rss(item("Password.2024.1080p", 1000))).releases.size)
     }
 
     @Test fun `an episode keeps only its own releases and falls back to a name search`() {
@@ -108,6 +130,23 @@ class UsenetIndexerTest {
             try { bad(); fail("accepted a bad provider") } catch (_: IllegalArgumentException) {}
         }
         assertEquals(NewsProviders.PRESETS.size, NewsProviders.PRESETS.map { it.host }.distinct().size)
+    }
+
+    @Test fun `pipeline is saved per provider and old configurations default to two`() {
+        val saved = HashMap<String, String>()
+        val config = NewsProviders({ saved[it].orEmpty() }, { key, value -> saved[key] = value })
+        val one = NewsProviders.create("A", "news.example.com", 563, true, "u", "p", 20, false, 3)
+        val two = NewsProviders.create("B", "backup.example.com", 563, true, "u", "p", 10, true, 20)
+        config.save(listOf(one, two))
+        assertEquals(listOf(3, 20), config.load().map { it.pipelineDepth })
+        val legacy = org.json.JSONArray(saved[NewsProviders.KEY])
+        legacy.getJSONObject(0).remove("pipelineDepth")
+        saved[NewsProviders.KEY] = legacy.toString()
+        assertEquals(listOf(2, 20), config.load().map { it.pipelineDepth })
+        for (invalid in listOf(0, 21)) {
+            try { config.save(listOf(one.copy(pipelineDepth = invalid))); fail("invalid pipeline") }
+            catch (_: IllegalArgumentException) {}
+        }
     }
 
     @Test fun `headers move to a known tool's newest version and leave other text alone`() {

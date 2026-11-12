@@ -8,7 +8,16 @@ interface ByteSource : Closeable {
     val size: Long
     /** Copies up to [length] bytes from [position]; -1 at the end. Blocks while the data downloads. */
     fun read(position: Long, target: ByteArray, offset: Int, length: Int): Int
+    /** Starts downloading [length] bytes at [position] without waiting: the player is known to want them soon. */
+    fun prefetch(position: Long, length: Long) {}
 }
+
+/**
+ * How much of a video's end is fetched as soon as it opens. An MKV keeps its seek index (Cues) at the end and the
+ * player reads it before the first picture; on a big remux it is 2–5 MB. Fetched alongside the start, that jump costs
+ * nothing, instead of waiting behind the start's read-ahead (35 s on a 10 GB set on the onn).
+ */
+const val VIDEO_TAIL_BYTES = 5L * 1024 * 1024
 
 /**
  * One posted file read as if it were a local file: [read] at any position fetches the article that holds it and keeps
@@ -67,11 +76,26 @@ class UsenetStream(
         }
     }
 
-    private fun windowFor(part: Long) = minOf((pool.connections + 2).toLong(), windowBytes / part).toInt().coerceAtLeast(4)
+    private fun windowFor(part: Long) = minOf((pool.requestCapacity + 2).toLong(), windowBytes / part).toInt().coerceAtLeast(4)
 
     /** Asks for the first article without waiting for it, so several files can be prepared side by side. */
     fun begin() {
         synchronized(lock) { if (!closed && 0 !in slots) slots[0] = pool.fetch(segments[0].messageId) }
+    }
+
+    /** Asks for the file's last [count] articles without waiting (an archive keeps its directory at the end). */
+    fun beginTail(count: Int) {
+        synchronized(lock) { if (!closed) for (index in maxOf(0, last - count + 1)..last) if (index !in slots) slots[index] = pool.fetch(segments[index].messageId) }
+    }
+
+    override fun prefetch(position: Long, length: Long) {
+        synchronized(lock) {
+            if (closed || !prepared || partSize <= 0 || length <= 0) return
+            val from = (position / partSize).toInt().coerceIn(0, last)
+            val to = ((position + length - 1) / partSize + 1).toInt().coerceIn(0, last)
+            // Ahead of read-ahead in the queue: these few articles are what the player is about to block on.
+            for (index in from..to) if (index !in slots) slots[index] = pool.fetch(segments[index].messageId, urgent = true)
+        }
     }
 
     /** Starts the first articles downloading without waiting for them: the reader is about to arrive here. */
@@ -126,9 +150,18 @@ class UsenetStream(
     }
 
     private fun await(index: Int): Segment {
-        val deadline = System.nanoTime() + AWAIT_MS * 1_000_000
+        val started = System.nanoTime()
+        val deadline = started + AWAIT_MS * 1_000_000
+        var asked = started
         while (true) {
             if (closed) throw IOException("The stream is closed.")
+            // An article that hasn't come for a while is usually stuck on one slow or half-dead connection: ask for
+            // it again at the front of the queue, so a free connection fetches it, instead of waiting out the timeout.
+            if (System.nanoTime() - asked > STALL_MS * 1_000_000) {
+                asked = System.nanoTime()
+                synchronized(lock) { slots.remove(index)?.takeIf { !it.done }?.let { stale ->
+                    log("article ${index + 1} stalled for ${STALL_MS / 1000} s; asking again"); stale.cancel() } }
+            }
             val fetch = synchronized(lock) {
                 val known = slots[index]
                 if (known != null && !known.cancelled) { if (!known.done) pool.hurry(known); known }
@@ -139,7 +172,7 @@ class UsenetStream(
                 throw error
             }
             if (segment != null) return segment
-            if (System.nanoTime() > deadline) throw IOException("The news server took too long to send the video.")
+            if (System.nanoTime() > deadline) throw SlowArticleException()
         }
     }
 
@@ -147,5 +180,26 @@ class UsenetStream(
         synchronized(lock) { closed = true; slots.values.forEach { it.cancel() }; slots.clear() }
     }
 
-    private companion object { const val AWAIT_MS = 45_000L }
+    private companion object { const val AWAIT_MS = 60_000L; const val STALL_MS = 12_000L }
+}
+
+/** No article arrived in time: the connection or server was slow just then. Worth trying again; not a broken release. */
+class SlowArticleException : IOException("The news server took too long to send the video.")
+
+/**
+ * Whether [error] was the network's moment (a timeout, a dropped connection) rather than the release itself (missing
+ * articles, an archive the app can't play, a refused login). Passing failures are retried; lasting ones are remembered.
+ */
+fun isPassingFailure(error: Throwable): Boolean {
+    var cause: Throwable? = error
+    while (cause != null) {
+        when (cause) {
+            is MissingArticleException, is UnsupportedSetException, is NntpRefusedException -> return false
+            is SlowArticleException, is java.net.SocketTimeoutException, is java.net.SocketException,
+            is javax.net.ssl.SSLException, is java.io.EOFException -> return true
+        }
+        if (cause.message?.startsWith("The news server answered") == true) return true
+        cause = cause.cause
+    }
+    return false
 }

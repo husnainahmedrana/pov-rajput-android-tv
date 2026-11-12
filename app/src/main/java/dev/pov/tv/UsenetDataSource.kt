@@ -22,6 +22,27 @@ import dev.pov.tv.usenet.UnsupportedSetException
 import dev.pov.tv.usenet.UsenetMedia
 import java.io.IOException
 
+/**
+ * Usenet lines for logcat, also kept in the app's cache (usenet-log.txt, about the last 1 MB) so a failure can still be
+ * read after the TV's own short log has moved on. No logins or passwords are ever written here.
+ */
+internal object UsenetLog {
+    @Volatile var file: java.io.File? = null
+    private val stamp = java.text.SimpleDateFormat("MM-dd HH:mm:ss.SSS", java.util.Locale.ROOT)
+    fun i(text: String) { android.util.Log.i(UsenetPlayback.TAG, text); keep("I", text) }
+    fun w(text: String, error: Throwable? = null) {
+        android.util.Log.w(UsenetPlayback.TAG, text, error)
+        keep("W", if (error == null) text else "$text: ${error.javaClass.simpleName}: ${error.message}" + (error.cause?.let { " (cause ${it.javaClass.simpleName}: ${it.message})" } ?: ""))
+    }
+    @Synchronized private fun keep(level: String, text: String) {
+        val target = file ?: return
+        try {
+            if (target.length() > 512 * 1024) target.renameTo(java.io.File(target.parentFile, "usenet-log.old.txt"))
+            target.appendText("${stamp.format(java.util.Date())} $level $text" + "\n")
+        } catch (_: Exception) {}
+    }
+}
+
 /** The video now streaming from a news server: its connections and read-ahead outlive the player's seeks and reopens. */
 internal object UsenetSessions {
     class Session(val key: String, val pool: java.io.Closeable, val source: ByteSource)
@@ -35,15 +56,21 @@ internal object UsenetSessions {
         current?.let { if (it.key == key) return it }
         if (key in refused) return null
         closeCurrent()
-        val made = try { create() } catch (error: Exception) { refuse(key, error.message.orEmpty()); throw error }
+        // A timeout or dropped connection while opening isn't remembered: pressing play again tries afresh.
+        val made = try { create() } catch (error: Exception) { if (!dev.pov.tv.usenet.isPassingFailure(error)) refuse(key, error.message.orEmpty()); throw error }
         if (made == null) refuse(key, "") else current = made
         return made
     }
 
     @Synchronized fun reason(key: String): String? = refused[key]
 
+    /** Passing read failures per video: a few are retried on the same connections before the link is given up. */
+    private val stumbles = HashMap<String, Int>()
+    @Synchronized fun stumble(key: String): Int = (stumbles[key] ?: 0).plus(1).also { stumbles[key] = it }
+
     /** A read failed: this video is not streamed this way again for the rest of this app session. */
     @Synchronized fun giveUp(key: String, why: String) {
+        UsenetPlayback.invalidateHealth()
         refuse(key, why)
         if (current?.key == key) closeCurrent()
     }
@@ -58,10 +85,13 @@ internal object UsenetSessions {
 /** Indexer links: the NZB is fetched when the video starts, then streamed from the viewer's news providers. */
 internal object UsenetPlayback {
     const val TAG = "PovUsenet"
+    private val healthCache = dev.pov.tv.usenet.HealthCache()
+    fun invalidateHealth() = healthCache.clear()
 
     /** The stream for [address]: null when it isn't a Usenet link (or that way is off), an exception when it is one that can't play. */
     fun session(address: String, store: SecureStore, cache: java.io.File?, notify: (String) -> Unit): UsenetSessions.Session? {
-        if (!UsenetLinks.isNzb(address)) return EasynewsNntp.session(address, store, notify)
+        if (cache != null) UsenetLog.file = java.io.File(cache, "usenet-log.txt")
+        if (!UsenetLinks.isNzb(address)) return EasynewsNntp.session(address, store, cache, notify)
         val key = sha1(address)
         // Tried before this session: say why again, every time.
         UsenetSessions.reason(key)?.let { why -> val reason = why.ifBlank { "This Usenet link couldn't be streamed." }; notify(reason); throw IOException(reason) }
@@ -72,20 +102,33 @@ internal object UsenetPlayback {
                 val text = nzbText(address, key, store, cache)
                 val nzb = Nzb.parse(text)
                 if (nzb.files.isEmpty()) throw IOException("The indexer sent an empty article list for this link.")
-                val chain = ProviderChain(providers.map { provider ->
-                    NntpPool(NntpServer(provider.host, provider.port, provider.tls, provider.user, provider.password), provider.connections,
-                        log = { android.util.Log.i(TAG, "${provider.name}: $it") })
+                val healthKey = sha1(key + store.get(NewsProviders.KEY))
+                // The availability check runs beside the opening (each takes a few round trips; one after the other
+                // doubled the wait before the first picture). Its answer is waited for before playback starts.
+                val health: java.util.concurrent.Future<Boolean>? = if (healthCache.contains(healthKey)) {
+                    UsenetLog.i("health: reusing a recent successful check"); null
+                } else java.util.concurrent.FutureTask { checkHealth(nzb, providers) }.also { Thread(it, "usenet-health").apply { isDaemon = true }.start() }
+                fun healthy() {
+                    val ok = try { health?.get() ?: return } catch (error: java.util.concurrent.ExecutionException) { throw error.cause ?: error }
+                    if (ok) healthCache.remember(healthKey)
+                }
+                val warm = NewsProviders.warm { store.get(it) }
+                val chain = ProviderChain(providers.mapIndexed { index, provider ->
+                    NntpPool(NntpServer(provider.host, provider.port, provider.tls, provider.user, provider.password), provider.connections, provider.pipelineDepth,
+                        log = { UsenetLog.i("${provider.name}: $it") }, keepOpen = if (index == 0) minOf(warm, provider.connections) else 0)
                 })
                 try {
-                    val opened = UsenetMedia.open(chain, nzb) { android.util.Log.i(TAG, it) }
-                    checkHealth(nzb, providers)
-                    notify("Streaming from ${providers[0].name} · ${providers[0].connections} connections · ${opened.kind}" +
+                    val opened = try { UsenetMedia.open(chain, nzb, cache) { UsenetLog.i(it) } }
+                        // A failed opening of a taken-down release: the check's "missing parts" says it better.
+                        catch (error: Exception) { healthy(); throw error }
+                    try { healthy() } catch (error: Exception) { opened.source.close(); throw error }
+                    notify("Streaming from ${providers[0].name} · ${providers[0].connections} connections · pipeline ${providers[0].pipelineDepth} · ${opened.kind}" +
                         if (providers.size > 1) " · ${providers.size - 1} backup" else "")
                     UsenetSessions.Session(key, chain, opened.source)
                 } catch (error: Exception) { chain.close(); throw error }
             }
         } catch (error: Exception) {
-            android.util.Log.w(TAG, "Usenet link couldn't start", error)
+            UsenetLog.w("Usenet link couldn't start", error)
             val reason = when (error) {
                 is dev.pov.tv.usenet.MissingArticleException -> "Your news providers no longer have this release. Choose another link."
                 is dev.pov.tv.usenet.NntpRefusedException -> "News provider: ${error.message}"
@@ -101,22 +144,23 @@ internal object UsenetPlayback {
      * Asks the providers whether a spread of the release's articles still exist (about a second, all asked at once).
      * A release that has been taken down fails here, with the reason, instead of stopping partway through the video.
      */
-    private fun checkHealth(nzb: Nzb, providers: List<dev.pov.tv.data.NewsProvider>) {
+    private fun checkHealth(nzb: Nzb, providers: List<dev.pov.tv.data.NewsProvider>): Boolean {
         val biggest = nzb.files.maxOf { it.statedBytes }
         // The files that hold the video: skip repair files, text and samples, which are far smaller.
-        val segments = nzb.files.filter { it.statedBytes * 5 >= biggest }.flatMap { it.segments }
-        if (segments.isEmpty()) return
+        val segments = nzb.files.filter {
+            val name = dev.pov.tv.usenet.UsenetMedia.subjectName(it.subject).orEmpty()
+            it.statedBytes * 5 >= biggest && name.substringAfterLast('.').lowercase() !in setOf("par2", "nfo", "sfv")
+        }.flatMap { it.segments }
+        if (segments.isEmpty()) return false
         val count = minOf(SAMPLE, segments.size)
         val sample = (0 until count).map { segments[(it.toLong() * (segments.size - 1) / maxOf(1, count - 1)).toInt()].messageId }.distinct()
-        var missing = sample
-        val started = System.nanoTime()
-        for (provider in providers) {
-            if (missing.isEmpty()) break
-            missing = try { Nntp.missing(NntpServer(provider.host, provider.port, provider.tls, provider.user, provider.password), missing) }
-                catch (error: IOException) { android.util.Log.w(TAG, "check on ${provider.name} failed: ${error.message}"); missing }
-        }
-        android.util.Log.i(TAG, "health: ${sample.size - missing.size} of ${sample.size} articles found in ${(System.nanoTime() - started) / 1_000_000} ms")
-        if (missing.isNotEmpty()) throw IOException("Your news providers are missing parts of this release (${missing.size} of ${sample.size} checked). It may have been taken down. Choose another link.")
+        val result = dev.pov.tv.usenet.ArticleHealth.check(sample, providers.map { provider ->
+            { ids: List<String> -> Nntp.missing(NntpServer(provider.host, provider.port, provider.tls, provider.user, provider.password), ids) }
+        })
+        UsenetLog.i("health: ${result.missing.size} missing, ${result.unknown.size} unknown of ${sample.size} checked")
+        if (result.missing.isNotEmpty()) throw IOException("Your news providers are missing parts of this release (${result.missing.size} of ${sample.size} checked). Choose another link.")
+        // Unknown checks are inconclusive: actual BODY reads still enforce availability and checksums.
+        return result.unknown.isEmpty()
     }
 
     /** Whether this Usenet link already failed this session (taken down, an archive it can't play…), for the link list. */
@@ -128,7 +172,7 @@ internal object UsenetPlayback {
         if (file != null && file.isFile && System.currentTimeMillis() - file.lastModified() < KEEP_MS) {
             try {
                 val saved = java.util.zip.GZIPInputStream(file.inputStream()).use { it.readBytes().toString(Charsets.UTF_8) }
-                android.util.Log.i(TAG, "article list from this device's cache")
+                UsenetLog.i("article list from this device's cache")
                 return saved
             } catch (_: Exception) { file.delete() }
         }
@@ -149,7 +193,7 @@ internal object UsenetPlayback {
     private const val SAMPLE = 24
 }
 
-/** Easynews over its news servers (NNTP) instead of its web servers: experimental, switched on in Easynews settings. */
+/** Easynews over its news servers (NNTP) instead of its web servers: "Easynews NNTP streaming" in Easynews settings. */
 internal object EasynewsNntp {
     const val ON = "easynews.nntp"
     const val CONNECTIONS = "easynews.nntp.connections"
@@ -163,7 +207,7 @@ internal object EasynewsNntp {
     fun server(user: String, password: String) = NntpServer("news.easynews.com", 563, true, user, password)
 
     /** The news-server stream for an Easynews link, or null (with the reason shown) when it must use the web servers. */
-    fun session(address: String, store: SecureStore, notify: (String) -> Unit): UsenetSessions.Session? {
+    fun session(address: String, store: SecureStore, cache: java.io.File?, notify: (String) -> Unit): UsenetSessions.Session? {
         if (!enabled(store)) return null
         val token = EasynewsNzb.token(address) ?: return null
         val (user, password) = Easynews.credentials(store) ?: return null
@@ -175,15 +219,15 @@ internal object EasynewsNntp {
                 if (nzb == null || nzb.files.isEmpty()) { notify("NNTP: Easynews has no article list for this link · using web"); null }
                 else {
                     val count = connections(store)
-                    val made = NntpPool(server(user, password), count, log = { android.util.Log.i(TAG, it) })
+                    val made = NntpPool(server(user, password), count, log = { UsenetLog.i(it) })
                     pool = made
-                    val opened = UsenetMedia.open(made, nzb) { android.util.Log.i(TAG, it) }
+                    val opened = UsenetMedia.open(made, nzb, cache) { UsenetLog.i(it) }
                     notify("Streaming over NNTP · $count connections · ${opened.kind}")
                     UsenetSessions.Session(key, made, opened.source)
                 }
             } catch (error: Exception) {
                 pool?.close()
-                android.util.Log.w(TAG, "NNTP stream couldn't start", error)
+                UsenetLog.w("NNTP stream couldn't start", error)
                 notify(if (error is UnsupportedSetException) "NNTP: ${error.message} · using web" else "NNTP didn't start (${error.message?.take(70)}) · using web")
                 null
             }
@@ -220,7 +264,7 @@ internal object EasynewsNntp {
         for ((wanted, depth) in listOf(1 to 1, 8 to 1, 16 to 1, 30 to 1, 50 to 1, 16 to 3)) {
             val count = minOf(wanted, allowed)
             if (count < wanted && depth == 1) { say("$wanted connections: skipped (server allowed $allowed)"); continue }
-            val pool = NntpPool(server(user, password), count, depth, log = { android.util.Log.i(TAG, it) })
+            val pool = NntpPool(server(user, password), count, depth, log = { UsenetLog.i(it) })
             try {
                 // Open every connection first, so the measurement is of steady downloading only.
                 val opened = System.nanoTime()
@@ -255,14 +299,52 @@ internal object EasynewsNntp {
     }
 }
 
+/**
+ * Notes in the Usenet log where a player read is stuck: a read taking over 15 s gets its thread's stack written down
+ * (again at 60 s and 120 s), so a hang shows exactly what it waits for.
+ */
+internal object ReadWatch {
+    private val NL = System.lineSeparator()
+    class Watch(val thread: Thread, val position: Long, val since: Long) { @Volatile var reported = 0 }
+    private val active = java.util.concurrent.ConcurrentHashMap.newKeySet<Watch>()
+    @Volatile private var running = false
+    fun start(position: Long): Watch = Watch(Thread.currentThread(), position, System.nanoTime()).also { active += it; ensure() }
+    fun done(watch: Watch) { active -= watch }
+    private fun ensure() {
+        if (running) return
+        synchronized(this) {
+            if (running) return
+            running = true
+            Thread({
+                while (true) {
+                    try { Thread.sleep(5_000) } catch (_: InterruptedException) { return@Thread }
+                    val now = System.nanoTime()
+                    for (watch in active) {
+                        val seconds = (now - watch.since) / 1_000_000_000
+                        val due = listOf(15L, 60L, 120L).getOrNull(watch.reported) ?: continue
+                        if (seconds < due) continue
+                        watch.reported++
+                        UsenetLog.w("read at byte ${watch.position} stuck for $seconds s in:" + NL +
+                            watch.thread.stackTrace.take(28).joinToString(NL) { "    at $it" })
+                    }
+                }
+            }, "usenet-read-watch").apply { isDaemon = true }.start()
+        }
+    }
+}
+
 /** Reads a Usenet [ByteSource] for the player. Opening at a new position is cheap: the session keeps its connections. */
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 internal class UsenetDataSource(private val session: UsenetSessions.Session) : BaseDataSource(true) {
+    private companion object { const val PASSING_RETRIES = 4 }
     private var uri: Uri? = null
     private var position = 0L
     private var remaining = 0L
     private var opened = false
     private var spec: DataSpec? = null
+    private var openedAt = 0L
+    private var firstRead = false
+    private var readSinceOpen = 0L
 
     override fun open(dataSpec: DataSpec): Long {
         uri = dataSpec.uri; spec = dataSpec
@@ -270,6 +352,9 @@ internal class UsenetDataSource(private val session: UsenetSessions.Session) : B
         val size = session.source.size
         if (dataSpec.position > size) throw androidx.media3.datasource.DataSourceException(androidx.media3.common.PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE)
         position = dataSpec.position
+        // Where the player reads, and how long the first bytes there take: shows what a slow start waited for.
+        openedAt = System.nanoTime(); firstRead = true
+        UsenetLog.i("player reads at %.1f%% (byte %d of %d)".format(position * 100.0 / maxOf(1L, size), position, size))
         remaining = if (dataSpec.length != C.LENGTH_UNSET.toLong()) minOf(dataSpec.length, size - position) else size - position
         opened = true
         transferStarted(dataSpec)
@@ -279,14 +364,23 @@ internal class UsenetDataSource(private val session: UsenetSessions.Session) : B
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
         if (length == 0) return 0
         if (remaining <= 0) return C.RESULT_END_OF_INPUT
+        val watch = ReadWatch.start(position)
         val count = try { session.source.read(position, buffer, offset, minOf(length.toLong(), remaining).toInt()) }
         catch (error: IOException) {
-            // The player's quiet retry reopens this link; by then it is marked for the web servers.
-            android.util.Log.w(EasynewsNntp.TAG, "NNTP read failed at $position: ${error.message}")
-            UsenetSessions.giveUp(session.key, if (error is dev.pov.tv.usenet.MissingArticleException) "Your news providers are missing part of this release. Choose another link." else "")
+            ReadWatch.done(watch)
+            UsenetLog.w("NNTP read failed at $position: ${error.message}")
+            // A timeout or dropped connection: keep the session (its connections and read-ahead) so the player's quiet
+            // retry carries on from here. Only a release fault, or the same trouble again and again, ends the link
+            // (an Easynews link then moves to the web servers).
+            val passing = dev.pov.tv.usenet.isPassingFailure(error)
+            if (!passing || UsenetSessions.stumble(session.key) > PASSING_RETRIES)
+                UsenetSessions.giveUp(session.key, if (error is dev.pov.tv.usenet.MissingArticleException) "Your news providers are missing part of this release. Choose another link." else "")
             throw error
         }
+        ReadWatch.done(watch)
         if (count < 0) return C.RESULT_END_OF_INPUT
+        if (firstRead) { firstRead = false; readSinceOpen = 0; UsenetLog.i("  first bytes after ${(System.nanoTime() - openedAt) / 1_000_000} ms") }
+        readSinceOpen += count
         position += count; remaining -= count
         bytesTransferred(count)
         return count
@@ -296,6 +390,9 @@ internal class UsenetDataSource(private val session: UsenetSessions.Session) : B
 
     override fun close() {
         uri = null
-        if (opened) { opened = false; transferEnded() }
+        if (opened) {
+            opened = false; transferEnded()
+            UsenetLog.i("  player stopped reading there after %.1f MB in %d ms".format(readSinceOpen / 1e6, (System.nanoTime() - openedAt) / 1_000_000))
+        }
     }
 }

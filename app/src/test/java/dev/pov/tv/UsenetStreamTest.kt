@@ -28,13 +28,14 @@ import org.junit.Test
 
 class UsenetStreamTest {
     /** A news server on localhost holding files cut into yEnc articles. */
-    private class FakeServer(val missing: Set<String> = emptySet(), val password: String = "secret", val maxConnections: Int = 100) {
+    private class FakeServer(val missing: Set<String> = emptySet(), val password: String = "secret", val maxConnections: Int = 100, val corrupt: Boolean = false) {
         private class Article(val file: ByteArray, val begin: Int, val size: Int, val part: Int, val total: Int, val name: String)
         private val articles = HashMap<String, Article>()
         private var posted = 0
         val socket = ServerSocket(0)
         val busiest = AtomicInteger()
         val served = AtomicInteger()
+        val accepted = AtomicInteger()
         private val live = AtomicInteger()
         @Volatile var open = true
 
@@ -56,6 +57,7 @@ class UsenetStreamTest {
             Thread {
                 while (open) {
                     val client = try { socket.accept() } catch (_: IOException) { break }
+                    accepted.incrementAndGet()
                     Thread { try { serve(client) } catch (_: IOException) {} finally { client.close() } }.start()
                 }
             }.start()
@@ -106,7 +108,7 @@ class UsenetStreamTest {
             }
             if (line.size() > 0) endLine()
             val crc = CRC32().apply { update(article.file, article.begin, article.size) }
-            text("=yend size=${article.size} part=${article.part} pcrc32=${java.lang.Long.toHexString(crc.value).padStart(8, '0')}")
+            text("=yend size=${article.size} part=${article.part} pcrc32=${java.lang.Long.toHexString(if (corrupt) crc.value xor 1L else crc.value).padStart(8, '0')}")
             text(".")
             return out.toByteArray()
         }
@@ -218,14 +220,30 @@ BODY evil</segment>
     }
 
     @Test fun `a file reads back whole and from any position over several pipelined connections`() {
+        for (depth in listOf(1, 2, 3, 10, 20)) {
         val file = Random(7).nextBytes(1_000_003)
         val server = server()
         val posted = server.post(file, even(file.size, 64_000), "test video.mkv")
-        val stream = UsenetStream(pool(server, connections = 4, depth = 3), posted.segments, windowBytes = 640_000)
+        val stream = UsenetStream(pool(server, connections = 4, depth = depth), posted.segments, windowBytes = 640_000)
         stream.prepare()
         assertEquals("test video.mkv", stream.name)
         assertReadsLike(file, stream, 11)
         assertTrue("used ${server.busiest.get()} connections", server.busiest.get() in 2..4)
+        }
+    }
+
+    @Test fun `a warm connection is used by the next pool instead of signing in again`() {
+        val file = Random(11).nextBytes(200_000)
+        val server = server()
+        val posted = server.post(file, even(file.size, 50_000), "warm.mkv")
+        dev.pov.tv.usenet.WarmConnections.warm(server.server(), 1)
+        val deadline = System.currentTimeMillis() + 5_000
+        while (server.accepted.get() < 1 && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        Thread.sleep(200)                                  // let the warm connection finish signing in
+        val stream = UsenetStream(pool(server, connections = 1), posted.segments, windowBytes = 100_000)
+        stream.prepare()
+        assertReadsLike(file, stream, 3)
+        assertEquals("the pool reused the warm connection", 1, server.accepted.get())
     }
 
     @Test fun `parts of uneven sizes are still found by position`() {
@@ -378,12 +396,133 @@ BODY evil</segment>
         archive[600_000 - 10] = 0x17
         val parts = (0 until 3).map { archive.copyOfRange(it * 200_000, (it + 1) * 200_000) }
         val named = Nzb(parts.mapIndexed { index, part -> server.post(part, even(part.size, 50_000), "lfjn00aB.7z.%03d".format(index + 1)) }, null)
-        try { UsenetMedia.open(pool(server, 2), named); fail("expected a refusal") } catch (error: UnsupportedSetException) { assertTrue(error.message, "7z" in error.message!!) }
+        try { UsenetMedia.open(pool(server, 2), named); fail("expected a refusal") } catch (error: IOException) { assertTrue(error.message, "7z" in error.message!!) }
         // Scrambled names: the biggest file is a middle part, which starts like nothing the player knows.
         val scrambled = Nzb(listOf(server.post(Random(6).nextBytes(300_000), even(300_000, 50_000), "x", subject = "ad79477ebe2c5d94")), null)
         try { UsenetMedia.open(pool(server, 2), scrambled); fail("expected a refusal") } catch (error: UnsupportedSetException) { assertTrue(error.message, "isn't a video" in error.message!!) }
         assertTrue(UsenetMedia.looksLikeVideo(byteArrayOf(0, 0, 0, 0x20, 'f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 'p'.code.toByte())))
         assertEquals("film.mkv" to 2, UsenetMedia.splitOrder("film.mkv.002"))
+    }
+
+    @Test fun `bad checksums fail instead of delivering corrupt bytes and a backup can rescue them`() {
+        val bad = FakeServer(corrupt = true).also { servers += it }
+        val good = server()
+        val bytes = Random(12).nextBytes(20_000)
+        val file = bad.post(bytes, even(bytes.size, 10_000), "movie.mkv")
+        good.post(bytes, even(bytes.size, 10_000), "movie.mkv")
+        try { UsenetStream(pool(bad, 1), file.segments).prepare(); fail("corruption must fail") }
+        catch (error: IOException) { assertTrue(error.message!!.contains("checksum")) }
+        val chain = dev.pov.tv.usenet.ProviderChain(listOf(pool(bad, 1), pool(good, 1)))
+        UsenetStream(chain, file.segments).use { assertArrayEquals(bytes, readAll(it, 0, bytes.size)) }
+        assertTrue(chain.rescued.get() > 0)
+    }
+
+    @Test fun `real compressed 7z single and split archives support seeks and remove the decoded cache`() {
+        for (method in listOf(org.apache.commons.compress.archivers.sevenz.SevenZMethod.LZMA2,
+            org.apache.commons.compress.archivers.sevenz.SevenZMethod.COPY)) {
+            val directory = java.nio.file.Files.createTempDirectory("pov-7z-test").toFile()
+            try {
+                val video = byteArrayOf(0x1A, 0x45, 0xDF.toByte(), 0xA3.toByte()) + Random(45).nextBytes(400_000)
+                val archive = java.io.File(directory, "test.7z")
+                org.apache.commons.compress.archivers.sevenz.SevenZOutputFile(archive).use { out ->
+                    out.setContentCompression(method)
+                    val info = org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry()
+                    info.name = "info.nfo"
+                    out.putArchiveEntry(info); out.write(ByteArray(200)); out.closeArchiveEntry()
+                    val entry = org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry()
+                    entry.name = "../../movie.mkv"
+                    out.putArchiveEntry(entry); out.write(video); out.closeArchiveEntry()
+                }
+                val packed = archive.readBytes()
+                for (split in listOf(false, true)) {
+                    val server = server()
+                    val parts = if (split) packed.asList().chunked(100_000).map { it.toByteArray() } else listOf(packed)
+                    val nzb = Nzb(parts.mapIndexed { i, part ->
+                        server.post(part, even(part.size, 20_000), if (split) "film.7z.%03d".format(i + 1) else "film.7z")
+                    }, null)
+                    val opened = UsenetMedia.open(pool(server, 3), nzb, directory)
+                    assertTrue(opened.kind.startsWith("7z"))
+                    opened.source.use { source ->
+                        assertArrayEquals(video.copyOfRange(0, 4096), readAll(source, 0, 4096))
+                        if (method == org.apache.commons.compress.archivers.sevenz.SevenZMethod.COPY) {
+                            assertEquals("7z · direct", opened.kind)
+                            assertTrue(java.io.File(directory, "usenet-decoded").listFiles().isNullOrEmpty())
+                        } else assertTrue(java.io.File(directory, "usenet-decoded").listFiles()!!.single().length() < video.size)
+                        assertArrayEquals(video.copyOfRange(300_000, 304_096), readAll(source, 300_000, 4096))
+                        assertArrayEquals(video.copyOfRange(1000, 5096), readAll(source, 1000, 4096))
+                        assertReadsLike(video, source, 4)
+                    }
+                    assertTrue(java.io.File(directory, "usenet-decoded").listFiles().isNullOrEmpty())
+                }
+            } finally { directory.deleteRecursively() }
+        }
+    }
+
+    @Test fun `encrypted 7z stored video seeks directly without disk cache and password is automatic`() {
+        val directory = java.nio.file.Files.createTempDirectory("pov-encrypted-7z").toFile()
+        try {
+            val video = byteArrayOf(0x1A, 0x45, 0xDF.toByte(), 0xA3.toByte()) + Random(46).nextBytes(400_003)
+            val archive = java.io.File(directory, "test.7z")
+            val password = "test-only-password"
+            org.apache.commons.compress.archivers.sevenz.SevenZOutputFile(archive, password.toCharArray()).use { out ->
+                out.setContentCompression(org.apache.commons.compress.archivers.sevenz.SevenZMethod.COPY)
+                val entry = org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry()
+                entry.name = "movie.mkv"
+                out.putArchiveEntry(entry); out.write(video); out.closeArchiveEntry()
+            }
+            val packed = archive.readBytes()
+            val server = server()
+            val parts = packed.asList().chunked(100_003).map { it.toByteArray() }
+            val files = parts.mapIndexed { i, part ->
+                server.post(part, even(part.size, 20_000), "film.7z.%03d".format(i + 1))
+            }
+            for (bad in listOf(null, "wrong-password")) {
+                pool(server, 2, 2).use { articles ->
+                    try { val o = UsenetMedia.open(articles, Nzb(files, bad), directory); fail("Password must be required: bad=$bad kind=${o.kind}") }
+                    catch (expected: IOException) { assertTrue(expected.message, expected.message!!.contains("password")) }
+                }
+            }
+            pool(server, 2, 2).use { articles ->
+                val opened = UsenetMedia.open(articles, Nzb(files, password), null)
+                assertEquals("7z · encrypted · direct", opened.kind)
+                opened.source.use { source ->
+                    assertReadsLike(video, source, 8)
+                    for (position in listOf(0, 1, 15, 16, 17, 99_999, video.size - 31))
+                        assertArrayEquals(video.copyOfRange(position, position + 31), readAll(source, position.toLong(), 31))
+                }
+            }
+            assertTrue(java.io.File(directory, "usenet-decoded").listFiles().isNullOrEmpty())
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun `official 7zip encrypted headers and solid folders stream with the NZB password`() {
+        val video = byteArrayOf(0x1A, 0x45, 0xDF.toByte(), 0xA3.toByte()) + ByteArray(131073) { ((it * 31 + it / 257) % 256).toByte() }
+        for (compressed in listOf(false, true)) {
+            val directory = java.nio.file.Files.createTempDirectory("pov-7zip-header").toFile()
+            try {
+                val fixture = if (compressed) "encrypted-compressed.7z" else "encrypted-stored.7z"
+                val packed = javaClass.getResourceAsStream("/usenet/$fixture")!!.use { it.readBytes() }
+                val server = server()
+                val parts = packed.asList().chunked(30_003).map { it.toByteArray() }
+                val files = parts.mapIndexed { i, part -> server.post(part, even(part.size, 4096), "film.7z.%03d".format(i + 1)) }
+                pool(server, 2, 2).use { articles ->
+                    val opened = UsenetMedia.open(articles, Nzb(files, "fixture-only"), directory)
+                    assertEquals(!compressed, opened.kind.endsWith("direct"))
+                    opened.source.use { source -> assertReadsLike(video, source, 6) }
+                }
+                assertTrue(java.io.File(directory, "usenet-decoded").listFiles().isNullOrEmpty())
+            } finally { directory.deleteRecursively() }
+        }
+    }
+
+    @Test fun `NZB password metadata supports aliases quotes CDATA and escaped characters`() {
+        assertEquals("a&b<123", Nzb.parse("<nzb><head><meta type='PASSWORD'>a&amp;b&lt;123</meta></head></nzb>").password)
+        assertEquals("a&#38;b", Nzb.parse("<meta type = 'pwd'><![CDATA[a&#38;b]]></meta>").password)
+        assertEquals("a&b", Nzb.parse("<meta type=\"pass\">a&#38;b</meta>").password)
+        assertNull(Nzb.parse("<meta type='password'>" + "x".repeat(513) + "</meta>").password)
+        assertNull(Nzb.parse("<meta type='password'></meta>").password)
+        assertEquals("&amp;", Nzb.parse("<meta type='password'>&#38;amp;</meta>").password)
+        assertEquals("&#38;", Nzb.parse("<meta type='password'>&amp;#38;</meta>").password)
     }
 
     @Test fun `subject names and volume order are read from the usual spellings`() {

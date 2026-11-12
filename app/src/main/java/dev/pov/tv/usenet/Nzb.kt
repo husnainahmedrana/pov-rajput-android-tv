@@ -53,14 +53,21 @@ class Nzb(val files: List<NzbFile>, val password: String?) {
             return Nzb(files, password(text, if (firstFile < 0) text.length else firstFile))
         }
 
-        /** `<meta type="password">…</meta>` in the head, before the first file. */
+        /** Read only bounded metadata; never log or persist archive passwords separately. */
         private fun password(text: String, limit: Int): String? {
-            val mark = text.indexOf("type=\"password\"")
-            if (mark < 0 || mark >= limit) return null
-            val start = text.indexOf('>', mark)
-            val end = text.indexOf("</meta>", mark)
-            if (start < 0 || end < 0 || start >= end || end > limit) return null
-            return unescape(text.substring(start + 1, end).trim()).takeIf { it.isNotEmpty() }
+            val header = text.take(minOf(limit, 64 * 1024))
+            val meta = Regex("""<meta\b([^>]*)>(.*?)</meta\s*>""",
+                setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            for (tag in meta.findAll(header)) {
+                val type = Regex("""\btype\s*=\s*(["'])(.*?)\1""", RegexOption.IGNORE_CASE)
+                    .find(tag.groupValues[1])?.groupValues?.get(2)?.lowercase()
+                if (type !in setOf("password", "pass", "pwd")) continue
+                val raw = tag.groupValues[2].trim()
+                val value = if (raw.startsWith("<![CDATA[") && raw.endsWith("]]>")) raw.substring(9, raw.length - 3)
+                    else unescape(raw)
+                if (value.isNotEmpty() && value.length <= 512) return value
+            }
+            return null
         }
 
         private fun attribute(text: String, from: Int, to: Int, name: String): String? {
@@ -72,7 +79,21 @@ class Nzb(val files: List<NzbFile>, val password: String?) {
             return if (end < 0 || end > to) null else text.substring(start, end)
         }
 
-        private fun unescape(value: String) = if ('&' !in value) value else value.replace("&lt;", "<").replace("&gt;", ">")
-            .replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
+        private val entities = Regex("&(?:lt|gt|quot|apos|amp|#[0-9]+|#x[0-9a-fA-F]+);")
+        private fun unescape(value: String): String = if ('&' !in value) value else entities.replace(value) { match ->
+            when (match.value) {
+                "&lt;" -> "<"
+                "&gt;" -> ">"
+                "&quot;" -> "\""
+                "&apos;" -> "'"
+                "&amp;" -> "&"
+                else -> {
+                    val number = match.value.substring(2, match.value.length - 1)
+                    val code = if (number.startsWith("x")) number.drop(1).toIntOrNull(16) else number.toIntOrNull()
+                    if (code != null && Character.isValidCodePoint(code) && code !in 0xD800..0xDFFF)
+                        String(Character.toChars(code)) else match.value
+                }
+            }
+        }
     }
 }

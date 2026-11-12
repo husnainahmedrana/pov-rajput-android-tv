@@ -177,11 +177,28 @@ means decompressing everything before the target. A workable but limited version
 
 - Several main providers are asked in order. Using their connections at the same time would raise speed on fast lines.
 - Season packs: pick the episode's file inside a pack (the file chooser for torrents, `EpisodeFilename`, is the model).
-- `.001 .002` split files and 7z stored archives.
+- ~~`.001 .002` split files and 7z stored archives.~~ Done in 0.3.30 (split) and 0.3.32 (7z, see below).
 - "Use phone" for typing API keys: needs a new mode on the phone relay page (`server/backup`, `LINK_PAGE`).
 - The auto-play rule builder (planned separately) should treat Usenet links like any other.
 - The speed test lives under Easynews and only tests Easynews; move a general one to each provider's Test.
 - Verify the remaining presets as viewers report them; the Tabula Rasa address in particular is a guess.
+
+## 0.3.32: 7z, faster start, reliability
+
+- **7z** (`usenet/SevenZipMedia.kt`, `SevenZipAes.kt`): Apache Commons Compress 1.28.0 + XZ for Java read the archive's
+  directory. Stored entries are read directly (`Stored`); AES-256 + stored entries are decrypted by range in 256 KB
+  windows (`SevenZipAes`, reflects private Commons Compress fields, pinned version; falls back if the layout differs);
+  compressed entries decode into a temporary file (`Decoded`). The NZB's `<meta type="password">` is used automatically.
+  `FastSha256` buffers the 2^19-round key derivation while the directory is read (10 s → 1 s on an onn 4K).
+- **Start time**: first articles of the first part, each differently sized part and the set's last articles are asked
+  together (`openSplit` leaders); the health check runs beside opening; `ByteSource.prefetch` fetches the video's last
+  5 MB (`VIDEO_TAIL_BYTES`, the MKV Cues) at open.
+- **Connections**: per-provider pipeline (default 2, max 20, `NntpPool.MAX_DEPTH`); `WarmConnections` signs in to the main
+  provider during a link search; `keepOpen` keeps connections through a pause.
+- **Reliability**: `isPassingFailure` separates network hiccups from release faults; a stalled article is asked for
+  again after 12 s (`UsenetStream.STALL_MS`).
+- **Diagnostics**: `UsenetLog` keeps the last ~1 MB in `cache/usenet-log.txt` (debug builds: `adb shell run-as <package>
+  cat cache/usenet-log.txt`), with "player reads at …" lines and `ReadWatch` stacks for reads stuck over 15 s.
 
 ## How to build and try it
 

@@ -197,6 +197,19 @@ class VolumeSet(
         return count
     }
 
+    override fun prefetch(position: Long, length: Long) {
+        var at = position.coerceAtLeast(0); val end = minOf(size, position + length)
+        while (at < end) {
+            var index = java.util.Arrays.binarySearch(starts, at)
+            if (index < 0) index = -index - 2
+            val piece = pieces[index]
+            val within = at - starts[index]
+            val take = minOf(end - at, piece.length - within)
+            piece.volume.prefetch(piece.offset + within, take)
+            at += take
+        }
+    }
+
     override fun close() { pieces.forEach { it.volume.close() } }
 
     private companion object { const val WARM_BYTES = 6L * 1024 * 1024 }

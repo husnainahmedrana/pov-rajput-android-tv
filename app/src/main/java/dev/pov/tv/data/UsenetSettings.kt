@@ -9,7 +9,7 @@ import org.json.JSONObject
 /** A Usenet news server account. [backup] ones are asked only for articles the main ones don't have. */
 data class NewsProvider(
     val id: String, val name: String, val host: String, val port: Int, val tls: Boolean,
-    val user: String, val password: String, val connections: Int, val backup: Boolean = false, val enabled: Boolean = true
+    val user: String, val password: String, val connections: Int, val backup: Boolean = false, val enabled: Boolean = true, val pipelineDepth: Int = NewsProviders.DEFAULT_PIPELINE_DEPTH
 )
 
 /** The viewer's news providers, in the order they are tried. Logins stay in [SecureStore]. */
@@ -26,7 +26,7 @@ class NewsProviders(private val get: (String) -> String, private val put: (Strin
             (0 until array.length()).map { index ->
                 val item = array.getJSONObject(index)
                 NewsProvider(item.getString("id"), item.getString("name"), item.getString("host"), item.getInt("port"), item.optBoolean("tls", true),
-                    item.getString("user"), item.getString("password"), item.optInt("connections", DEFAULT_CONNECTIONS), item.optBoolean("backup"), item.optBoolean("enabled", true))
+                    item.getString("user"), item.getString("password"), item.optInt("connections", DEFAULT_CONNECTIONS), item.optBoolean("backup"), item.optBoolean("enabled", true), item.optInt("pipelineDepth", DEFAULT_PIPELINE_DEPTH).coerceIn(1, MAX_PIPELINE_DEPTH))
             }
         } catch (_: Exception) { throw IllegalStateException("Saved news providers could not be read. Check Settings → Usenet.") }
     }
@@ -36,7 +36,7 @@ class NewsProviders(private val get: (String) -> String, private val put: (Strin
         require(providers.map { it.id }.distinct().size == providers.size) { "Invalid news provider identifiers." }
         val array = JSONArray()
         providers.forEach { array.put(JSONObject().put("id", it.id).put("name", it.name).put("host", it.host).put("port", it.port).put("tls", it.tls)
-            .put("user", it.user).put("password", it.password).put("connections", it.connections).put("backup", it.backup).put("enabled", it.enabled)) }
+            .put("user", it.user).put("password", it.password).put("connections", it.connections).put("backup", it.backup).put("enabled", it.enabled).put("pipelineDepth", it.pipelineDepth)) }
         put(KEY, array.toString())
     }
 
@@ -47,6 +47,14 @@ class NewsProviders(private val get: (String) -> String, private val put: (Strin
         const val KEY = "usenet.providers"
         const val DEFAULT_CONNECTIONS = 20
         const val MAX_CONNECTIONS = 100
+        /** Requests kept in flight per connection. Settings saved before pipelining existed get this too. */
+        const val DEFAULT_PIPELINE_DEPTH = 2
+        /** Connections to the main provider signed in ahead of time (link list shown) and kept through pauses: 0, 2 or 4. */
+        const val WARM_KEY = "usenet.warm"
+        const val DEFAULT_WARM = 2
+        val WARM_CHOICES = listOf(0, 2, 4)
+        fun warm(get: (String) -> String) = get(WARM_KEY).toIntOrNull()?.takeIf { it in WARM_CHOICES } ?: DEFAULT_WARM
+        const val MAX_PIPELINE_DEPTH = dev.pov.tv.usenet.NntpPool.MAX_DEPTH
 
         /** Well-known providers' secure servers. Every field stays editable after picking one. */
         val PRESETS = listOf(
@@ -61,8 +69,8 @@ class NewsProviders(private val get: (String) -> String, private val put: (Strin
             Preset("Easy Usenet", "news.easyusenet.nl", 20), Preset("Bulknews", "news.bulknews.eu", 30), Preset("XLned", "news.xlned.com", 20),
             Preset("123 Usenet", "news.123usenet.nl", 20), Preset("Hitnews", "news.hitnews.com", 20))
 
-        fun create(name: String, host: String, port: Int, tls: Boolean, user: String, password: String, connections: Int, backup: Boolean) =
-            NewsProvider(UUID.randomUUID().toString(), name.trim(), host.trim().lowercase(Locale.ROOT), port, tls, user.trim(), password, connections, backup).also(::validate)
+        fun create(name: String, host: String, port: Int, tls: Boolean, user: String, password: String, connections: Int, backup: Boolean, pipelineDepth: Int = DEFAULT_PIPELINE_DEPTH) =
+            NewsProvider(UUID.randomUUID().toString(), name.trim(), host.trim().lowercase(Locale.ROOT), port, tls, user.trim(), password, connections, backup, pipelineDepth = pipelineDepth).also(::validate)
 
         fun validate(provider: NewsProvider) {
             require(provider.name.isNotBlank() && provider.name.length <= 60 && provider.name.none { it.isISOControl() }) { "Give the provider a name." }
@@ -70,6 +78,7 @@ class NewsProviders(private val get: (String) -> String, private val put: (Strin
             require(provider.port in 1..65535) { "Enter a port from 1 to 65535 (563 for SSL, 119 without)." }
             require(provider.user.isNotEmpty() && provider.user.none { it == '\r' || it == '\n' }) { "Enter the username." }
             require(provider.password.isNotEmpty() && provider.password.none { it == '\r' || it == '\n' }) { "Enter the password." }
+            require(provider.pipelineDepth in 1..MAX_PIPELINE_DEPTH) { "Pipeline depth must be from 1 to $MAX_PIPELINE_DEPTH." }
             require(provider.connections in 1..MAX_CONNECTIONS) { "Connections must be from 1 to $MAX_CONNECTIONS." }
         }
     }

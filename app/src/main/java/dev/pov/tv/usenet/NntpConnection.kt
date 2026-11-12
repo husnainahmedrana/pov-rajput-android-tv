@@ -38,8 +38,12 @@ internal class NntpConnection(
     private val server: NntpServer,
     private val open: (NntpServer) -> Socket = ::openSocket,
     /** Told of every batch of bytes as it arrives, for a live speed readout. */
-    private val received: (Int) -> Unit = {}
+    received: (Int) -> Unit = {}
 ) : Closeable {
+    /** Where arriving byte counts go; a warm connection handed to a pool is re-pointed at that pool's meter. */
+    @Volatile internal var received: (Int) -> Unit = received
+    /** The server this connection signed in to (warm connections are matched to pools by it). */
+    internal val signedInTo: NntpServer get() = server
     private var socket: Socket? = null
     private lateinit var input: InputStream
     private lateinit var output: OutputStream

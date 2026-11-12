@@ -20,7 +20,10 @@ class SourceResolver internal constructor(
     /** The viewer's Usenet indexers, each with its id, name and search; their results are links like an add-on's. */
     private val indexers: () -> List<IndexerSearch> = { emptyList() }
 ) {
-    class IndexerSearch(val id: String, val name: String, val search: (PlaybackIdentity) -> List<SourceItem>)
+    class IndexerSearch(val id: String, val name: String,
+                        /** Searched only when every other source has answered (or run out of time) with no links at all. */
+                        val fallback: Boolean = false,
+                        val search: (PlaybackIdentity) -> List<SourceItem>)
 
     constructor(store: SecureStore, torbox: TorBoxApi) : this({ store.get("sources.endpoint") }, object : SourceTorBox {
         override fun cached(hashes: List<String>) = torbox.cached(hashes)
@@ -55,7 +58,7 @@ class SourceResolver internal constructor(
         val providers = (configuredProviders?.invoke()
             ?: listOf(SourceProvider("legacy", "Source 1", sourceEndpoint()))).filter { it.enabled }
         // Searches that are not add-ons: Easynews' own search, then each Usenet indexer.
-        val extras = listOfNotNull(easynews()?.let { api -> IndexerSearch("easynews", "Easynews", api::search) }) + indexers()
+        val extras = listOfNotNull(easynews()?.let { api -> IndexerSearch("easynews", "Easynews", search = api::search) }) + indexers()
         require(providers.isNotEmpty() || extras.isNotEmpty()) { "Add or enable a source provider in Settings before searching for links." }
         // Validate before starting any requests; an empty legacy endpoint has the same setup guidance.
         val endpoints = providers.map { SourceProviders.endpoint(it.address) }
@@ -82,7 +85,7 @@ class SourceResolver internal constructor(
         val pending = names.indices.toMutableSet()
         val ids = providers.map { it.id } + extras.map { it.id }
         // Each add-on's deadline: its own limit, else the search time limit, else none.
-        val deadlines = ids.map { id -> (ownLimitMs(id)?.takeIf { it > 0 } ?: timeLimitMs.takeIf { it > 0 }) ?: Long.MAX_VALUE }
+        val deadlines = ids.map { id -> (ownLimitMs(id)?.takeIf { it > 0 } ?: timeLimitMs.takeIf { it > 0 }) ?: Long.MAX_VALUE }.toMutableList()
         val expired = mutableListOf<Int>()
         try {
             providers.forEachIndexed { index, provider -> done.submit {
@@ -94,18 +97,30 @@ class SourceResolver internal constructor(
                 timing?.invoke(provider, if (items == null) null else (System.nanoTime() - began) / 1_000_000)
                 index to items
             } }
-            extras.forEachIndexed { offset, extra -> done.submit {
+            fun launch(offset: Int) { val extra = extras[offset]; done.submit {
                 val items = try { extra.search(identity) }
                 catch (error: InterruptedException) { throw error }
                 catch (error: java.util.concurrent.CancellationException) { throw error }
                 catch (_: Exception) { null }
                 providers.size + offset to items
             } }
-            while (pending.isNotEmpty()) {
+            // Fallback searches (Usenet indexers, when the viewer chose "only when nothing else is found") wait.
+            val held = extras.indices.filter { extras[it].fallback }.toMutableList()
+            extras.indices.filter { it !in held }.forEach(::launch)
+            pending -= held.map { providers.size + it }.toSet()
+            while (true) {
+                if (pending.isEmpty()) {
+                    // Everything else is done. Nothing found: now ask the fallback searches, each with its own time.
+                    if (held.isEmpty() || results().isNotEmpty()) break
+                    val now = (System.nanoTime() - started) / 1_000_000
+                    held.forEach { offset -> val index = providers.size + offset
+                        pending += index; deadlines[index] = if (deadlines[index] == Long.MAX_VALUE) Long.MAX_VALUE else now + deadlines[index]; launch(offset) }
+                    held.clear()
+                }
                 val elapsed = (System.nanoTime() - started) / 1_000_000
                 // Add-ons past their deadline stop being waited for; the rest keep going.
                 pending.filter { deadlines[it] <= elapsed }.forEach { index -> pending -= index; expired += index }
-                if (pending.isEmpty()) break
+                if (pending.isEmpty()) continue                           // done, or time for the fallback searches
                 val nearest = pending.minOf { deadlines[it] }
                 val next = (if (nearest == Long.MAX_VALUE) done.take() else done.poll(nearest - elapsed, java.util.concurrent.TimeUnit.MILLISECONDS)) ?: continue
                 val (index, items) = try { next.get() }
@@ -120,7 +135,9 @@ class SourceResolver internal constructor(
                     cachedOn[result.service]?.addAll(result.hashes); if (result.failed) failedServices += result.service
                 }
                 val stop = progress?.invoke(SearchProgress(results(), names.size - pending.size, names.size,
-                    pending.sorted().map { names[it] }, failures.toList(), pending.isEmpty())) == true
+                    pending.sorted().map { names[it] }, failures.toList(),
+                    // Not finished while fallback searches are still to be asked because nothing was found.
+                    pending.isEmpty() && (held.isEmpty() || results().isNotEmpty()))) == true
                 if (stop) { stoppedEarly = true; break }
             }
         } finally { executor.shutdownNow() }

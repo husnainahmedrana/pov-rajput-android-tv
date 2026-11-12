@@ -57,28 +57,40 @@ internal object DolbyVisionCompatibility {
         val limit = data.limit()
         if (limit == 0) return 0
         require(data.position() == 0 && !data.isReadOnly)
+        // One bulk copy, then a plain array scan: per-byte ByteBuffer.get on MediaCodec's direct buffers was millions
+        // of calls a second for a 4K frame and left the player thread too busy to keep up (choppy picture).
+        val inPlace = data.hasArray() && data.arrayOffset() == 0
+        val bytes = if (inPlace) data.array() else ByteArray(limit).also { data.duplicate().apply { position(0); limit(limit) }.get(it) }
         fun prefix(at: Int): Int = when {
-            at + 4 <= limit && data.get(at) == 0.toByte() && data.get(at + 1) == 0.toByte() && data.get(at + 2) == 0.toByte() && data.get(at + 3) == 1.toByte() -> 4
-            at + 3 <= limit && data.get(at) == 0.toByte() && data.get(at + 1) == 0.toByte() && data.get(at + 2) == 1.toByte() -> 3
+            at + 4 <= limit && bytes[at] == 0.toByte() && bytes[at + 1] == 0.toByte() && bytes[at + 2] == 0.toByte() && bytes[at + 3] == 1.toByte() -> 4
+            at + 3 <= limit && bytes[at] == 0.toByte() && bytes[at + 1] == 0.toByte() && bytes[at + 2] == 1.toByte() -> 3
             else -> 0
         }
         var start = 0
         var write = 0
+        var dropped = false
         while (start < limit) {
             val header = start + prefix(start).also { require(it != 0) { "Unsupported HEVC sample framing" } }
             require(header + 2 <= limit) { "Truncated HEVC NAL unit" }
-            val first = data.get(header).toInt() and 255
-            val second = data.get(header + 1).toInt() and 255
+            val first = bytes[header].toInt() and 255
+            val second = bytes[header + 1].toInt() and 255
             require(first and 128 == 0 && second and 7 != 0) { "Invalid HEVC NAL header" }
             val type = first shr 1 and 63
             val layer = ((first and 1) shl 5) or (second shr 3)
+            // The next start code: only a zero byte can begin one, so skip quickly to each zero.
             var end = header + 2
-            while (end < limit && prefix(end) == 0) end++
-            if (layer == 0 && type != 62 && type != 63) {
-                for (read in start until end) data.put(write++, data.get(read))
+            while (end < limit) {
+                if (bytes[end] == 0.toByte() && prefix(end) != 0) break
+                end++
             }
+            if (layer == 0 && type != 62 && type != 63) {
+                if (write != start) System.arraycopy(bytes, start, bytes, write, end - start)
+                write += end - start
+            } else dropped = true
             start = end
         }
+        // Nothing removed: the buffer is already right. Otherwise put the compacted bytes back (absolute, position 0).
+        if (dropped && !inPlace) data.duplicate().apply { position(0); limit(limit) }.put(bytes, 0, write)
         return write
     }
 }

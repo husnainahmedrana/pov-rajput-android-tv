@@ -81,8 +81,15 @@ class Newznab(
             val close = text.indexOf("</item>", open); if (close < 0) break
             val item = text.substring(open, close)
             at = close + 7
-            fun attribute(name: String) = Regex("<(?:newznab|nzbindex):attr\\s+name=\"$name\"\\s+value=\"([^\"]*)\"").find(item)?.groupValues?.get(1)
-            if (attribute("password").let { it != null && it != "0" }) continue
+            // XML attribute order, quote style and namespace prefixes are not fixed by XML.
+            val attributes = Regex("""<(?:[\w.-]+:)?attr\b[^>]*>""", RegexOption.IGNORE_CASE).findAll(item).mapNotNull { tag ->
+                fun field(key: String) = Regex("""\b$key\s*=\s*(["'])(.*?)\1""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+                    .find(tag.value)?.groupValues?.get(2)?.let(::unescape)?.trim()
+                val key = field("name")?.lowercase(Locale.ROOT) ?: return@mapNotNull null
+                key to field("value").orEmpty()
+            }.toList()
+            fun attribute(name: String) = attributes.firstOrNull { it.first == name }?.second
+            // A password flag is not a failure: the downloaded NZB may supply its password.
             val title = Regex("(?s)<title>(.*?)</title>").find(item)?.groupValues?.get(1)?.let(::unescape)?.trim().orEmpty()
             val enclosure = Regex("<enclosure\\b[^>]*>").find(item)?.value
             val link = (enclosure?.let { Regex("\\burl=\"([^\"]*)\"").find(it)?.groupValues?.get(1) }

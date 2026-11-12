@@ -52,7 +52,7 @@ object UsenetMedia {
         else -> "This release isn't a video file the app can read${if (name.isNotBlank()) " (${name.take(50)})" else ""}. Choose another link."
     })
 
-    fun open(pool: ArticleSource, nzb: Nzb, log: (String) -> Unit = {}): Opened {
+    fun open(pool: ArticleSource, nzb: Nzb, cache: java.io.File? = null, log: (String) -> Unit = {}): Opened {
         val files = nzb.files
         if (files.isEmpty()) throw UnsupportedSetException("The article list is empty.")
         fun stream(file: NzbFile, pin: Boolean) = UsenetStream(pool, file.segments, pinEnds = pin, log = log)
@@ -67,12 +67,18 @@ object UsenetMedia {
         // Plain split parts ("film.mkv.001", "film.7z.001"): the biggest such set, in part order.
         val splits = files.indices.mapNotNull { index -> names[index]?.let(::splitOrder)?.let { Triple(it.first.lowercase(Locale.ROOT), it.second, files[index]) } }
             .groupBy { it.first }.maxByOrNull { (_, set) -> set.sumOf { it.third.statedBytes } }
-        val video = files.indices.filter { names[it]?.let(::isVideo) == true }.maxByOrNull { files[it].statedBytes }?.let { files[it] }
+        val video = files.indices.filter { names[it]?.let { name -> isVideo(name) || name.endsWith(".7z", true) } == true }
+            .maxByOrNull { files[it].statedBytes }?.let { files[it] }
         val sizes = listOf(named?.sumOf { it.statedBytes } ?: 0L, splits?.value?.sumOf { it.third.statedBytes } ?: 0L, video?.statedBytes ?: 0L)
         when (sizes.indices.maxByOrNull { sizes[it] }?.takeIf { sizes[it] > 0 }) {
             0 -> return openSet(named!!, ::stream, log, trusted = true)
-            1 -> return openSplit(splits!!.key, splits.value.sortedBy { it.second }.map { it.third }, ::stream, log)
-            2 -> return openPlain(video!!, ::stream, log)
+            1 -> {
+                val ordered = splits!!.value.sortedBy { it.second }
+                if (ordered.withIndex().any { (index, part) -> part.second != index + 1 })
+                    throw UnsupportedSetException("The split set has missing or duplicate parts.")
+                return openSplit(splits.key, ordered.map { it.third }, ::stream, log, cache, nzb.password)
+            }
+            2 -> return openPlain(video!!, ::stream, log, cache, nzb.password)
         }
 
         // No usable names (some services scramble subjects): the biggest file decides.
@@ -80,6 +86,7 @@ object UsenetMedia {
         val first = stream(biggest, true)
         first.prepare()
         val start = head(first)
+        if (isSevenZip(start)) return sevenZip(first, cache, nzb.password, log)
         if (!Rar.isRar(start)) {
             log("plain file: ${first.name} · starts ${hex(start)}")
             if (!looksLikeVideo(start)) { first.close(); refuseArchive(start, first.name) }
@@ -102,6 +109,10 @@ object UsenetMedia {
         }
     }
 
+    private fun sevenZip(source: ByteSource, cache: java.io.File?, password: String?, log: (String) -> Unit): Opened {
+        return SevenZipMedia.open(source, cache, password, log)
+    }
+
     private class OutOfOrderException : java.io.IOException("The set's parts are out of order.")
 
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
@@ -112,10 +123,14 @@ object UsenetMedia {
         return if (count == 16) out else out.copyOf(maxOf(count, 0))
     }
 
-    private fun openPlain(file: NzbFile, stream: (NzbFile, Boolean) -> UsenetStream, log: (String) -> Unit): Opened {
+    private fun openPlain(file: NzbFile, stream: (NzbFile, Boolean) -> UsenetStream, log: (String) -> Unit, cache: java.io.File?, password: String?): Opened {
         val opened = stream(file, true)
+        // Ask for the opening articles and the last two at once: a player reads the start, then jumps to the end
+        // (an MKV's seek index, an MP4's moov), then back. Fetched together, that is one wait instead of three.
+        opened.warm(); opened.beginTail(((VIDEO_TAIL_BYTES + 716_799) / 716_800).toInt())
         opened.prepare()
         val start = head(opened)
+        if (isSevenZip(start)) return sevenZip(opened, cache, password, log)
         if (Rar.isRar(start)) { opened.close(); return openSet(listOf(file), stream, log, trusted = true) }
         log("plain file: ${opened.name} · starts ${hex(start)}")
         if (!looksLikeVideo(start)) { opened.close(); refuseArchive(start, opened.name) }
@@ -123,32 +138,33 @@ object UsenetMedia {
     }
 
     /**
-     * Plain split parts laid end to end make the original file: a split video plays straight through them. A split 7z
-     * archive is refused, after logging what kind of header it has (to tell later whether 7z support would help).
+     * Plain split parts form one seekable source, used directly for video or passed to the 7z decoder.
      */
-    private fun openSplit(base: String, parts: List<NzbFile>, stream: (NzbFile, Boolean) -> UsenetStream, log: (String) -> Unit): Opened {
+    private fun openSplit(base: String, parts: List<NzbFile>, stream: (NzbFile, Boolean) -> UsenetStream, log: (String) -> Unit, cache: java.io.File?, password: String?): Opened {
         val streams = parts.mapIndexed { index, part -> stream(part, index == 0 || index == parts.lastIndex) }
         try {
             val first = streams[0]
+            // Ask for everything opening needs at once, instead of one after another: the first part's first article,
+            // the first article of every part not the same size as the first (usually just the last part), and the
+            // last part's final articles, where a 7z archive keeps its directory. One round trip instead of three.
+            // Parts with the same article count are the same size: one of each size is asked (usually the first,
+            // the second when the first is a different size, and the last); the rest take its size without a fetch.
+            val leaders = HashMap<Int, Int>()
+            val leader = IntArray(streams.size) { index ->
+                if (index == streams.lastIndex) index else leaders.getOrPut(parts[index].segments.size) { index } }
+            streams.forEachIndexed { index, part -> if (leader[index] == index) part.begin() }
+            streams.last().beginTail(2)
+            first.warm()
             first.prepare()
-            // Middle parts are all the size of the first; the last one says its own size.
-            streams.forEachIndexed { index, part ->
-                if (index > 0 && index < streams.lastIndex && parts[index].segments.size == parts[0].segments.size) part.assumeLike(first) else part.begin()
-            }
+            streams.forEachIndexed { index, part -> if (leader[index] == index) part.prepare() }
+            streams.forEachIndexed { index, part -> if (leader[index] != index) part.assumeLike(streams[leader[index]]) }
             streams.forEach { it.prepare() }
             val set = VolumeSet(streams.sumOf { it.size }, streams.map { VolumeSet.Piece(it, 0, it.size) })
             val start = head(set)
             log("split set: $base · ${parts.size} parts · ${set.size} bytes · starts ${hex(start)}")
-            if (isSevenZip(start)) {
-                // The start header names where the archive's own header is; its first byte says plain (01) or packed (17).
-                val kind = try {
-                    val fixed = ByteArray(32); set.read(0, fixed, 0, 32)
-                    var offset = 0L; for (shift in 0 until 8) offset = offset or ((fixed[12 + shift].toLong() and 0xFF) shl (8 * shift))
-                    val one = ByteArray(1); if (set.read(32 + offset, one, 0, 1) == 1) "%02x".format(one[0]) else "?"
-                } catch (_: Exception) { "?" }
-                log("7z archive: header kind $kind (01 plain, 17 packed or encrypted)")
-            }
+            if (isSevenZip(start)) return sevenZip(set, cache, password, log)
             if (Rar.isRar(start) || !looksLikeVideo(start)) refuseArchive(start, base)
+            set.prefetch(set.size - minOf(set.size, VIDEO_TAIL_BYTES), VIDEO_TAIL_BYTES)
             return Opened(set, base, "split · ${parts.size} parts")
         } catch (error: Exception) {
             streams.forEach { it.close() }

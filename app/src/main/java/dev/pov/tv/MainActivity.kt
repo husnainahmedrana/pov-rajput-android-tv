@@ -5113,7 +5113,7 @@ class MainActivity : Activity() {
             (if (on) "Turn off (keep the login)" else "Turn on") to { Easynews.setEnabled(store, !on); refreshSettings() },
             "Download server · ${Easynews.serverLabel(store)}" to { easynewsServer() },
             "Connections · ${Easynews.connections(store)}" to { easynewsConnections() },
-            "NNTP streaming (experimental) · ${if (EasynewsNntp.enabled(store)) "On" else "Off"}" to {
+            "Easynews NNTP streaming · ${if (EasynewsNntp.enabled(store)) "On" else "Off"}" to {
                 val now = !EasynewsNntp.enabled(store)
                 if (now) store.put(EasynewsNntp.ON, "true") else store.remove(EasynewsNntp.ON)
                 toast(if (now) "Easynews links from your next search stream over NNTP when they can" else "Easynews links stream from the web servers"); refreshSettings()
@@ -5151,19 +5151,39 @@ class MainActivity : Activity() {
         page("Usenet", "Search your indexers and stream straight from your news providers. Nothing is downloaded first; the article list is fetched only when you play a link.")
         val providers = try { NewsProviders(store).load() } catch (error: Exception) { body.addView(text(uiErrorMessage(error), 15, muted)); emptyList() }
         val providerCard = settingsGroup("News providers", "library")
-        providers.forEach { provider ->
-            settingsRow(providerCard, provider.name, listOf(if (provider.enabled) "On" else "Off", if (provider.backup) "Backup" else "Main").joinToString(" · "),
-                "${provider.host}:${provider.port} · ${if (provider.tls) "SSL" else "No SSL"} · ${provider.connections} connections", status = provider.enabled) { newsProviderActions(provider) }
+        if (providers.isNotEmpty()) holdHint(providerCard, "a provider")
+        linkColumns(providers.map { provider ->
+            switchSettingsRow(providerCard, provider.name, if (provider.backup) "Backup" else "Main",
+                "${provider.host}:${provider.port} · ${if (provider.tls) "SSL" else "No SSL"} · ${provider.connections} connections · pipeline ${provider.pipelineDepth}",
+                provider.enabled, "provider-switch",
+                toggle = { saveNewsProviders(providers.map { if (it.id == provider.id) it.copy(enabled = !provider.enabled) else it }, "provider-switch:${provider.name}") },
+                menu = { newsProviderActions(provider) })
+        })
+        val warm = NewsProviders.warm { store.get(it) }
+        settingsRow(providerCard, "Warm connections", if (warm == 0) "Off" else "$warm",
+            "Signs in to your main provider while the link list is open, and keeps that many connections through a pause, so playing starts without the sign-in wait. Off frees those connection slots.") {
+            val next = NewsProviders.WARM_CHOICES[(NewsProviders.WARM_CHOICES.indexOf(warm) + 1) % NewsProviders.WARM_CHOICES.size]
+            store.put(NewsProviders.WARM_KEY, next.toString()); usenetPage("setting:Warm connections")
         }
         settingsRow(providerCard, "Add news provider", "", "Pick yours from the list or enter any server by hand. A backup provider is asked only for articles the main one is missing.") { chooseNewsProviderPreset() }
 
         val indexerConfig = NewznabIndexers(store)
         val indexers = try { indexerConfig.load() } catch (error: Exception) { body.addView(text(uiErrorMessage(error), 15, muted)); emptyList() }
         val indexerCard = settingsGroup("Indexers", "library")
-        indexers.forEach { indexer ->
+        if (indexers.isNotEmpty()) holdHint(indexerCard, "an indexer")
+        linkColumns(indexers.map { indexer ->
             val host = runCatching { java.net.URI(indexer.url).host }.getOrNull().orEmpty()
-            settingsRow(indexerCard, indexer.name, if (indexer.enabled) "On" else "Off",
-                listOf(host, indexerConfig.usage(indexer.id).takeIf { it.isNotBlank() }?.let { "Today: $it" }).filterNotNull().joinToString(" · "), status = indexer.enabled) { indexerActions(indexer) }
+            switchSettingsRow(indexerCard, indexer.name, host, indexerConfig.usage(indexer.id).takeIf { it.isNotBlank() }?.let { "Today: $it" }.orEmpty(),
+                indexer.enabled, "indexer-switch",
+                toggle = { saveIndexers(indexers.map { if (it.id == indexer.id) it.copy(enabled = !indexer.enabled) else it }, "indexer-switch:${indexer.name}") },
+                menu = { indexerActions(indexer) })
+        })
+        val fallbackOnly = dev.pov.tv.data.UsenetSearch.fallbackOnly(store)
+        settingsRow(indexerCard, "Usenet Fallback", if (fallbackOnly) "On" else "Off",
+            "On: your indexers are searched only when add-ons and debrid services find no links for a title. Off: searched together with everything else.",
+            status = fallbackOnly) {
+            if (fallbackOnly) store.remove(dev.pov.tv.data.UsenetSearch.FALLBACK_ONLY) else store.put(dev.pov.tv.data.UsenetSearch.FALLBACK_ONLY, "true")
+            usenetPage("setting:Usenet Fallback")
         }
         settingsRow(indexerCard, "Add indexer", "", if (providers.none { it.enabled }) "Add a news provider first: indexer links need one to play."
             else "Pick a known indexer and enter your API key, or enter any Newznab address (NZBHydra2 and Prowlarr work too).") { chooseIndexerPreset() }
@@ -5219,6 +5239,32 @@ class MainActivity : Activity() {
         }.setNegativeButton("Cancel", null).show()
     }
 
+    /**
+     * A form that may scroll, with its status line (Test results, errors) pinned underneath it, just above the dialog's
+     * buttons, so the answer to Test is always in view without scrolling.
+     */
+    private fun formWithStatus(form: View, status: TextView): View = column().apply {
+        status.maxLines = 3
+        // On a TV the keyboard slides over the dialog (the form keeps its size); a phone's form shrinks to stay above it.
+        addView(CappedScroll(this@MainActivity, resources.displayMetrics.heightPixels * 58 / 100, reserve = dp(64), followKeyboard = DeviceLayout.phone)
+            .apply { addView(form) }, margin(-1, -2))
+        addView(status, margin(-1, -2).apply { setMargins(dp(18), dp(4), dp(18), dp(4)) })
+    }
+
+    /** TV: the window pans to the field being typed in instead of squeezing the form; phone: resize above the keyboard. */
+    private fun formInputMode() = if (DeviceLayout.phone) android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        else android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN
+
+    /** A form field with its name in small type above it: the hint inside disappears once the field holds text. */
+    private fun captioned(field: View): View = column().apply {
+        val caption = (field as? TextView)?.takeIf { it !is android.widget.CheckBox }?.hint?.toString()?.substringBefore(" (")
+        // The usual dialog box keeps 24 dp clear on each side (meant for full-width fields); in a captioned form the
+        // box fills its column so the text has room and every box lines up with its caption.
+        if (field is android.widget.EditText) field.background = getDrawable(R.drawable.pov_dialog_field_tight)
+        addView(text(caption ?: " ", 12, muted), margin(-1, -2).apply { leftMargin = dp(4) })
+        addView(field, margin(-1, -2))
+    }
+
     private fun usenetField(hint: String, value: String, type: Int) = TvEditText(this).apply {
         this.hint = hint; setSingleLine(); inputType = type or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS; setText(value)
     }
@@ -5236,30 +5282,53 @@ class MainActivity : Activity() {
         val password = usenetField("Password", provider?.password ?: easynews?.second.orEmpty(), InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
         val suggested = minOf(NewsProviders.DEFAULT_CONNECTIONS, preset?.maxConnections ?: NewsProviders.DEFAULT_CONNECTIONS)
         val connections = usenetField("Connections", (provider?.connections ?: suggested).toString(), InputType.TYPE_CLASS_NUMBER)
-        val tls = android.widget.CheckBox(this).apply { text = "Use SSL (port 563; 119 without)"; isChecked = provider?.tls ?: true; setTextColor(ink) }
+        val pipeline = usenetField("Pipeline (default ${NewsProviders.DEFAULT_PIPELINE_DEPTH}, 1–${NewsProviders.MAX_PIPELINE_DEPTH})", (provider?.pipelineDepth ?: NewsProviders.DEFAULT_PIPELINE_DEPTH).toString(), InputType.TYPE_CLASS_NUMBER)
+        val tls = android.widget.CheckBox(this).apply { text = "SSL"; isChecked = provider?.tls ?: true; setTextColor(ink) }
         val backup = android.widget.CheckBox(this).apply { text = "Backup only (fills in what the main provider is missing)"; isChecked = provider?.backup ?: false; setTextColor(ink) }
         // Switching SSL moves a standard port to its counterpart; a custom port is left alone.
         tls.setOnCheckedChangeListener { _, on -> when (port.text.toString()) { "563", "443" -> if (!on) port.setText("119"); "119", "23", "80" -> if (on) port.setText("563") } }
-        val status = text(preset?.let { "${it.name} allows up to ${it.maxConnections} connections on most plans; 10–20 suit a TV." } ?: "Connections: 1–${NewsProviders.MAX_CONNECTIONS}.", 13, muted)
+        val status = text((preset?.let { "${it.name} allows up to ${it.maxConnections} connections on most plans; 10–20 suit a TV." } ?: "Connections: 1–${NewsProviders.MAX_CONNECTIONS}.") +
+            " SSL uses port 563 (119 without). Pipeline = requests ahead per connection; applies to the next video.", 13, muted)
         // Two fields to a row, so the whole form and its buttons fit a TV screen.
-        fun pair(left: View, right: View, leftShare: Float, rightShare: Float) = LinearLayout(this).apply {
+        fun row(vararg views: Pair<View, Float>) = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
-            addView(left, LinearLayout.LayoutParams(0, -2, leftShare)); addView(right, LinearLayout.LayoutParams(0, -2, rightShare).apply { leftMargin = dp(8) })
+            views.forEachIndexed { index, (view, share) -> addView(view, LinearLayout.LayoutParams(0, -2, share).apply { if (index > 0) leftMargin = dp(8) }) }
         }
-        content.addView(name, margin(-1, -2))
-        content.addView(pair(host, port, 3f, 1f), margin(-1, -2, top = 4))
-        content.addView(pair(user, password, 1f, 1f), margin(-1, -2, top = 4))
-        content.addView(pair(connections, tls, 1f, 2f), margin(-1, -2, top = 4))
-        content.addView(backup, margin(-1, -2)); content.addView(status, margin(-1, -2, top = 4))
+        // Wide screens (TV): one grid of three equal columns, so every box lines up and Pipeline shows without scrolling.
+        //   Name     | Server address (two columns)
+        //   Port     | Username | Password
+        //   Connections | Pipeline | SSL
+        if (resources.configuration.screenWidthDp >= 720) {
+            val grid = android.widget.GridLayout(this).apply { columnCount = 3 }
+            // Each box gets a small caption above it: a field's hint disappears once it holds text ("20", "2").
+            fun cell(field: View, row: Int, column: Int, span: Int = 1) = grid.addView(captioned(field), android.widget.GridLayout.LayoutParams(
+                android.widget.GridLayout.spec(row), android.widget.GridLayout.spec(column, span, 1f)).apply {
+                width = 0; setMargins(dp(4), dp(3), dp(4), dp(3)); setGravity(Gravity.FILL_HORIZONTAL or Gravity.CENTER_VERTICAL) })
+            cell(name, 0, 0); cell(host, 0, 1, 2)
+            cell(port, 1, 0); cell(user, 1, 1); cell(password, 1, 2)
+            cell(connections, 2, 0); cell(pipeline, 2, 1); cell(tls, 2, 2)
+            tls.gravity = Gravity.CENTER_VERTICAL
+            content.addView(grid, margin(-1, -2))
+        } else {
+            content.addView(name, margin(-1, -2))
+            content.addView(row(host to 3f, port to 1f), margin(-1, -2, top = 4))
+            content.addView(row(user to 1f, password to 1f), margin(-1, -2, top = 4))
+            content.addView(row(connections to 1f, pipeline to 1f), margin(-1, -2, top = 4))
+            content.addView(tls, margin(-1, -2))
+        }
+        content.addView(backup, margin(-1, -2))
         val dialog = AlertDialog.Builder(this).setTitle(if (provider == null) "Add news provider" else "Edit ${provider.name}")
-            .setView(CappedScroll(this, resources.displayMetrics.heightPixels * 58 / 100).apply { addView(content) })
+            .setView(formWithStatus(content, status))
             .setPositiveButton("Save", null).setNegativeButton("Cancel", null).setNeutralButton("Test", null).create()
-            .apply { window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE) }
+            .apply { window?.setSoftInputMode(formInputMode()) }
         dialog.setOnDismissListener { password.setText("") }
         dialog.show()
+        // Three columns of boxes need more room than the usual dialog width on a TV.
+        if (resources.configuration.screenWidthDp >= 720)
+            dialog.window?.setLayout(resources.displayMetrics.widthPixels * 62 / 100, android.view.WindowManager.LayoutParams.WRAP_CONTENT)
         fun typed(): NewsProvider {
             val made = NewsProviders.create(name.text.toString(), host.text.toString(), port.text.toString().trim().toIntOrNull() ?: 0, tls.isChecked,
-                user.text.toString(), password.text.toString(), connections.text.toString().trim().toIntOrNull() ?: 0, backup.isChecked)
+                user.text.toString(), password.text.toString(), connections.text.toString().trim().toIntOrNull() ?: 0, backup.isChecked, pipeline.text.toString().trim().toIntOrNull() ?: 0)
             return if (provider == null) made else made.copy(id = provider.id, enabled = provider.enabled)
         }
         dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
@@ -5325,11 +5394,11 @@ class MainActivity : Activity() {
             preset.url.startsWith("http://") -> "Change the address to your own server's, then enter its API key."
             else -> "Enter your ${preset.name} API key. It is on their website, usually under Profile or API."
         }, 13, muted)
-        content.addView(name, margin(-1, -2)); content.addView(address, margin(-1, -2, top = 6)); content.addView(key, margin(-1, -2, top = 6)); content.addView(status, margin(-1, -2, top = 8))
+        content.addView(captioned(name), margin(-1, -2)); content.addView(captioned(address), margin(-1, -2, top = 4)); content.addView(captioned(key), margin(-1, -2, top = 4))
         val dialog = AlertDialog.Builder(this).setTitle(if (indexer == null) "Add indexer" else "Edit ${indexer.name}")
-            .setView(CappedScroll(this, resources.displayMetrics.heightPixels * 58 / 100).apply { addView(content) })
+            .setView(formWithStatus(content, status))
             .setPositiveButton("Save", null).setNegativeButton("Cancel", null).setNeutralButton("Test", null).create()
-            .apply { window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE) }
+            .apply { window?.setSoftInputMode(formInputMode()) }
         dialog.show()
         // A known indexer only needs its key: start there.
         if (preset != null && !preset.url.startsWith("http://")) key.requestFocus()
@@ -6686,6 +6755,61 @@ class MainActivity : Activity() {
     }
 
     /** Settings → Source providers: order, switch on or off, edit and remove the scraper add-ons. */
+    /**
+     * Up/Down between rows stays in the same column: from one row's On/Off to the next row's On/Off (not to whatever
+     * button happens to sit nearest, such as a move arrow). [rows] holds each row's controls left to right; null or
+     * unfocusable entries are skipped, so the nearest row below or above that has that control is used.
+     */
+    private fun linkColumns(rows: List<List<View?>>) {
+        rows.flatten().filterNotNull().forEach { if (it.id == View.NO_ID) it.id = View.generateViewId() }
+        val columns = rows.maxOfOrNull { it.size } ?: 0
+        for (column in 0 until columns) {
+            val cells = rows.map { row -> row.getOrNull(column)?.takeIf { it.isFocusable } }
+            cells.forEachIndexed { index, cell ->
+                if (cell == null) return@forEachIndexed
+                cells.drop(index + 1).firstOrNull { it != null }?.let { cell.nextFocusDownId = it.id }
+                cells.take(index).lastOrNull { it != null }?.let { cell.nextFocusUpId = it.id }
+            }
+        }
+    }
+
+    /**
+     * A settings row that is a switch: OK turns it on or off at once; holding OK opens [menu] (edit, test, remove...).
+     * The On/Off value sits at the end in green or grey. The list shows one hint line about holding OK ([holdHint]).
+     */
+    private fun switchSettingsRow(card: LinearLayout, label: String, value: String, description: String, on: Boolean,
+                                  tagName: String, toggle: () -> Unit, menu: () -> Unit): List<View> {
+        settingsDivider(card)
+        val row = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(11), dp(12), dp(11))
+            isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true; isLongClickable = true
+            tag = "$tagName:$label"
+            contentDescription = "$label, ${if (on) "On" else "Off"}. Press to turn ${if (on) "off" else "on"}; hold for more."
+        }
+        val copy = column()
+        copy.addView(text(label, 14, if (on) ink else muted, true))
+        val detail = listOf(value, description).filter { it.isNotBlank() }.joinToString(" \u00b7 ")
+        if (detail.isNotBlank()) copy.addView(text(detail, 11, muted).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 4))
+        row.addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(text(if (on) "On" else "Off", 13, if (on) 0xFF46D369.toInt() else muted, true), margin(-2, -2).apply { leftMargin = dp(16) })
+        row.setOnFocusChangeListener { view, focused ->
+            view.background = if (focused) rounded(withAlpha(Color.WHITE, if (flix) 34 else 24), 9) else null
+            view.foreground = if (focused) FocusRingDrawable(if (flix) Color.WHITE else accent, dp(9).toFloat(), true, dp(1).toFloat()) else null
+        }
+        fun remember() { settingsReturnIndex = focusController.focusedIndex(); settingsReturnScroll = scroller.scrollY }
+        row.setOnClickListener { remember(); toggle() }
+        row.setOnLongClickListener { remember(); menu(); true }
+        card.addView(row.pressable(9), margin(-1, -2))
+        return listOf(row)
+    }
+
+    /** The one line that tells a list of [switchSettingsRow]s how they work. */
+    private fun holdHint(card: LinearLayout, what: String) {
+        card.addView(text(if (DeviceLayout.tv) "OK turns $what on or off \u00b7 Hold OK for Edit, Test, Remove"
+            else "Tap turns $what on or off \u00b7 Press and hold for Edit, Test, Remove", 11, muted),
+            margin(-1, -2).apply { setMargins(dp(14), dp(2), dp(14), dp(6)) })
+    }
+
     private fun sourceProvidersPage(focusTag: String? = null) {
         val keepScroll = scroller.scrollY
         current = { sourceProvidersPage() }
@@ -6694,8 +6818,30 @@ class MainActivity : Activity() {
         val config = SourceProviders(store)
         val providers = try { config.load() } catch (error: Exception) { body.addView(text(uiErrorMessage(error), 15, muted)); emptyList() }
         val list = settingsGroup("Providers", "library")
+        if (providers.size > 1) {
+            // Every add-on on or off in one press, instead of one by one.
+            val all = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(8), dp(8)) }
+            val onCount = providers.count { it.enabled }
+            all.addView(text("$onCount of ${providers.size} on", 13, muted, true), LinearLayout.LayoutParams(0, -2, 1f))
+            fun setAll(enabled: Boolean, tagName: String) {
+                try {
+                    config.save(providers.map { it.copy(enabled = enabled) })
+                    toast(if (enabled) "All source providers on" else "All source providers off")
+                    sourceProvidersPage(tagName)
+                } catch (error: Exception) { toast(uiErrorMessage(error)) }
+            }
+            all.addView(button("Turn all on") { setAll(true, "providers-all-on") }.apply {
+                gravity = Gravity.CENTER; tag = "providers-all-on"; alpha = if (onCount == providers.size) 0.4f else 1f
+            }, margin(-2, 38).apply { leftMargin = dp(6) })
+            all.addView(button("Turn all off") { setAll(false, "providers-all-off") }.apply {
+                gravity = Gravity.CENTER; tag = "providers-all-off"; alpha = if (onCount == 0) 0.4f else 1f
+            }, margin(-2, 38).apply { leftMargin = dp(6) })
+            list.addView(all, margin(-1, -2))
+        }
+        val columns = mutableListOf<List<View?>>()
         providers.forEachIndexed { index, provider ->
             settingsDivider(list)
+            val controls = arrayOfNulls<View>(4)
             val on = provider.enabled
             val line = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(8), dp(8)) }
             val copy = column()
@@ -6705,11 +6851,14 @@ class MainActivity : Activity() {
             copy.addView(text(listOf(if (on) "On" else "Off", host, speed).filter(String::isNotBlank).joinToString(" · "), 11, if (on) 0xFF46D369.toInt() else muted).apply {
                 maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 2))
             line.addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
+            var slot = 0
             fun control(label: String, tagName: String, description: String, width: Int, enabled: Boolean = true, action: () -> Unit) {
-                line.addView(button(label) { if (enabled) action() }.apply {
+                val view = button(label) { if (enabled) action() }.apply {
                     gravity = Gravity.CENTER; tag = "$tagName:${provider.id}"; contentDescription = description
                     alpha = if (enabled) 1f else 0.3f; isFocusable = enabled
-                }, margin(width, 38).apply { leftMargin = dp(6) })
+                }
+                controls[slot++] = view
+                line.addView(view, margin(width, 38).apply { leftMargin = dp(6) })
             }
             fun save(updated: List<SourceProvider>, tagName: String) {
                 try { config.save(updated); sourceProvidersPage("$tagName:${provider.id}") } catch (error: Exception) { toast(uiErrorMessage(error)) }
@@ -6725,7 +6874,9 @@ class MainActivity : Activity() {
             }
             control("Manage", "provider-manage", "Manage ${provider.name}", 84) { sourceProviderActions(provider) }
             list.addView(line, margin(-1, -2))
+            columns += controls.toList()
         }
+        linkColumns(columns)
         settingsRow(list, "Add source provider", "", "Paste an HTTPS Stremio add-on or manifest URL, for example your Torrentio or Deepbrid add-on.") { editSourceProvider(null) }
         body.addView(View(this), margin(-1, 24))
         if (focusTag != null) keepPlace(generation, focusTag, keepScroll) else focusAfterRender(generation)
@@ -7640,7 +7791,9 @@ class MainActivity : Activity() {
  * A scroll area that never grows past [maxHeight], nor past what the on-screen keyboard leaves free, so a dialog's
  * title and buttons stay in view above a long form and above the keyboard.
  */
-private class CappedScroll(context: android.content.Context, private val maxHeight: Int) : android.widget.ScrollView(context) {
+private class CappedScroll(context: android.content.Context, private val maxHeight: Int, private val reserve: Int = 0,
+                           /** Shrink to what the on-screen keyboard leaves free (phones); off, only [maxHeight] applies. */
+                           private val followKeyboard: Boolean = true) : android.widget.ScrollView(context) {
     private val frame = android.graphics.Rect()
     private var lastVisible = 0
     /** Room the dialog's title and button row need besides this form. */
@@ -7655,7 +7808,7 @@ private class CappedScroll(context: android.content.Context, private val maxHeig
     override fun onDetachedFromWindow() { viewTreeObserver.removeOnGlobalLayoutListener(watcher); super.onDetachedFromWindow() }
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         getWindowVisibleDisplayFrame(frame)
-        val free = if (frame.height() > 0) frame.height() - chrome else maxHeight
+        val free = if (followKeyboard && frame.height() > 0) frame.height() - chrome - reserve else maxHeight
         super.onMeasure(widthMeasureSpec, View.MeasureSpec.makeMeasureSpec(minOf(maxHeight, free).coerceAtLeast(minimum), View.MeasureSpec.AT_MOST))
     }
 }

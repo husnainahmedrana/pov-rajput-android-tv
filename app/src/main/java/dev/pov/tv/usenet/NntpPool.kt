@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicLong
 interface ArticleSource : Closeable {
     /** How many articles can download at once, which sizes the read-ahead. */
     val connections: Int
+    val requestCapacity: Int get() = connections
     /** Queues an article; [urgent] ones (what the player is waiting on) go ahead of read-ahead. */
     fun fetch(messageId: String, urgent: Boolean = false): Fetch
     /** Moves a queued article to the front: the player has reached it before a connection did. */
@@ -65,8 +66,14 @@ class NntpPool(
     private val depth: Int = 1,
     private val open: (NntpServer) -> Socket = NntpConnection.Companion::openSocket,
     private val idleCloseMs: Long = 45_000,
-    private val log: (String) -> Unit = {}
+    private val log: (String) -> Unit = {},
+    /** Connections kept open while nothing is downloading (a paused video), instead of closing them all. */
+    private val keepOpen: Int = 0
 ) : ArticleSource {
+    /** Workers that have decided to let their connection go but haven't left yet. */
+    private var closing = 0
+    init { require(connections > 0 && depth in 1..MAX_DEPTH) }
+    override val requestCapacity: Int get() = connections * depth
     private val queue = ArrayDeque<Fetch>()
     private val lock = Object()
     @Volatile private var closed = false
@@ -111,7 +118,7 @@ class NntpPool(
     /** Waits for work; null when the pool closes or this worker has been idle long enough to let its connection go. */
     private fun take(block: Boolean): Fetch? {
         synchronized(lock) {
-            val deadline = System.nanoTime() + idleCloseMs * 1_000_000
+            var deadline = System.nanoTime() + idleCloseMs * 1_000_000
             while (true) {
                 if (closed) return null
                 while (true) {
@@ -120,7 +127,12 @@ class NntpPool(
                 }
                 if (!block) return null
                 val left = (deadline - System.nanoTime()) / 1_000_000
-                if (left <= 0) return null
+                if (left <= 0) {
+                    // The last [keepOpen] connections stay through a pause, so playing again needs no new sign-in.
+                    if (workers - closing <= keepOpen) { deadline = System.nanoTime() + idleCloseMs * 1_000_000; continue }
+                    closing++
+                    return null
+                }
                 idle++
                 try { lock.wait(left) } finally { idle-- }
             }
@@ -139,9 +151,12 @@ class NntpPool(
                     val next = take(block = flying.isEmpty()) ?: break
                     if (connection == null) {
                         try {
-                            val fresh = NntpConnection(server, open, count)
+                            // A connection signed in ahead of time (see WarmConnections) skips the 1–3 s sign-in.
+                            val warm = WarmConnections.take(server)
+                            val fresh = warm ?: NntpConnection(server, open, count)
+                            fresh.received = count
                             sockets += fresh
-                            try { fresh.connect() } catch (error: IOException) { fresh.close(); sockets -= fresh; throw error }
+                            if (warm == null) try { fresh.connect() } catch (error: IOException) { fresh.close(); sockets -= fresh; throw error }
                             if (closed) { fresh.close(); sockets -= fresh; next.fail(IOException("The news connection is closed.")); return }
                             connection = fresh
                             live.incrementAndGet(); failures = 0
@@ -179,9 +194,11 @@ class NntpPool(
                     when (code) {
                         222 -> if (fetch.cancelled) current.skipBody() else {
                             val segment = try { current.body() } catch (error: IOException) { flying.addFirst(fetch); throw error }
-                            if (!segment.crcOk && fetch.attempts++ < 1) {
-                                log("article ${fetch.messageId} failed its checksum; fetching again")
-                                enqueue(fetch, urgent = true)
+                            if (!segment.crcOk) {
+                                if (fetch.attempts++ < 1) {
+                                    log("article failed its checksum; fetching again")
+                                    enqueue(fetch, urgent = true)
+                                } else fetch.fail(IOException("The article failed its checksum after retrying."))
                             } else { bytes.addAndGet(segment.size.toLong()); fetch.complete(segment) }
                         }
                         430, 423, 420 -> fetch.fail(MissingArticleException(fetch.messageId))
@@ -204,6 +221,7 @@ class NntpPool(
             while (true) { val fetch = flying.pollFirst() ?: break; if (closed) fetch.fail(IOException("The news connection is closed.")) else enqueue(fetch, urgent = true) }
             synchronized(lock) {
                 workers--
+                if (closing > 0) closing--
                 // Work that arrived while this worker was on its way out still needs a connection.
                 if (!closed && queue.isNotEmpty() && idle == 0 && workers < limit) {
                     workers++
@@ -211,6 +229,11 @@ class NntpPool(
                 }
             }
         }
+    }
+
+    companion object {
+        /** Most requests one connection keeps in flight (Settings → Usenet → provider → Pipeline depth). */
+        const val MAX_DEPTH = 20
     }
 
     private fun failAll(error: IOException) {
@@ -235,6 +258,7 @@ class NntpPool(
 class ProviderChain(private val pools: List<NntpPool>) : ArticleSource {
     init { require(pools.isNotEmpty()) { "Add a news provider first." } }
     override val connections: Int get() = pools[0].connections
+    override val requestCapacity: Int get() = pools.maxOf { it.requestCapacity }
     private val current = java.util.concurrent.ConcurrentHashMap<Fetch, Pair<NntpPool, Fetch>>()
     /** Articles a later provider supplied after an earlier one didn't have them. */
     val rescued = AtomicLong()
@@ -263,4 +287,55 @@ class ProviderChain(private val pools: List<NntpPool>) : ArticleSource {
 
     override fun hurry(fetch: Fetch) { current[fetch]?.let { (pool, inner) -> pool.hurry(inner) } }
     override fun close() { pools.forEach { it.close() } }
+}
+
+/**
+ * News connections signed in before they are needed: when a link list with Usenet links appears, a couple of
+ * connections to the main provider are opened, so pressing play skips the sign-in (TLS + login, 1–3 s from far away).
+ * Unused ones are closed after [KEEP_MS] so they don't hold the account's connection slots.
+ */
+object WarmConnections {
+    private class Held(val key: String, val connection: NntpConnection, val since: Long)
+    private val held = ArrayList<Held>()
+    private val opening = HashMap<String, Int>()
+    private const val KEEP_MS = 120_000L
+    private fun key(server: NntpServer) = "${server.host}:${server.port}:${server.tls}:${server.user}"
+    private fun now() = System.nanoTime() / 1_000_000
+
+    fun warm(server: NntpServer, count: Int, log: (String) -> Unit = {}) {
+        if (count <= 0) return
+        val key = key(server)
+        val need = synchronized(this) {
+            expire()
+            (count - held.count { it.key == key } - (opening[key] ?: 0)).coerceAtLeast(0).also { if (it > 0) opening[key] = (opening[key] ?: 0) + it }
+        }
+        if (need == 0) return
+        log("warming $need connection${if (need == 1) "" else "s"} to ${server.host}")
+        repeat(need) {
+            Thread({
+                try {
+                    val connection = NntpConnection(server)
+                    try { connection.connect() } catch (error: IOException) { connection.close(); throw error }
+                    synchronized(this) { held += Held(key, connection, now()) }
+                } catch (_: Exception) {
+                    // No warm connection then: the pool signs in as usual.
+                } finally { synchronized(this) { opening[key] = ((opening[key] ?: 1) - 1).coerceAtLeast(0) } }
+            }, "nntp-warm").apply { isDaemon = true }.start()
+        }
+        // Let unused ones go after a while even if nothing else touches this.
+        Thread({ try { Thread.sleep(KEEP_MS + 1_000) } catch (_: InterruptedException) {}; synchronized(this) { expire() } }, "nntp-warm-expiry")
+            .apply { isDaemon = true }.start()
+    }
+
+    internal fun take(server: NntpServer): NntpConnection? = synchronized(this) {
+        expire()
+        val key = key(server)
+        val index = held.indexOfFirst { it.key == key }
+        if (index < 0) null else held.removeAt(index).connection
+    }
+
+    private fun expire() {
+        val now = now()
+        held.removeAll { (now - it.since > KEEP_MS).also { old -> if (old) it.connection.close() } }
+    }
 }
