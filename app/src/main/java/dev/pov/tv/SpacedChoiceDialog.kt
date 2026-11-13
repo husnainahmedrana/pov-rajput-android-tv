@@ -25,10 +25,10 @@ internal object SpacedChoiceDialog {
             fun paint(focused: Boolean) {
                 background = GradientDrawable().apply {
                     cornerRadius = dp(10).toFloat()
-                    setColor(when { focused -> Color.WHITE; main -> 0xFFE50914.toInt(); else -> 0x2EFFFFFF })
-                    if (focused) setStroke(dp(2), 0xFFE50914.toInt())
+                    setColor(when { focused -> Color.WHITE; main -> BuildConfig.BRAND_ACCENT; else -> 0x2EFFFFFF })
+                    if (focused) setStroke(dp(2), BuildConfig.BRAND_ACCENT)
                 }
-                setTextColor(if (focused) Color.BLACK else Color.WHITE)
+                setTextColor(if (focused) Color.BLACK else if (main) BuildConfig.BRAND_ON_ACCENT else Color.WHITE)
             }
             paint(false)
             setOnFocusChangeListener { _, focused -> paint(focused) }

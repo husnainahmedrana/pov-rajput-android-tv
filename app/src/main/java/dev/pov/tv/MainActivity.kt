@@ -335,7 +335,7 @@ class MainActivity : Activity() {
                 wantsContentFocus = true; focusAfterRender(generation)
             } else current()
             refreshNavigation()
-        } else AlertDialog.Builder(this).setTitle("Leave POV?")
+        } else AlertDialog.Builder(this).setTitle("Leave ${BuildConfig.APP_SHORT}?")
             .setPositiveButton(if (InAppPlaybackSession.hasActive()) "Stop and leave" else "Leave") { _, _ -> InAppPlaybackSession.stop(); finish() }
             .setNegativeButton("Stay", null).show()
     }
@@ -362,10 +362,13 @@ class MainActivity : Activity() {
         val badge = FrameLayout(this).apply {
             clipToOutline = true
             outlineProvider = object : android.view.ViewOutlineProvider() {
-                override fun getOutline(view: View, outline: android.graphics.Outline) = outline.setRoundRect(0, 0, view.width, view.height, view.width * 0.06f)
+                // A round brand logo is clipped to a circle, so the shine never shows past its edge.
+                override fun getOutline(view: View, outline: android.graphics.Outline) =
+                    if (resources.getBoolean(R.bool.pov_logo_round)) outline.setOval(0, 0, view.width, view.height)
+                    else outline.setRoundRect(0, 0, view.width, view.height, view.width * 0.06f)
             }
         }
-        badge.addView(ImageView(this).apply { setImageResource(R.drawable.pov_icon); scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = "POV" }, FrameLayout.LayoutParams(-1, -1))
+        badge.addView(ImageView(this).apply { setImageResource(R.drawable.pov_logo); scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = "POV" }, FrameLayout.LayoutParams(-1, -1))
         val shine = View(this).apply {
             background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0x00FFFFFF, 0x55FFFFFF, 0x00FFFFFF))
             rotation = 20f; translationX = -size * 1.2f
@@ -646,7 +649,7 @@ class MainActivity : Activity() {
     }
 
     private fun logo() = ImageView(this).apply {
-        setImageResource(R.drawable.pov_icon); scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = "POV"
+        setImageResource(R.drawable.pov_logo); scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = "POV"
     }
 
     private fun navigation(target: Destination, top: Boolean): View {
@@ -1775,18 +1778,42 @@ class MainActivity : Activity() {
     private fun railBackground(expanded: Boolean) = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
         if (expanded) intArrayOf(Color.BLACK, withAlpha(Color.BLACK, 235), withAlpha(Color.BLACK, 0)) else intArrayOf(Color.TRANSPARENT, Color.TRANSPARENT))
 
+    /**
+     * The hidden menu slides and fades over the content as one piece (GPU only). It used to animate its width, which
+     * re-measured the whole screen every frame and dropped its labels and shade at once, so closing looked choppy.
+     * Its width changes only while it is invisible: full width before it slides in, none after it has faded out.
+     */
     private fun setRailExpanded(expanded: Boolean, animate: Boolean = true) {
         val view = rail ?: return
         if (railExpanded == expanded) return
         railExpanded = expanded
-        railLabels.forEach { it.visibility = if (expanded) View.VISIBLE else View.GONE }
-        view.background = railBackground(expanded)
         railAnimator?.cancel(); railAnimator = null
-        if (!animate) { view.layoutParams = view.layoutParams.apply { width = if (expanded) dp(270) else 0 }; return }
-        railAnimator = ValueAnimator.ofInt(view.layoutParams.width, if (expanded) dp(270) else 0).apply {
-            duration = 170
-            addUpdateListener { view.layoutParams = view.layoutParams.apply { width = it.animatedValue as Int } }
-        }.also { it.start() }
+        view.animate().cancel()
+        val full = dp(270)
+        val offset = -dp(40).toFloat()
+        fun showContent() {
+            railLabels.forEach { it.visibility = View.VISIBLE }
+            view.background = railBackground(true)
+            if (view.layoutParams.width != full) view.layoutParams = view.layoutParams.apply { width = full }
+        }
+        fun settleCollapsed() {
+            railLabels.forEach { it.visibility = View.GONE }
+            view.background = railBackground(false)
+            view.layoutParams = view.layoutParams.apply { width = 0 }
+            view.translationX = 0f; view.alpha = 1f
+        }
+        if (!animate) { if (expanded) { showContent(); view.translationX = 0f; view.alpha = 1f } else settleCollapsed(); return }
+        if (expanded) {
+            // From fully hidden, start a little to the left and transparent; a reopen mid-fade continues from where it is.
+            if (view.layoutParams.width != full) { view.translationX = offset; view.alpha = 0f }
+            showContent()
+            view.animate().translationX(0f).alpha(1f).setDuration(180)
+                .setInterpolator(android.view.animation.DecelerateInterpolator()).withLayer().start()
+        } else {
+            view.animate().translationX(offset).alpha(0f).setDuration(150)
+                .setInterpolator(android.view.animation.AccelerateInterpolator()).withLayer()
+                .withEndAction { if (!railExpanded) settleCollapsed() }.start()
+        }
     }
 
     private fun rankedRow(title: String, items: List<MediaItemData>) {
@@ -1924,7 +1951,7 @@ class MainActivity : Activity() {
             if (latest != null) runOnUiThread {
                 if (resumed && !isDestroyed && !isFinishing && !InAppPlaybackSession.hasActive()) {
                     SpacedChoiceDialog.show(this, "Update available · ${latest.version.removeSuffix("-rajput")}",
-                        "A new published release of POV Rajput is available.", "View update", "Later") {
+                        "A new published release of ${BuildConfig.APP_NAME} is available.", "View update", "Later") {
                         startActivity(Intent(this, UpdateActivity::class.java))
                     }
                 }
@@ -2515,7 +2542,7 @@ class MainActivity : Activity() {
         /** Shown once after a restore restarts the app. Never part of a backup (account.* is excluded). */
         const val ACCOUNT_NOTICE = "account.notice"
         /** The app's website. Until the site itself exists it forwards to the GitHub page. */
-        const val WEBSITE = "https://pov.rajput.cc"
+        const val WEBSITE = "https://nabrio.rajput.cc"
         /** Where people reach the developer: forms served by server/backup. */
         const val BUG_PAGE = "https://bug.rajput.cc"
         const val FEATURE_PAGE = "https://feature.rajput.cc"
@@ -3448,6 +3475,10 @@ class MainActivity : Activity() {
         copy.addView(labelLine, margin(-1, -2, top = 2))
         artFrame.addView(copy, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         frame.addView(artFrame, FrameLayout.LayoutParams(-1, -1))
+        // The same watched ✓ as the episode list and posters, in the still's corner.
+        watchedBadge("episode", identity.imdbId, identity.season, identity.episode)?.let {
+            frame.addView(it, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.TOP or Gravity.END).apply { topMargin = dp(7); rightMargin = dp(7) })
+        }
         if (future) artFrame.alpha = 0.55f
         frame.setOnFocusChangeListener { view, focused ->
             val glide = posterGlide(view, radius = 8, scale = 1.05f)
@@ -5125,6 +5156,12 @@ class MainActivity : Activity() {
                 }
             },
             "NNTP speed test" to { nntpSpeedTest() },
+            "NNTP pipeline · ${EasynewsNntp.pipeline(store)}" to {
+                NumberStepper.show(this, "NNTP pipeline", "Requests kept in flight per connection (default ${EasynewsNntp.DEFAULT_PIPELINE}). Higher can stream faster on distant servers. Applies from the next video.",
+                    EasynewsNntp.pipeline(store), 1..EasynewsNntp.MAX_PIPELINE, { "Pipeline $it" }) { depth ->
+                    store.put(EasynewsNntp.PIPELINE, depth.toString()); refreshSettings()
+                }
+            },
             "Change login" to { connectEasynews() },
             "Disconnect" to { confirm("Disconnect Easynews on this device?") { Easynews.disconnect(store); Easynews.setEnabled(store, true); refreshSettings() } })
         AlertDialog.Builder(this).setTitle("Easynews · ${if (on) "On" else "Off"}").setItems(actions.map { it.first }.toTypedArray()) { _, index -> actions[index].second() }
@@ -5550,7 +5587,7 @@ class MainActivity : Activity() {
     private fun settings() {
         current = { settings() }
         destination = "settings"; refreshNavigation()
-        page("Settings", "Make POV yours.")
+        page("Settings", "Make ${BuildConfig.APP_SHORT} yours.")
 
         val section = settingsSection
         settingsCards(section)
@@ -5569,11 +5606,11 @@ class MainActivity : Activity() {
         try {
             when (section) {
                 "account" -> {
-            val card = settingsGroup("POV account & backup", "account")
+            val card = settingsGroup("${BuildConfig.APP_SHORT} account & backup", "account")
             if (!cloud.signedIn) {
                 settingsRow(card, "Create account", "", "Back up your debrid services, add-ons, Home rows and watch progress, encrypted on this device. " +
                     "Sign in on any TV or phone and everything comes back.") { accountDialogs.createAccount() }
-                settingsRow(card, "Sign in", "", "Bring back your setup from your POV account.") { accountDialogs.signIn() }
+                settingsRow(card, "Sign in", "", "Bring back your setup from your ${BuildConfig.APP_SHORT} account.") { accountDialogs.signIn() }
                 settingsRow(card, "Backup server", java.net.URI(cloud.server).host.orEmpty(),
                     "Where backups are kept. Change it only if you run your own copy of the backup server.") { accountDialogs.backupServer() }
             } else {
@@ -5753,7 +5790,7 @@ class MainActivity : Activity() {
                 }
                 "updates" -> {
             val updates = settingsGroup("Updates", "settings")
-            settingsRow(updates, "Check for updates", "POV Rajput ${packageManager.getPackageInfo(packageName, 0).versionName.orEmpty().removeSuffix("-rajput")}") { startActivity(Intent(this, UpdateActivity::class.java)) }
+            settingsRow(updates, "Check for updates", "${BuildConfig.APP_NAME} ${packageManager.getPackageInfo(packageName, 0).versionName.orEmpty().removeSuffix("-rajput")}") { startActivity(Intent(this, UpdateActivity::class.java)) }
             settingsToggle(updates, "Check on startup", "Looks for a newer signed release each time the app opens.",
                 store.get("updates.startup") != "false", contentLabel = "Check for updates on startup") { on -> store.put("updates.startup", on.toString()) }
                 }
@@ -5762,26 +5799,26 @@ class MainActivity : Activity() {
             // The app: icon, name and version, then help and feedback, then the services it uses as a grid.
             val app = settingsGroup("App", null, heading = false)
             val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(12), dp(14), dp(12)) }
-            header.addView(ImageView(this).apply { setImageResource(R.drawable.pov_icon); scaleType = ImageView.ScaleType.FIT_CENTER
+            header.addView(ImageView(this).apply { setImageResource(R.drawable.pov_logo); scaleType = ImageView.ScaleType.FIT_CENTER
                 background = rounded(Color.TRANSPARENT, 10); clipToOutline = true }, margin(46, 46))
             val names = column()
-            names.addView(text("POV Rajput", 18, ink, true))
+            names.addView(text("${BuildConfig.APP_NAME}", 18, ink, true))
             names.addView(text("Version $version · ${if (DeviceLayout.tv) "Android TV" else "Phone"}", 12, muted), margin(-1, -2, top = 3))
             header.addView(names, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(14) })
             app.addView(header, margin(-1, -2))
 
             val about = settingsGroup("Help & feedback", null)
             // Only the app version and device are added to the bug link, shown on the form before sending.
-            val appDetails = "POV Rajput ${packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()} · ${if (DeviceLayout.tv) "TV" else "Phone"} · " +
+            val appDetails = "${BuildConfig.APP_NAME} ${packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()} · ${if (DeviceLayout.tv) "TV" else "Phone"} · " +
                 "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android ${android.os.Build.VERSION.RELEASE}"
             settingsRow(about, "Report a bug", BUG_PAGE.removePrefix("https://"), "Something not working? Tell us what happened. No account needed.") {
                 openWebPage("Report a bug", android.net.Uri.parse(BUG_PAGE).buildUpon().appendQueryParameter("app", appDetails).build().toString(), BUG_PAGE)
             }
-            settingsRow(about, "Request a feature", FEATURE_PAGE.removePrefix("https://"), "Have an idea that would make POV better? Send it here.") {
+            settingsRow(about, "Request a feature", FEATURE_PAGE.removePrefix("https://"), "Have an idea that would make ${BuildConfig.APP_SHORT} better? Send it here.") {
                 openWebPage("Request a feature", FEATURE_PAGE, FEATURE_PAGE)
             }
-            settingsRow(about, "Website", WEBSITE.removePrefix("https://"), "Downloads, install guide and help for POV Rajput.") {
-                openWebPage("POV Rajput website", WEBSITE, WEBSITE)
+            settingsRow(about, "Website", WEBSITE.removePrefix("https://"), "Downloads, install guide and help for ${BuildConfig.APP_NAME}.") {
+                openWebPage("${BuildConfig.APP_NAME} website", WEBSITE, WEBSITE)
             }
             settingsRow(about, "Open-source notices", "", "Licences and credits for the code and fonts this app builds on.") {
                 AlertDialog.Builder(this).setTitle("Open-source notices").setMessage(assets.open("NOTICE.txt").bufferedReader().use { it.readText() }).setPositiveButton("Close", null).show()

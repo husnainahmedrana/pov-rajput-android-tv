@@ -109,7 +109,7 @@ class CloudAccount(private val context: Context, private val store: Store) {
 
     /** Uploads this device's setup when it changed since the last backup (or always, with [force]). */
     fun backup(force: Boolean = false): Boolean {
-        check(signedIn) { "Sign in to your POV account first." }
+        check(signedIn) { "Sign in to your ${dev.pov.tv.BuildConfig.APP_SHORT} account first." }
         val layers = collect()
         val fingerprint = layers.fingerprint()
         if (!force && fingerprint == store.get(LAST_HASH)) return false
@@ -120,7 +120,7 @@ class CloudAccount(private val context: Context, private val store: Store) {
                 .put("secrets", sealLayer(dataKey, layers.secrets, BackupCrypto.SECRETS)))
         } catch (error: ApiException) {
             // The password was changed or reset on another device: this one has to sign in again.
-            if (error.code == 401) { forget(); throw ApiException(401, "Your POV account password was changed. Sign in again to keep backing up.") }
+            if (error.code == 401) { forget(); throw ApiException(401, "Your ${dev.pov.tv.BuildConfig.APP_SHORT} account password was changed. Sign in again to keep backing up.") }
             throw error
         }
         backedUp(fingerprint, result.optLong("updated"))

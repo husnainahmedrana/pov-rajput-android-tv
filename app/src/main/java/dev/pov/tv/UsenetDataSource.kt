@@ -200,10 +200,15 @@ internal object EasynewsNntp {
     const val DEFAULT_CONNECTIONS = 20
     /** Easynews allows 60 at once across every device and app on the account. */
     const val MAX_CONNECTIONS = 60
+    const val PIPELINE = "easynews.nntp.pipeline"
+    /** Requests kept in flight per connection; 2 matches the news providers' default. */
+    const val DEFAULT_PIPELINE = 2
+    const val MAX_PIPELINE = NntpPool.MAX_DEPTH
     const val TAG = "PovUsenet"
 
     fun enabled(store: SecureStore) = store.get(ON) == "true"
     fun connections(store: SecureStore) = store.get(CONNECTIONS).toIntOrNull()?.coerceIn(1, MAX_CONNECTIONS) ?: DEFAULT_CONNECTIONS
+    fun pipeline(store: SecureStore) = store.get(PIPELINE).toIntOrNull()?.coerceIn(1, MAX_PIPELINE) ?: DEFAULT_PIPELINE
     fun server(user: String, password: String) = NntpServer("news.easynews.com", 563, true, user, password)
 
     /** The news-server stream for an Easynews link, or null (with the reason shown) when it must use the web servers. */
@@ -218,11 +223,11 @@ internal object EasynewsNntp {
                 val nzb = EasynewsNzb.fetch(token, Easynews.auth(user, password))?.let(Nzb::parse)
                 if (nzb == null || nzb.files.isEmpty()) { notify("NNTP: Easynews has no article list for this link · using web"); null }
                 else {
-                    val count = connections(store)
-                    val made = NntpPool(server(user, password), count, log = { UsenetLog.i(it) })
+                    val count = connections(store); val depth = pipeline(store)
+                    val made = NntpPool(server(user, password), count, depth, log = { UsenetLog.i(it) })
                     pool = made
                     val opened = UsenetMedia.open(made, nzb, cache) { UsenetLog.i(it) }
-                    notify("Streaming over NNTP · $count connections · ${opened.kind}")
+                    notify("Streaming over NNTP · $count connections · pipeline $depth · ${opened.kind}")
                     UsenetSessions.Session(key, made, opened.source)
                 }
             } catch (error: Exception) {

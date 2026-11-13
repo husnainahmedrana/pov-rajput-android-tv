@@ -135,7 +135,7 @@ class OffcloudApi internal constructor(
             if (now() >= deadline) break
             pause(1_500)
         } while (now() < deadline)
-        throw IllegalStateException("This download is still processing in Offcloud. Wait for it to finish, then select this source again; POV will reuse the same transfer.")
+        throw IllegalStateException("This download is still processing in Offcloud. Wait for it to finish, then select this source again; ${dev.pov.tv.BuildConfig.APP_SHORT} will reuse the same transfer.")
     }
 
     private fun credential(): String = synchronized(lock) {

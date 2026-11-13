@@ -175,6 +175,8 @@ class SourceResolver internal constructor(
             val title = filename.ifBlank { description.lineSequence().firstOrNull().orEmpty() }
                 .ifBlank { stream.optString("name").ifBlank { "Video source" } }.take(500)
             if (identity.type == "series" && EpisodeFilename.isExplicitMismatch(title, identity.season, identity.episode)) return@mapNotNull null
+            // Add-ons match short titles loosely: "Dark Angel S01E02" or "Darkness S01E02" (other shows) turn up for "Dark".
+            if (identity.type == "series" && EpisodeFilename.namesAnotherShow(title, identity.title)) return@mapNotNull null
             // An add-on that holds the viewer's debrid key says which service in the link's name ("[TB+] Torrentio").
             val debridTag = if (direct.isBlank()) null else AddonDebridTag.of(stream.optString("name"))
             val fileIndex = if (stream.has("fileIdx") && !stream.isNull("fileIdx")) stream.optInt("fileIdx", -1).takeIf { it >= 0 } else null
@@ -476,6 +478,37 @@ internal object EpisodeFilename {
     private val seasonEpisode = Regex("(?i)(?:^|[^a-z0-9])s(\\d{1,2})[ ._-]*e(\\d{1,3})((?:(?:[ ._-]*(?:-|to)[ ._-]*e?\\d{1,3})|(?:[ ._-]*e\\d{1,3}))*)")
     private val crossEpisode = Regex("(?i)(?:^|[^a-z0-9])(\\d{1,2})x(\\d{1,3})(?:[ ._-]*-[ ._-]*(\\d{1,3}))?(?=$|[^0-9])")
     private val tailEpisode = Regex("(?i)(?:[ ._-]*(?:-|to)[ ._-]*e?(\\d{1,3}))|(?:[ ._-]*e(\\d{1,3}))")
+
+    /**
+     * True when an episode release ("<name> S01E02 …") is clearly another show that add-ons matched loosely on a short
+     * title. For the show "Dark": "The Dark", "Dark Angel 2016", "Darkness" and "Web of Darkness" are other shows;
+     * "Dark", "Dark 2017" and "DARK" are this one. Words before the title are allowed ("Marvel's Daredevil"), as are a
+     * year or a country code after it ("The Office US"), and a leading "The" only when the show has one. Names that
+     * share nothing with the title (other languages, other scripts) and season packs are never hidden.
+     */
+    fun namesAnotherShow(name: String, showTitle: String): Boolean {
+        fun plain(text: String) = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "")
+            .lowercase(Locale.ROOT).replace("&", " and ").replace(Regex("['’]"), "").replace(Regex("[^a-z0-9]+"), " ").trim()
+        val title = plain(showTitle).split(' ').filter { it.isNotBlank() }
+        if (title.isEmpty()) return false
+        val release = plain(name)
+        val marker = Regex("(?:^| )s\\d{1,2} ?e\\d{1,3}(?!\\d)").find(release) ?: return false
+        val lead = release.substring(0, marker.range.first).trim().split(' ').filter { it.isNotBlank() }
+            .dropLastWhile { it.matches(Regex("(?:19|20)\\d\\d")) || it in REGIONS }
+        if (lead.isEmpty() || lead == title) return false
+        val titleHasThe = title.first() == "the"
+        if (!titleHasThe && lead == listOf("the") + title) return true
+        if (titleHasThe && lead == title.drop(1)) return false
+        // Extra words before the title name the same show ("Marvel's Daredevil").
+        if (lead.size > title.size && lead.takeLast(title.size) == title && !(lead.size == title.size + 1 && lead.first() == "the")) return false
+        // The title followed by more words is another show ("Dark Angel").
+        if (lead.size > title.size && lead.take(title.size) == title) return true
+        // A word that merely contains the title is another show ("Darkness", "Web of Darkness").
+        val joined = title.joinToString("")
+        return lead.any { word -> word != joined && word.contains(joined) } && !lead.windowed(title.size).contains(title)
+    }
+
+    private val REGIONS = setOf("us", "uk", "au", "nz", "ca")
 
     fun isExplicitMismatch(name: String, season: Int, episode: Int): Boolean {
         val markers = episodes(name)

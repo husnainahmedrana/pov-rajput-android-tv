@@ -38,7 +38,7 @@
                 android:focusable="true" android:contentDescription="Video timeline"
                 android:nextFocusDown="@id/exo_play_pause"
                 app:bar_height="4dp" app:touch_target_height="28dp" app:scrubber_enabled_size="12dp"
-                app:scrubber_dragged_size="16dp" app:played_color="#E50914" app:scrubber_color="#FFFFFF"
+                app:scrubber_dragged_size="16dp" app:played_color="@color/brand_accent" app:scrubber_color="#FFFFFF"
                 app:buffered_color="#80FFFFFF" app:unplayed_color="#33FFFFFF" />
             <TextView android:id="@id/exo_duration" android:layout_width="50dp" android:layout_height="wrap_content"
                 android:gravity="end" android:text="0:00" android:textSize="12sp" android:textColor="#B3FFFFFF" android:fontFamily="sans-serif-medium" />

@@ -162,7 +162,7 @@ jobs:
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" release-assets/* --clobber
           else
-            gh release create "$RELEASE_TAG" release-assets/* --verify-tag --title "POV Rajput $RELEASE_TAG" --notes-file release-notes.md
+            gh release create "$RELEASE_TAG" release-assets/* --verify-tag --title "Nabrio $RELEASE_TAG" --notes-file release-notes.md
             echo 'NEW_RELEASE=true' >> "$GITHUB_ENV"
           fi
       # Only for a newly created release, so re-running a tag's workflow doesn't post twice.

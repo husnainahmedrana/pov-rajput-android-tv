@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Nabrio icon: bold stream ring in red + white, as a vector so it stays smooth at any size. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="192dp" android:height="192dp" android:viewportWidth="120" android:viewportHeight="120">
+    <path android:fillColor="#141414" android:pathData="M0,0h120v120h-120z" />
+    <!-- The ring sits close to the round edge; the play button keeps its size in the middle. -->
+    <group android:scaleX="1.04" android:scaleY="1.04" android:pivotX="60" android:pivotY="60">
+        <path android:strokeColor="#E50914" android:strokeWidth="17" android:strokeLineCap="round"
+            android:pathData="M24.37,76.61 A39,39 0 0,1 76.61,24.37" />
+        <path android:strokeColor="#EDEEF5" android:strokeWidth="17" android:strokeLineCap="round"
+            android:pathData="M95.63,43.39 A39,39 0 0,1 43.39,95.63" />
+    </group>
+    <group android:scaleX="0.86" android:scaleY="0.86" android:pivotX="60" android:pivotY="60">
+        <!-- White on the red ring's side, fading to red on the white ring's side. -->
+        <path android:strokeWidth="8" android:strokeLineJoin="round" android:pathData="M50,42 L80,60 L50,78 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="linear" android:startX="50" android:startY="44" android:endX="76" android:endY="72"
+                    android:startColor="#EDEEF5" android:endColor="#E50914" />
+            </aapt:attr>
+            <aapt:attr name="android:strokeColor">
+                <gradient android:type="linear" android:startX="50" android:startY="44" android:endX="76" android:endY="72"
+                    android:startColor="#EDEEF5" android:endColor="#E50914" />
+            </aapt:attr>
+        </path>
+    </group>
+</vector>

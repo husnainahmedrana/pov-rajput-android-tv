@@ -64,6 +64,13 @@ class EasynewsApiTest {
         assertTrue(api.matches("Severance.2022.S02E03.2160p.mkv", show, null))
         assertFalse(api.matches("Severance.S02E04.1080p.mkv", show, null))
         assertFalse(api.matches("Corporate.Severance.S02E03.mkv", show, null))
+        // "Dark" must not take "The Dark", a different show; a show called "The …" still finds names without it.
+        val dark = PlaybackIdentity("tt5753856", "series", "Dark", 1, 2)
+        assertTrue(api.matches("Dark.S01E02.Lies.1080p.NF.WEB-DL.mkv", dark, null))
+        assertFalse(api.matches("The.Dark.S01E02.1080p.WEB.h264-CODSWALLOP.mkv", dark, null))
+        val office = PlaybackIdentity("tt0386676", "series", "The Office", 2, 1)
+        assertTrue(api.matches("The.Office.US.S02E01.mkv", office.copy(title = "The Office US"), null))
+        assertTrue(api.matches("Office.S02E01.720p.mkv", office, null))
     }
 
     @Test fun `a chosen download server replaces the farm Easynews names`() {

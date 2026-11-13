@@ -111,7 +111,9 @@ internal class SkipPill(context: Context, @Suppress("UNUSED_PARAMETER") tv: Bool
     val showing get() = visibility == View.VISIBLE && alpha > 0f
 
     private companion object {
-        val ACCENT_START = Color.rgb(255, 45, 85)   // warm red
-        val ACCENT_END = Color.rgb(142, 45, 226)    // violet
+        // Warm red to violet by default; a test build with its own brand colours uses those instead.
+        private val customBrand = BuildConfig.BRAND_ACCENT != 0xFFE50914.toInt()
+        val ACCENT_START = if (customBrand) BuildConfig.BRAND_ACCENT else Color.rgb(255, 45, 85)
+        val ACCENT_END = if (customBrand) BuildConfig.BRAND_ACCENT_2 else Color.rgb(142, 45, 226)
     }
 }

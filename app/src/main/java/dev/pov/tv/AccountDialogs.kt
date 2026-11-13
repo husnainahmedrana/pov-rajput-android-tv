@@ -47,7 +47,7 @@ internal class AccountDialogs(
     private fun chooser() {
         if (!alive()) return
         val content = column()
-        content.addView(label("Create a free POV account and your debrid services, add-ons, Home rows and watch progress are backed up, " +
+        content.addView(label("Create a free ${BuildConfig.APP_SHORT} account and your debrid services, add-ons, Home rows and watch progress are backed up, " +
             "encrypted on this device. Sign in on any TV or phone and everything comes back.", 14, Color.WHITE))
         content.addView(label("You can do this later in Settings → Account.", 13, MUTED), params(8))
         val dialog = AlertDialog.Builder(activity).setCustomTitle(titleBar("Keep your setup safe")).setView(scroll(content)).create()
@@ -70,10 +70,10 @@ internal class AccountDialogs(
         fun paint(focused: Boolean) {
             background = android.graphics.drawable.GradientDrawable().apply {
                 cornerRadius = dp(10).toFloat()
-                setColor(when { focused -> Color.WHITE; primary -> 0xFFE50914.toInt(); else -> 0x2EFFFFFF })
-                if (focused) setStroke(dp(2), 0xFFE50914.toInt())
+                setColor(when { focused -> Color.WHITE; primary -> BuildConfig.BRAND_ACCENT; else -> 0x2EFFFFFF })
+                if (focused) setStroke(dp(2), BuildConfig.BRAND_ACCENT)
             }
-            setTextColor(if (focused) Color.BLACK else Color.WHITE)
+            setTextColor(if (focused) Color.BLACK else if (primary) BuildConfig.BRAND_ON_ACCENT else Color.WHITE)
         }
         paint(false)
         setOnFocusChangeListener { _, focused -> paint(focused) }
@@ -81,7 +81,7 @@ internal class AccountDialogs(
     }
 
     fun createAccount(email: String = "", password: String = "", back: (() -> Unit)? = null) {
-        val form = Form("Create your POV account",
+        val form = Form("Create your ${BuildConfig.APP_SHORT} account",
             "Your setup is encrypted on this device before it is backed up. Only your password or recovery key can open your debrid keys and add-ons.")
         val emailField = form.field("Email", Kind.EMAIL, email)
         val passwordField = form.field("Password (at least 8 characters)", Kind.PASSWORD, password)
@@ -103,7 +103,7 @@ internal class AccountDialogs(
     }
 
     fun signIn(email: String = "", back: (() -> Unit)? = null) {
-        val form = Form("Sign in to POV", "Sign in to bring back your setup from your backup.")
+        val form = Form("Sign in to ${BuildConfig.APP_SHORT}", "Sign in to bring back your setup from your backup.")
         val emailField = form.field("Email", Kind.EMAIL, email)
         val passwordField = form.field("Password", Kind.PASSWORD)
         if (DeviceLayout.tv) form.extra("Use phone") {
@@ -123,7 +123,7 @@ internal class AccountDialogs(
                     restored.hasData
                 }) { restoredSomething ->
                     form.dismiss()
-                    if (restoredSomething) restart("Welcome back. Your setup was restored from your POV account.")
+                    if (restoredSomething) restart("Welcome back. Your setup was restored from your ${BuildConfig.APP_SHORT} account.")
                     else { toast("Signed in. This device is now backed up to your account."); changed() }
                 }
             }
@@ -151,7 +151,7 @@ internal class AccountDialogs(
     fun backupNow() {
         toast("Backing up…")
         worker.execute {
-            val message = try { account.backup(force = true); "Backed up to your POV account" } catch (error: Exception) { uiErrorMessage(error) }
+            val message = try { account.backup(force = true); "Backed up to your ${BuildConfig.APP_SHORT} account" } catch (error: Exception) { uiErrorMessage(error) }
             handler.post { if (alive()) { toast(message); changed() } }
         }
     }
@@ -172,18 +172,18 @@ internal class AccountDialogs(
 
     fun deleteAccount() {
         if (!alive()) return
-        AlertDialog.Builder(activity).setCustomTitle(titleBar("Delete your POV account?"))
+        AlertDialog.Builder(activity).setCustomTitle(titleBar("Delete your ${BuildConfig.APP_SHORT} account?"))
             .setMessage("Your account ${account.email} and its backup are removed from the server for good. This device keeps its settings.")
             .setPositiveButton("Delete account") { _, _ ->
                 worker.execute {
-                    val message = try { account.deleteAccount(); "Your POV account was deleted" } catch (error: Exception) { uiErrorMessage(error) }
+                    val message = try { account.deleteAccount(); "Your ${BuildConfig.APP_SHORT} account was deleted" } catch (error: Exception) { uiErrorMessage(error) }
                     handler.post { if (alive()) { toast(message); changed() } }
                 }
             }.setNegativeButton("Cancel", null).show()
     }
 
     fun backupServer() {
-        val form = Form("Backup server", "Use your own copy of the POV backup server (server/backup in the app's source code). Leave it empty for the default.")
+        val form = Form("Backup server", "Use your own copy of the ${BuildConfig.APP_SHORT} backup server (server/backup in the app's source code). Leave it empty for the default.")
         val field = form.field(BuildConfig.BACKUP_SERVER, Kind.TEXT, account.server.takeIf { it != BuildConfig.BACKUP_SERVER }.orEmpty())
         form.show("Save") {
             val value = field.value()
@@ -203,7 +203,7 @@ internal class AccountDialogs(
             if (code.value().length != 6) form.error("Enter the 6-digit code from the email.", code)
             else form.run("Creating your account and backing up…", { account.signUp(email, password, code.value()) }) { recovery ->
                 form.dismiss()
-                recoveryKey(recovery) { toast("Your POV account is ready. This device is backed up."); changed() }
+                recoveryKey(recovery) { toast("Your ${BuildConfig.APP_SHORT} account is ready. This device is backed up."); changed() }
             }
         }
     }
@@ -272,7 +272,7 @@ internal class AccountDialogs(
                     result
                 }) { result ->
                     form.dismiss()
-                    val message = if (key.isNotBlank()) "Password changed. Everything was restored from your POV account."
+                    val message = if (key.isNotBlank()) "Password changed. Everything was restored from your ${BuildConfig.APP_SHORT} account."
                         else "Password changed. Your settings were restored. Link your debrid services and add-ons again, and they'll be backed up."
                     val finish = { if (result.restored.hasData) restart(message) else { toast(message); changed() } }
                     result.newRecoveryKey?.let { recoveryKey(it, finish) } ?: finish()
@@ -451,7 +451,7 @@ internal class AccountDialogs(
     private fun titleBar(title: String) = LinearLayout(activity).apply {
         gravity = Gravity.CENTER_VERTICAL; setPadding(dp(24), dp(20), dp(20), dp(4))
         addView(label(title, 22, Color.WHITE).apply { typeface = Typeface.DEFAULT_BOLD }, LinearLayout.LayoutParams(0, -2, 1f))
-        addView(ImageView(activity).apply { setImageResource(R.drawable.pov_icon); scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = "POV" },
+        addView(ImageView(activity).apply { setImageResource(R.drawable.pov_logo); scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = "POV" },
             LinearLayout.LayoutParams(dp(40), dp(40)).apply { leftMargin = dp(16) })
     }
     private fun scroll(view: View) = ScrollView(activity).apply { addView(view) }

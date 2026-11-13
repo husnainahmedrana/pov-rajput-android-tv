@@ -761,7 +761,7 @@ class PlayerActivity : Activity() {
     private fun showStreams() {
         val media = InAppPlaybackSession.playbackIdentity
         if (media == null || !media.imdbId.startsWith("tt")) {
-            showSheet("Streams", "Other links are available for titles from POV's catalogs.", listOf(PlayerSheetChoice("Close") { activeDialog?.dismiss() }))
+            showSheet("Streams", "Other links are available for titles from ${BuildConfig.APP_SHORT}'s catalogs.", listOf(PlayerSheetChoice("Close") { activeDialog?.dismiss() }))
             streamsDialog = activeDialog; return
         }
         if (!StreamChoices.has(media)) StreamChoices.searcher?.invoke(media)
@@ -953,7 +953,7 @@ class PlayerActivity : Activity() {
         timeline.previewPosition = seekPreview.position
         seekLabel.text = "${DpadSeekPreview.time(seekPreview.position)}\n${DpadSeekPreview.offset(seekPreview.offsetSeconds * 1000)}  ·  ${DpadSeekPreview.time(exo.duration)}"
         seekLabel.visibility = View.VISIBLE
-        showThumb(seekPreview.position, DpadSeekPreview.offset(seekPreview.offsetSeconds * 1000))
+        showThumb(seekPreview.position)
         return true
     }
 
@@ -993,7 +993,7 @@ class PlayerActivity : Activity() {
 
     /** The Seekr thumbnail nearest [position] above the seek label, or hide it when null. */
     private val hideCard = Runnable { showThumb(null) }
-    private fun showThumb(position: Long?, offset: String? = null) {
+    private fun showThumb(position: Long?) {
         view.removeCallbacks(hideCard)
         if (position == null) {
             seekrFrame?.cancel()
@@ -1010,7 +1010,8 @@ class PlayerActivity : Activity() {
         // The pill carries the time on the seek bar, so the big centre label steps aside. When the bar is hidden (a
         // phone swipe) the label stays and only the picture shows.
         if (onBar) seekLabel.visibility = View.GONE
-        seekCardTime.text = DpadSeekPreview.time(position) + (offset?.let { "  ·  $it" } ?: "")
+        // Only the target time: the jump size made the pill wide enough to cover the bar and subtitles.
+        seekCardTime.text = DpadSeekPreview.time(position)
         seekCardTime.visibility = if (onBar) View.VISIBLE else View.GONE
         seekCard.visibility = if (track != null) View.VISIBLE else View.GONE
         placeSeekCard(position)

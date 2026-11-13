@@ -10,16 +10,32 @@ android {
     testBuildType = providers.gradleProperty("povTestBuildType").orElse("debug").get()
     defaultConfig {
         applicationId = "dev.pov.tv.rajput"
-        manifestPlaceholders["appLabel"] = providers.gradleProperty("povAppLabel").orElse("POV Rajput").get()
+        manifestPlaceholders["appLabel"] = providers.gradleProperty("povAppLabel").orElse("Nabrio").get()
         minSdk = 26
         targetSdk = 35
-        versionCode = 65
-        versionName = "0.3.32-rajput"
+        versionCode = 66
+        // Test builds can raise it (-PpovVersionCode=…) so a TV launcher reloads a changed icon; releases leave it alone.
+        providers.gradleProperty("povVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
+        versionName = "0.4.0-rajput"
         testInstrumentationRunner = providers.gradleProperty("povTestRunner")
             .orElse("dev.pov.tv.PlaybackAuditInstrumentation").get()
     }
     buildFeatures { buildConfig = true }
     // Optional Seekr key for local preview builds only (-PpovSeekrKey=...). Never committed; releases ship without one.
+    // Brand colours, overridable for test builds (-PpovAccent=A3E635 -PpovAccent2=3B82F6 -PpovOnAccent=000000).
+    // Defaults are the current red, so normal builds look exactly as before.
+    val brandAccent = providers.gradleProperty("povAccent").orElse("E50914").get()
+    val brandAccent2 = providers.gradleProperty("povAccent2").orElse("B20710").get()
+    val brandOnAccent = providers.gradleProperty("povOnAccent").orElse("FFFFFF").get()
+    defaultConfig.buildConfigField("int", "BRAND_ACCENT", "(int) 0xFF${brandAccent}L")
+    defaultConfig.buildConfigField("int", "BRAND_ACCENT_2", "(int) 0xFF${brandAccent2}L")
+    defaultConfig.buildConfigField("int", "BRAND_ON_ACCENT", "(int) 0xFF${brandOnAccent}L")
+    defaultConfig.resValue("color", "brand_accent", "#$brandAccent")
+    // The app's name in its own text (About, updates, "Make POV yours."), following -PpovAppLabel for test builds.
+    val appName = providers.gradleProperty("povAppLabel").orElse("Nabrio").get()
+    val appShort = providers.gradleProperty("povAppShortName").orElse(appName).get()
+    defaultConfig.buildConfigField("String", "APP_NAME", "\"${appName.replace("\"", "")}\"")
+    defaultConfig.buildConfigField("String", "APP_SHORT", "\"${appShort.replace("\"", "")}\"")
     defaultConfig.buildConfigField("String", "SEEKR_KEY", "\"${providers.gradleProperty("povSeekrKey").orNull.orEmpty()}\"")
     // Account backup server (server/backup in this repo). Forks set their own: -PpovBackupServer=https://backup.example.com
     defaultConfig.buildConfigField("String", "BACKUP_SERVER", "\"${providers.gradleProperty("povBackupServer").orElse("https://backup.rajput.cc").get()}\"")
@@ -71,6 +87,11 @@ android {
             }
             if (!releaseStore.isNullOrBlank()) signingConfig = signingConfigs.getByName("distribution")
         }
+    }
+    // Optional test branding, e.g. -PpovBrand=nebrix: brand/<name>/res replaces the launcher icon and TV banner.
+    // Package names, signing and update channels stay the same, so it installs over the matching build.
+    providers.gradleProperty("povBrand").orNull?.let { brand ->
+        listOf("debug", "release").forEach { sourceSets.getByName(it).res.srcDir("brand/$brand/res") }
     }
     testOptions { unitTests.isIncludeAndroidResources = true }
     packaging { resources.excludes += setOf("META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*") }

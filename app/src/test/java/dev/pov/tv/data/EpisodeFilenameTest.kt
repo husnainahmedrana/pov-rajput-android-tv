@@ -29,6 +29,28 @@ class EpisodeFilenameTest {
         assertEquals(2L, EpisodeFilename.select(files, "Example.Show.S01E02.1080p.mkv", episode).id)
     }
 
+    @Test fun otherShowsMatchedLooselyOnAShortTitleAreSpotted() {
+        fun other(name: String, show: String = "Dark") = EpisodeFilename.namesAnotherShow(name, show)
+        // Real links for "Dark" (the screenshot from Torrentio).
+        assertFalse(other("Dark.S01E02.XviD-AFG"))
+        assertFalse(other("dark.s01e02.webrip.x264-strife.mkv"))
+        assertFalse(other("DARK.S01E02.Lies.2160p.NF.WEBRip.DDP5.1.x264-NTb"))
+        assertFalse(other("Dark.2017.S01E02.1080p.mkv"))
+        assertFalse(other("Dark.S01.GERMAN.1080p.NF.WEB.DDP5.1.Atmos.x264-NTb"))
+        assertFalse(other("Тьма / Dark [S01] (2017) WEBRip 1080p"))
+        // Other shows that turned up for "Dark".
+        assertTrue(other("Dark Angel 2016 S01E02 HDTV x264-RiVER"))
+        assertTrue(other("Darkness S01E02 WEB x264-TBS"))
+        assertTrue(other("Web.of.Darkness.S01E02.Night.of.the.Zombies.XviD-AFG.avi"))
+        assertTrue(other("The Dark S01E02 1080p WEB h264-CODSWALLOP EZTV"))
+        // Shows with "The", region codes and longer official names keep their links.
+        assertFalse(other("The.Office.US.S02E01.mkv", "The Office"))
+        assertFalse(other("Office.S02E01.720p.mkv", "The Office"))
+        assertFalse(other("Marvels.Daredevil.S01E02.1080p.mkv", "Daredevil"))
+        assertFalse(other("Las.Chicas.del.Cable.S01E02.1080p.mkv", "Cable Girls"))
+        assertTrue(other("House.of.the.Dragon.S01E02.1080p.mkv", "House"))
+    }
+
     @Test fun wrongSingleEpisodeIsRejected() {
         expectFailure {
             EpisodeFilename.select(listOf(VideoCandidate(0, "Example.Show.S02E02.mp4", 2_000)), "Example Show", episode)

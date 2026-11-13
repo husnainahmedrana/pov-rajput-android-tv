@@ -1,9 +1,14 @@
-// pov.rajput.cc: the POV Rajput website, static files served by Cloudflare (free plan).
+// nabrio.rajput.cc: the Nabrio website (formerly POV Rajput), static files served by Cloudflare (free plan).
+// pov.rajput.cc still answers and redirects to nabrio.rajput.cc (src/index.js), so old links keep working.
 // Deploy: npx wrangler deploy   (short links like /tv and /phone are in public/_redirects)
 {
   "name": "pov-site",
   "compatibility_date": "2026-10-01",
-  "assets": { "directory": "./public", "not_found_handling": "404-page" },
+  "main": "src/index.js",
+  "assets": { "directory": "./public", "binding": "ASSETS", "not_found_handling": "404-page", "run_worker_first": true },
   "workers_dev": false,
-  "routes": [{ "pattern": "pov.rajput.cc", "custom_domain": true }]
+  "routes": [
+    { "pattern": "nabrio.rajput.cc", "custom_domain": true },
+    { "pattern": "pov.rajput.cc", "custom_domain": true }
+  ]
 }

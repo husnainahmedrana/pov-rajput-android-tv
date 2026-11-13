@@ -78,7 +78,7 @@ class UpdateActivity : Activity() {
             text = value; textSize = size; setTextColor(color); if (bold) typeface = Typeface.DEFAULT_BOLD
         }
         content.addView(label("APP UPDATES", 13f, MUTED, true).apply { letterSpacing = 0.12f })
-        content.addView(label("POV Rajput", if (phone) 28f else 34f, bold = true), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+        content.addView(label("${BuildConfig.APP_NAME}", if (phone) 28f else 34f, bold = true), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         status = label("Checking for updates…", if (phone) 16f else 18f, Color.WHITE)
         content.addView(status, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
@@ -163,7 +163,7 @@ class UpdateActivity : Activity() {
                 val installed = installedVersion().removeSuffix("-rajput")
                 status.text = "Version ${latest.version.removeSuffix("-rajput")} is available" +
                     if (phone) "\nYou have $installed" else "  ·  you have $installed"
-                notes.text = latest.candidate.notes.ifBlank { "A new version of POV Rajput is available." }.let(::formatNotes)
+                notes.text = latest.candidate.notes.ifBlank { "A new version of ${BuildConfig.APP_NAME} is available." }.let(::formatNotes)
                 action.text = "Download and install"
             }
             action.requestFocus()
@@ -189,10 +189,10 @@ class UpdateActivity : Activity() {
         if (busy) return
         if (!packageManager.canRequestPackageInstalls()) {
             SpacedChoiceDialog.show(this, "Allow app updates",
-                "Allow POV Rajput to install apps on the next screen. Return here and select Install update. Android will ask you to confirm the installation.",
+                "Allow ${BuildConfig.APP_NAME} to install apps on the next screen. Return here and select Install update. Android will ask you to confirm the installation.",
                 "Open settings", "Later") {
                 try { startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))) }
-                catch (_: android.content.ActivityNotFoundException) { status.text = "Open Android Settings → Security → Install unknown apps and allow POV Rajput, then return here." }
+                catch (_: android.content.ActivityNotFoundException) { status.text = "Open Android Settings → Security → Install unknown apps and allow ${BuildConfig.APP_NAME}, then return here." }
             }
             return
         }
@@ -201,7 +201,7 @@ class UpdateActivity : Activity() {
             val uri = FileProvider.getUriForFile(this, "$packageName.updates", updates.apkFile)
             val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            intent.clipData = ClipData.newRawUri("POV Rajput update", uri)
+            intent.clipData = ClipData.newRawUri("${BuildConfig.APP_NAME} update", uri)
             try { startActivity(intent); status.text = "Choose Install on the next screen. If you cancelled, select Install update again." }
             catch (_: android.content.ActivityNotFoundException) { status.text = "No APK installer is available on this device. Install the signed APK manually from GitHub Releases." }
         }
@@ -238,7 +238,7 @@ class UpdateActivity : Activity() {
         val PANEL = Color.rgb(31, 31, 31)
         val TEXT = Color.rgb(229, 229, 229)
         val MUTED = Color.rgb(179, 179, 179)
-        val ACCENT = Color.rgb(229, 9, 20)
+        val ACCENT = BuildConfig.BRAND_ACCENT
         val TRACK = Color.rgb(74, 74, 74)
     }
 }

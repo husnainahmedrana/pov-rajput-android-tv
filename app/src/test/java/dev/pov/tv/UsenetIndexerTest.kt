@@ -94,6 +94,8 @@ class UsenetIndexerTest {
         assertFalse(Newznab.named("Dune.Part.Two.2024.1080p-GRP", PlaybackIdentity("tt1", "movie", "Dune"), 2021))
         assertFalse(Newznab.named("Dune.1984.1080p-GRP", PlaybackIdentity("tt1", "movie", "Dune"), 2021))
         assertTrue(Newznab.named("The.Show.2019.S01E02.720p-GRP", PlaybackIdentity("tt1", "series", "The Show", 1, 2), null))
+        assertTrue(Newznab.named("Dark.S01E02.1080p-GRP", PlaybackIdentity("tt5753856", "series", "Dark", 1, 2), null))
+        assertFalse(Newznab.named("The.Dark.S01E02.1080p-GRP", PlaybackIdentity("tt5753856", "series", "Dark", 1, 2), null))
     }
 
     @Test fun `an indexer's refusal is told in plain words`() {

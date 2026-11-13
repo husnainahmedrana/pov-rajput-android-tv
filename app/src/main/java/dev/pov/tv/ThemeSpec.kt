@@ -21,9 +21,9 @@ enum class ThemeSpec(
         palette = ThemePalette(
             background = 0xFF141414.toInt(), panel = 0xFF232323.toInt(),
             text = 0xFFFFFFFF.toInt(), muted = 0xFFB3B3B3.toInt(),
-            accent = 0xFFE50914.toInt(), secondaryAccent = 0xFFB20710.toInt(),
+            accent = BuildConfig.BRAND_ACCENT, secondaryAccent = BuildConfig.BRAND_ACCENT_2,
             buttonText = 0xFF000000.toInt(), border = 0xFF2F2F2F.toInt(),
-            navSelected = 0x33FFFFFF, progress = 0xFFE50914.toInt(),
+            navSelected = 0x33FFFFFF, progress = BuildConfig.BRAND_ACCENT,
             primaryButton = 0xFFFFFFFF.toInt(),
         ),
         tvLayout = ThemeLayout(

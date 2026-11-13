@@ -48,7 +48,7 @@ internal class TvContinueWatching(private val context: Context) {
         val id=ContentUris.parseId(uri)
         runCatching {
             val bitmap=Bitmap.createBitmap(128,128,Bitmap.Config.ARGB_8888)
-            context.getDrawable(R.drawable.pov_icon)?.apply { setBounds(0,0,128,128);draw(Canvas(bitmap)) }
+            context.getDrawable(R.drawable.pov_logo)?.apply { setBounds(0,0,128,128);draw(Canvas(bitmap)) }
             resolver.openOutputStream(TvContract.buildChannelLogoUri(id))?.use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) };bitmap.recycle()
         }
         TvContract.requestChannelBrowsable(context,id)

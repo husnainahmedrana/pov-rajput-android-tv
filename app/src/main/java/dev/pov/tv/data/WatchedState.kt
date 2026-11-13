@@ -48,5 +48,8 @@ class WatchedCache(private val file: java.io.File) {
         if (!temp.renameTo(file)) { file.delete(); temp.renameTo(file) }
     }
 
+    /** The saved history whatever account it belongs to: the player reads it for its episode ✓ marks (the app keeps one file per signed-in account). */
+    fun peek(): WatchedState? = try { WatchedState.fromJson(JSONObject(file.readText()).getJSONObject("state")) } catch (_: Exception) { null }
+
     fun clear() { file.delete() }
 }

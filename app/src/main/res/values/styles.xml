@@ -18,8 +18,8 @@
         <item name="android:backgroundDimAmount">0.82</item>
         <item name="android:windowMinWidthMajor">48%</item>
         <item name="android:windowMinWidthMinor">70%</item>
-        <item name="android:colorAccent">#E50914</item>
-        <item name="android:colorControlActivated">#E50914</item>
+        <item name="android:colorAccent">@color/brand_accent</item>
+        <item name="android:colorControlActivated">@color/brand_accent</item>
         <item name="android:colorControlNormal">#99FFFFFF</item>
         <item name="android:colorControlHighlight">#33FFFFFF</item>
         <item name="android:textColorPrimary">#FFFFFFFF</item>

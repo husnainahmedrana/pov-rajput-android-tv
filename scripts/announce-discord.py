@@ -16,7 +16,7 @@ LIMIT = 4096  # Discord embed description limit
 
 def build(notes: str, tag: str, repo: str) -> dict:
     lines = notes.strip().splitlines()
-    title = f"POV Rajput {tag.lstrip('v')}"
+    title = f"Nabrio {tag.lstrip('v')}"
     if lines and lines[0].startswith("# "):
         title = lines.pop(0)[2:].strip()
     body = []
@@ -35,7 +35,7 @@ def build(notes: str, tag: str, repo: str) -> dict:
     if len(text) > room:
         text = text[: room - 40].rsplit("\n", 1)[0] + "\n\n…more in the full notes."
     return {
-        "username": "POV Releases",
+        "username": "Nabrio Releases",
         "allowed_mentions": {"parse": []},
         "embeds": [{
             "title": f"🚀 {title} is out",

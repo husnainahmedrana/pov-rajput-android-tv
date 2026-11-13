@@ -310,6 +310,8 @@ internal object PlayerPanels {
         val runtimes = mutableMapOf<Int, Map<Int, Int>>()
         val scores = mutableMapOf<Int, ImdbRatings.SeasonScores?>()
         val episodeViews = mutableListOf<Pair<EpisodeData, View>>()
+        // The app's saved watched history (kept for its ✓ badges), so watched episodes are marked here too.
+        val watched = dev.pov.tv.data.WatchedCache(java.io.File(activity.filesDir, "watched.json")).peek() ?: dev.pov.tv.data.WatchedState.EMPTY
 
         fun stars(score: ImdbRatings.Score?): CharSequence = if (score == null) "" else SpannableStringBuilder().apply {
             append("★", ForegroundColorSpan(STAR), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE); append(" ${score.label}")
@@ -342,6 +344,10 @@ internal object PlayerPanels {
             still.addView(p.text(String.format(Locale.US, "E%02d", episode.episode), if (tv) 14f else 11f, INK, true).apply {
                 background = p.rounded(0xCC000000.toInt(), 6); setPadding(p.dp(7), p.dp(4), p.dp(7), p.dp(4))
             }, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply { topMargin = p.dp(8); rightMargin = p.dp(8) })
+            if (watched.episode(identity.imdbId, episode.season, episode.episode)) still.addView(p.text("✓", if (tv) 14f else 11f, Color.BLACK, true).apply {
+                gravity = Gravity.CENTER; contentDescription = "Watched"
+                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE); setStroke(p.dp(1), 0x33000000) }
+            }, FrameLayout.LayoutParams(p.dp(if (tv) 24 else 18), p.dp(if (tv) 24 else 18), Gravity.TOP or Gravity.START).apply { topMargin = p.dp(8); leftMargin = p.dp(8) })
             card.addView(still, LinearLayout.LayoutParams(stillWidth, stillWidth * 9 / 16))
             p.image(episode.thumbnail, stillWidth) { picture.setImageBitmap(it) }
 

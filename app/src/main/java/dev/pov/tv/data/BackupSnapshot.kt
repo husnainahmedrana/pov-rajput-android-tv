@@ -65,7 +65,7 @@ object BackupSnapshot {
     /** Writes a restored layer over this device's values. Keys the backup does not have are left as they are. */
     fun apply(context: Context, store: CloudAccount.Store, layer: JSONObject?) {
         if (layer == null) return
-        require(layer.optInt("v") in 1..VERSION) { "This backup was made by a newer version of POV. Update the app first." }
+        require(layer.optInt("v") in 1..VERSION) { "This backup was made by a newer version of ${dev.pov.tv.BuildConfig.APP_SHORT}. Update the app first." }
         layer.optJSONObject("store")?.let { saved ->
             val values = saved.keys().asSequence().filterNot(::excluded).associateWith { saved.getString(it) }
             if (values.isNotEmpty()) store.putAll(values)

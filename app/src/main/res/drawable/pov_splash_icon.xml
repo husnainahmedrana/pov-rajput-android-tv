@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The system launch screen masks its icon to a circle; the inset keeps the square POV logo's corners inside it. -->
 <inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:drawable="@drawable/pov_icon" android:inset="18%" />
+    android:drawable="@drawable/pov_logo" android:inset="18%" />

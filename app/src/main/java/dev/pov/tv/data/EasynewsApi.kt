@@ -77,7 +77,10 @@ class EasynewsApi internal constructor(
         val name = normalize(file.substringBeforeLast('.'))
         val title = normalize(identity.title).removePrefix("the ")
         if (title.isBlank()) return false
-        val rest = listOf(name, name.removePrefix("the ")).firstNotNullOfOrNull { candidate ->
+        // A leading "The" may be dropped only when the show or film itself has one: "The Office" finds "Office.S01E01",
+        // but "Dark" must not take "The.Dark.S01E02", a different show.
+        val candidates = if (normalize(identity.title).startsWith("the ")) listOf(name, name.removePrefix("the ")) else listOf(name)
+        val rest = candidates.firstNotNullOfOrNull { candidate ->
             when { candidate == title -> ""; candidate.startsWith("$title ") -> candidate.substring(title.length + 1); else -> null }
         } ?: return false
         if (identity.type == "series") {
