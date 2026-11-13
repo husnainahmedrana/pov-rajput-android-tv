@@ -1,4 +1,8 @@
-# POV Rajput for Android TV
+# Nabrio for Android TV and phones
+
+<img src="site/public/img/nabrio-icon.png" alt="Nabrio logo" width="96">
+
+**Nabrio** (formerly **POV Rajput**, renamed in 0.4.0).
 
 ### By Rajput
 
@@ -11,7 +15,7 @@
 
 ![Flix home: a living backdrop, rotating feature and Top 10 shelves](docs/screenshots/tv-home.jpg)
 
-**[⬇ Download the latest APK](https://github.com/husnainahmedrana/pov-rajput-android-tv/releases/latest)** · **[Website](https://pov.rajput.cc)** · **[Discord](https://discord.gg/dr7PauYM3y)** · [Setup guide](docs/OFFCLOUD.md) · [Release notes](docs/RELEASE_NOTES.md) · [Build and release](docs/BUILD_AND_RELEASE.md)
+**[⬇ Download the latest APK](https://github.com/husnainahmedrana/pov-rajput-android-tv/releases/latest)** · **[Website](https://nabrio.rajput.cc)** · **[Discord](https://discord.gg/dr7PauYM3y)** · [Setup guide](docs/OFFCLOUD.md) · [Release notes](docs/RELEASE_NOTES.md) · [Build and release](docs/BUILD_AND_RELEASE.md)
 
 This is **Rajput's Android TV edition**, forked from [MM-482/pov-android-tv](https://github.com/MM-482/pov-android-tv). The original Android TV port was created by **Mark Mateo**, based on the original POV Kodi add-on by **[kodifitzwell](https://github.com/kodifitzwell/repo)**. Their work, attribution and GPL-3.0 license are preserved.
 
@@ -26,7 +30,7 @@ This is **Rajput's Android TV edition**, forked from [MM-482/pov-android-tv](htt
 - **Sensible defaults** — bold subtitles on a transparent background, 3% above the bottom, English subtitles and audio.
 - **Your library as posters** — Offcloud and TorBox downloads appear as artwork cards matched from their filenames.
 - **Voice search** — speak a title; the words appear as you talk and results open when you stop.
-- **Private by design** — every key and token is entered on your device and stored with Android Keystore encryption. Nothing personal is bundled in the source or APK; the only built-in value is POV Rajput's public WeTrakr app Client ID.
+- **Private by design** — every key and token is entered on your device and stored with Android Keystore encryption. Nothing personal is bundled in the source or APK; the only built-in value is the app's public WeTrakr app Client ID.
 
 ## Screenshots
 
@@ -60,13 +64,13 @@ Captured on an onn 4K box and an Android phone. Every link, file and watch progr
 
 ![Phone player in landscape with logos and badges](docs/screenshots/phone-player.jpg)
 
-![Animated POV launch splash](docs/screenshots/splash.jpg)
+![Animated Nabrio launch splash](docs/screenshots/splash.jpg)
 
 ## Getting started
 
-1. Download the APK for your device from [Releases](https://github.com/husnainahmedrana/pov-rajput-android-tv/releases/latest) and sideload it (Android 8.0 or later). The launcher name is **POV Rajput**.
-   - **Android TV / Google TV:** `POV-Rajput-TV.apk` (package `dev.pov.tv.rajput`). `POV-Rajput-release.apk` is the same file under its older name.
-   - **Phones:** `POV-Rajput-Mobile.apk` (package `dev.pov.rajput.mobile`), a separate app with a portrait layout, bottom navigation and a touch player.
+1. Download the APK for your device from [Releases](https://github.com/husnainahmedrana/pov-rajput-android-tv/releases/latest) and sideload it (Android 8.0 or later). The launcher name is **Nabrio**.
+   - **Android TV / Google TV:** `Nabrio-TV.apk` (package `dev.pov.tv.rajput`). `POV-Rajput-TV.apk` and `POV-Rajput-release.apk` are the same file under its older names.
+   - **Phones:** `Nabrio-Mobile.apk` (package `dev.pov.rajput.mobile`; `POV-Rajput-Mobile.apk` is the same file), a separate app with a portrait layout, bottom navigation and a touch player.
 2. **Settings → Sources → Debrid services**: connect **Offcloud**, **TorBox** (sign in with a code or paste an API key), **Real-Debrid**, **AllDebrid**, **Premiumize** or **Debrid-Link** with your own API keys. Real-Debrid, AllDebrid and Debrid-Link have no up-front cache check, so the app tries the first 7 links when you play and plays the first cached one. Each service has an **On/Off** switch (off keeps the key) and ▲ ▼ to set which plays first.
 3. **Settings → Sources → Source providers**: add your preferred HTTPS Stremio-compatible add-ons, each with a name you choose, and switch each on or off. Without a debrid service, add-ons that return direct links still work.
    *Optional* — **Settings → Sources → Easynews**: sign in with your Easynews username and password to add Usenet results to the link list (experimental; it uses the Easynews members website). Pick a **Download server** (Amsterdam, Virginia or Los Angeles) if another one is faster for you. Easynews caps each download connection, so videos stream over **8 parallel connections** by default; change it under **Connections** (1–16).
@@ -131,7 +135,7 @@ Offcloud cached sources resolve directly without adding a dashboard entry. TorBo
 
 Choose your tracking service in **Settings → Tracking**. Press Connect, scan the QR code or approve the code at **wetrakr.com/activate** or **simkl.com/pin**, and it supplies Home's Continue Watching (shown instantly from your last visit, then refreshed), watchlists, liked lists and Up Next (Simkl has no list API yet, so its personal and liked lists aren't shown). **Use WeTrakr/Simkl** (off keeps you signed in), **Scrobbling** and **Liked lists on Home** are switches in Settings. Tokens are stored with Android Keystore encryption; library reads are cached and server retry limits are respected. API references: [api.wetrakr.com](https://api.wetrakr.com/), [api.simkl.org](https://api.simkl.org/).
 
-## POV account and backup
+## Nabrio account and backup
 
 **Settings → Account** (also offered once on first start): create a free account with your email and a password, and your setup is backed up whenever you leave the app: debrid services, stream and catalog add-ons, TMDB / Easynews / Seekr / Wyzie keys, WeTrakr and Simkl logins, Home rows, preferences and local watch progress. Sign in on any TV or phone and it all comes back. On a TV, **Use phone** shows a QR code so you can type on your phone instead.
 
@@ -150,7 +154,7 @@ Found a bug or have an idea? Use **[bug.rajput.cc](https://bug.rajput.cc)** or *
 ## Privacy
 
 - API keys (Offcloud, TorBox, TMDB), your Easynews login (sent only to easynews.com), WeTrakr tokens and source-provider addresses are entered on your device and encrypted with Android Keystore. The app ships POV Rajput's public WeTrakr and Simkl Client IDs (no client secrets); requests made with your sign-in count against your own WeTrakr or Simkl quota.
-- With a POV account, backups go to backup.rajput.cc (or your own server). Credentials are end-to-end encrypted; settings and local watch progress are encrypted with a key the server holds, and your email is kept to send codes. See [server/backup](server/backup).
+- With a Nabrio account, backups go to backup.rajput.cc (or your own server). Credentials are end-to-end encrypted; settings and local watch progress are encrypted with a key the server holds, and your email is kept to send codes. See [server/backup](server/backup).
 - Nothing personal is included in the repository or release APKs.
 - The microphone is used only while the voice-search screen is open.
 

@@ -93,7 +93,11 @@ jobs:
             for flavor in tv mobile; do
               "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "app/build/outputs/apk/$flavor/release/app-$flavor-release.apk"
             done
-            # POV-Rajput-release.apk + update.json stay the TV app's names: installed TV builds look for them.
+            # Nabrio-*.apk are the names the website and download links use (the app was renamed in 0.4.0).
+            cp app/build/outputs/apk/tv/release/app-tv-release.apk dist/release/Nabrio-TV.apk
+            cp app/build/outputs/apk/mobile/release/app-mobile-release.apk dist/release/Nabrio-Mobile.apk
+            # The POV-Rajput-* names stay too: installed apps (POV-Rajput-release.apk, POV-Rajput-Mobile.apk + the
+            # update.json files) and older posted links look for them.
             cp app/build/outputs/apk/tv/release/app-tv-release.apk dist/release/POV-Rajput-TV.apk
             cp app/build/outputs/apk/tv/release/app-tv-release.apk dist/release/POV-Rajput-release.apk
             cp app/build/outputs/apk/mobile/release/app-mobile-release.apk dist/release/POV-Rajput-Mobile.apk

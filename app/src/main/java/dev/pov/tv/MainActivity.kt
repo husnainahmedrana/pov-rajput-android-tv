@@ -342,18 +342,19 @@ class MainActivity : Activity() {
     private var splash: View? = null
     private var splashShownAt = 0L
     /**
-     * Launch splash: the POV logo, continuing the system launch screen, held until Home's shelves are on
+     * Launch splash: the app logo, continuing the system launch screen, held until Home's shelves are on
      * screen. It sits on the window itself, above every page, so theme rebuilds never cover it.
      */
     private fun showSplash() {
         val root = window.decorView as? FrameLayout ?: return
         val overlay = FrameLayout(this).apply { setBackgroundColor(0xFF141414.toInt()); isClickable = true; elevation = 100f }
         val size = if (DeviceLayout.phone) dp(120) else (resources.displayMetrics.widthPixels * 0.11f).roundToInt()
-        // A neon glow in the logo's own cyan and magenta, breathing behind it.
+        // A soft glow in the brand red (Nabrio's ring), breathing behind the logo.
+        val brand = BuildConfig.BRAND_ACCENT and 0x00FFFFFF
         val glow = View(this).apply {
             background = GradientDrawable().apply {
                 gradientType = GradientDrawable.RADIAL_GRADIENT; gradientRadius = size * 1.1f
-                colors = intArrayOf(0x66C23CFF, 0x3322D3EE, 0x00141414)
+                colors = intArrayOf(0x66000000 or brand, 0x26000000 or brand, 0x00141414)
             }
             alpha = 0f
         }
