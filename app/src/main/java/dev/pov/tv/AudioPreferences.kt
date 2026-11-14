@@ -20,7 +20,7 @@ internal class AudioPreferences(context: Context) {
         get() = preferences.getString("second_language", "").orEmpty()
             .takeIf { value -> value.isNotEmpty() && LANGUAGES.any { it.first == value } && value != language }.orEmpty()
         set(value) { require(value.isEmpty() || LANGUAGES.any { it.first == value }); preferences.edit().putString("second_language", value).apply() }
-    val secondLanguageLabel: String get() = secondLanguage.takeIf { it.isNotEmpty() }?.let { code -> LANGUAGES.first { it.first == code }.second } ?: "None"
+    val secondLanguageLabel: String get() = secondLanguage.takeIf { it.isNotEmpty() }?.let { code -> LANGUAGES.first { it.first == code }.second } ?: L10n.tr(R.string.t_none, "None")
     /** When a video lacks the preferred audio language, English is tried before the player's default (subtitles have their own). */
     var englishFallback: Boolean
         get() = preferences.getBoolean("english_fallback", true)
@@ -36,7 +36,7 @@ internal class AudioPreferences(context: Context) {
     }
 
     companion object {
-        val LANGUAGES = listOf("" to "Automatic (player default)") +
+        val LANGUAGES get() = listOf("" to L10n.tr(R.string.t_automatic_player_default, "Automatic (player default)")) +
             SubtitlePreferences.LANGUAGES.filter { it.first.isNotEmpty() && it.first != "off" }
         val COMMON_LANGUAGES = SubtitlePreferences.COMMON_LANGUAGES.filter { it != "off" }
     }

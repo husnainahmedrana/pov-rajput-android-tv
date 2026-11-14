@@ -1,5 +1,8 @@
 package dev.pov.tv.usenet
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import java.util.Locale
 
 /**
@@ -54,7 +57,7 @@ object UsenetMedia {
 
     fun open(pool: ArticleSource, nzb: Nzb, cache: java.io.File? = null, log: (String) -> Unit = {}): Opened {
         val files = nzb.files
-        if (files.isEmpty()) throw UnsupportedSetException("The article list is empty.")
+        if (files.isEmpty()) throw UnsupportedSetException(L10n.tr(R.string.t_the_article_list_is_empty, "The article list is empty."))
         fun stream(file: NzbFile, pin: Boolean) = UsenetStream(pool, file.segments, pinEnds = pin, log = log)
         val names = files.map { subjectName(it.subject) }
         // What the NZB holds, biggest first: enough to tell from the log why a link didn't play.
@@ -75,7 +78,7 @@ object UsenetMedia {
             1 -> {
                 val ordered = splits!!.value.sortedBy { it.second }
                 if (ordered.withIndex().any { (index, part) -> part.second != index + 1 })
-                    throw UnsupportedSetException("The split set has missing or duplicate parts.")
+                    throw UnsupportedSetException(L10n.tr(R.string.t_the_split_set_has_missing_or, "The split set has missing or duplicate parts."))
                 return openSplit(splits.key, ordered.map { it.third }, ::stream, log, cache, nzb.password)
             }
             2 -> return openPlain(video!!, ::stream, log, cache, nzb.password)
@@ -104,7 +107,7 @@ object UsenetMedia {
             }
             streams.forEach { it.close() }
             val set = ordered.groupBy { it.first }.values.maxByOrNull { group -> group.sumOf { it.third.statedBytes } }?.sortedBy { it.second }?.map { it.third }
-                ?: throw UnsupportedSetException("The set's parts can't be put in order.")
+                ?: throw UnsupportedSetException(L10n.tr(R.string.t_the_set_s_parts_can_t, "The set's parts can't be put in order."))
             openSet(set, ::stream, log, trusted = true)
         }
     }
@@ -113,7 +116,7 @@ object UsenetMedia {
         return SevenZipMedia.open(source, cache, password, log)
     }
 
-    private class OutOfOrderException : java.io.IOException("The set's parts are out of order.")
+    private class OutOfOrderException : java.io.IOException(L10n.tr(R.string.t_the_set_s_parts_are_out, "The set's parts are out of order."))
 
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
 
@@ -181,26 +184,26 @@ object UsenetMedia {
             first.prepare()
             val entries = Rar.entries(first)
             val entry = entries.filter { isVideo(it.name) }.maxByOrNull { it.unpackedSize } ?: entries.maxByOrNull { it.unpackedSize }
-                ?: throw UnsupportedSetException("The set holds no file.")
-            if (entry.splitBefore) { if (!trusted) throw OutOfOrderException(); throw UnsupportedSetException("The set's first part is missing.") }
-            if (entry.encrypted) throw UnsupportedSetException("This set is password-protected.")
-            if (!entry.stored) throw UnsupportedSetException("This set is compressed, so it can't be streamed.")
-            if (!isVideo(entry.name)) throw UnsupportedSetException("The set holds no video (${entry.name.take(60)}).")
+                ?: throw UnsupportedSetException(L10n.tr(R.string.t_the_set_holds_no_file, "The set holds no file."))
+            if (entry.splitBefore) { if (!trusted) throw OutOfOrderException(); throw UnsupportedSetException(L10n.tr(R.string.t_the_set_s_first_part_is, "The set's first part is missing.")) }
+            if (entry.encrypted) throw UnsupportedSetException(L10n.tr(R.string.t_this_set_is_password_protected, "This set is password-protected."))
+            if (!entry.stored) throw UnsupportedSetException(L10n.tr(R.string.t_this_set_is_compressed_so_it, "This set is compressed, so it can't be streamed."))
+            if (!isVideo(entry.name)) throw UnsupportedSetException(L10n.tr(R.string.t_the_set_holds_no_video_x, "The set holds no video (%1\$s).", entry.name.take(60)))
             val pieces = ArrayList<VolumeSet.Piece>()
             pieces += VolumeSet.Piece(first, entry.dataOffset, minOf(entry.packedSize, entry.unpackedSize))
             var left = entry.unpackedSize - pieces[0].length
             if (left > 0) {
-                if (!entry.splitAfter || volumes.size < 2) throw UnsupportedSetException("The set is incomplete.")
+                if (!entry.splitAfter || volumes.size < 2) throw UnsupportedSetException(L10n.tr(R.string.t_the_set_is_incomplete, "The set is incomplete."))
                 val second = stream(volumes[1], false)
                 opened += second
                 second.prepare()
                 val next = Rar.entries(second, limit = 1).firstOrNull()
-                if (next == null || !next.splitBefore || next.name != entry.name) { if (!trusted) throw OutOfOrderException(); throw UnsupportedSetException("The set's parts don't follow one another.") }
+                if (next == null || !next.splitBefore || next.name != entry.name) { if (!trusted) throw OutOfOrderException(); throw UnsupportedSetException(L10n.tr(R.string.t_the_set_s_parts_don_t, "The set's parts don't follow one another.")) }
                 if (!trusted && rarOrder(second.name)?.second?.let { it != 1 } == true) throw OutOfOrderException()
-                if (!next.stored || next.packedSize <= 0) throw UnsupportedSetException("This set is compressed, so it can't be streamed.")
+                if (!next.stored || next.packedSize <= 0) throw UnsupportedSetException(L10n.tr(R.string.t_this_set_is_compressed_so_it, "This set is compressed, so it can't be streamed."))
                 var index = 1
                 while (left > 0) {
-                    if (index >= volumes.size) throw UnsupportedSetException("The set is incomplete: ${volumes.size} parts listed, more are needed.")
+                    if (index >= volumes.size) throw UnsupportedSetException(L10n.tr(R.string.t_the_set_is_incomplete_x_parts, "The set is incomplete: %1\$s parts listed, more are needed.", volumes.size))
                     val length = minOf(next.packedSize, left)
                     val lastPiece = left <= next.packedSize
                     val volume = if (index == 1) second else stream(volumes[index], lastPiece).also { opened += it }

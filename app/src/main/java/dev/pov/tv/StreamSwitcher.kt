@@ -32,9 +32,9 @@ internal class StreamSwitcher(context: Context) {
     fun prepare(source: SourceItem, identity: PlaybackIdentity, ordered: List<SourceItem>, only: String? = null): Result {
         val prepared = if (only != null) resolver.prepare(source, identity, only) else if (!source.cached && source.directUrl.isEmpty()) {
             if (DebridServices.connected(store).none { it in LinkDebrids.CHECK_ON_PLAY })
-                return Result.Failed("This link isn't cached on your debrid services. Pick a cached link.")
+                return Result.Failed(L10n.tr(R.string.t_this_link_isn_t_cached_on_2, "This link isn't cached on your debrid services. Pick a cached link."))
             resolver.prepareFirstCached(ordered.dropWhile { it != source }.ifEmpty { listOf(source) }, identity)
-                ?: return Result.Failed("None of the next links are cached. Pick another link.")
+                ?: return Result.Failed(L10n.tr(R.string.t_none_of_the_next_links_are, "None of the next links are cached. Pick another link."))
         } else resolver.prepare(source, identity)
         return file(prepared, source, null)
     }
@@ -47,7 +47,7 @@ internal class StreamSwitcher(context: Context) {
             val chosen = pick(prepared.files, fileId, prepared.preferredFileId) { it.id }
             when {
                 chosen == null -> Result.ChooseFile(prepared, prepared.files.map { Triple(it.id, it.name, it.size) })
-                !OffcloudApi(store).owns(prepared) -> Result.Failed("Connect Offcloud and pick the link again.")
+                !OffcloudApi(store).owns(prepared) -> Result.Failed(L10n.tr(R.string.t_connect_offcloud_and_pick_the_link, "Connect Offcloud and pick the link again."))
                 else -> Result.Ready(chosen.url, emptyMap(), "offcloud", chosen.name, chosen.size)
             }
         }
@@ -65,11 +65,11 @@ internal class StreamSwitcher(context: Context) {
 
     private fun torBoxUrl(prepared: PreparedSource.Files, file: CloudFile): String {
         val tag = prepared.accountTag ?: return torbox.streamUrl(prepared.folder.kind, prepared.folder.id, file.id)
-        check(torbox.ownsTag(tag)) { "The TorBox account changed. Pick the link again." }
+        check(torbox.ownsTag(tag)) { L10n.tr(R.string.t_the_torbox_account_changed_pick_the, "The TorBox account changed. Pick the link again.") }
         prepared.resolvedUrls[file.id]?.let { return it }
-        val hash = checkNotNull(prepared.sourceInfoHash) { "Pick the link again." }
+        val hash = checkNotNull(prepared.sourceInfoHash) { L10n.tr(R.string.t_pick_the_link_again, "Pick the link again.") }
         val resolved = torbox.prepareCached(SourceItem(file.name, "TorBox", hash, cached = true), prepared.identity, selectedFile = file)
-        check(resolved.accountTag == tag && torbox.ownsTag(tag)) { "The TorBox account changed. Pick the link again." }
+        check(resolved.accountTag == tag && torbox.ownsTag(tag)) { L10n.tr(R.string.t_the_torbox_account_changed_pick_the, "The TorBox account changed. Pick the link again.") }
         return resolved.resolvedUrls.values.single()
     }
 

@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URI
@@ -29,8 +32,8 @@ data class AnimeTitle(
         else -> if (type == "movie") "movie" else "series"
     }
     val mappingNotice: String get() = if (type == "series")
-        "Only this anime season or part's verified episodes are shown, using their original show episode numbers."
-    else "Playback availability depends on your source provider and TorBox."
+        L10n.tr(R.string.t_only_this_anime_season_or_part, "Only this anime season or part's verified episodes are shown, using their original show episode numbers.")
+    else L10n.tr(R.string.t_playback_availability_depends_on_your_source, "Playback availability depends on your source provider and TorBox.")
 }
 
 data class AnimePage(val items: List<AnimeTitle>, val hasMore: Boolean, val nextOffset: Int)
@@ -42,7 +45,7 @@ data class AnimeRelated(
     val specials: List<AnimeTitle>,
     val otherSeries: List<AnimeTitle> = emptyList(),
     val truncated: Boolean = false,
-    val notice: String = "Catalog-linked seasons and story parts, movies, and extras are listed separately."
+    val notice: String = L10n.tr(R.string.t_catalog_linked_seasons_and_story_parts, "Catalog-linked seasons and story parts, movies, and extras are listed separately.")
 )
 
 /**
@@ -164,7 +167,7 @@ class AnimeCatalogApi internal constructor(
         val stub = parseImdbMapping(payload, title)
         val canonical = canonicalDetails(stub)
         check(canonical.imdbId == stub.imdbId && canonical.type == stub.type) {
-            "The anime details returned a different movie or show. No episode has been selected."
+            L10n.tr(R.string.t_the_anime_details_returned_a_different, "The anime details returned a different movie or show. No episode has been selected.")
         }
         return AnimeEpisodeCatalogParser.parse(payload, title, canonical).also { result ->
             synchronized(detailsCache) { detailsCache["${title.type}:${title.kitsuId}"] = monotonicMillis() to result }
@@ -211,8 +214,8 @@ class AnimeCatalogApi internal constructor(
         val mainIds = story.keys
         return AnimeRelated(seasons, movies.values.sortedWith(order), specials.values.filter { it.kitsuId !in mainIds }.sortedWith(order),
             otherSeries.values.filter { it.kitsuId !in mainIds }.sortedWith(order), truncated,
-            if (truncated) "Catalog-linked titles are shown. This large relationship chain has been limited; additional related titles may be available in search."
-            else "Catalog-linked seasons and story parts, movies, and extras are listed separately.")
+            if (truncated) L10n.tr(R.string.t_catalog_linked_titles_are_shown_this, "Catalog-linked titles are shown. This large relationship chain has been limited; additional related titles may be available in search.")
+            else L10n.tr(R.string.t_catalog_linked_seasons_and_story_parts, "Catalog-linked seasons and story parts, movies, and extras are listed separately."))
             .also { result -> synchronized(relatedCache) { relatedCache[title.kitsuId] = monotonicMillis() to result } }
     }
 
@@ -221,13 +224,13 @@ class AnimeCatalogApi internal constructor(
             relationshipPages[id]?.let { if (monotonicMillis() - it.first < CACHE_MILLIS) return it.second }
         }
         val payload = fetch("$BASE/anime/$id/media-relationships?include=destination&page%5Blimit%5D=20")
-        val data = payload.optJSONArray("data") ?: throw ApiException(0, "Related anime titles are currently unavailable.")
+        val data = payload.optJSONArray("data") ?: throw ApiException(0, L10n.tr(R.string.t_related_anime_titles_are_currently_unavailable, "Related anime titles are currently unavailable."))
         val included = payload.optJSONArray("included") ?: JSONArray()
         val resources = mutableMapOf<Pair<String, String>, JSONObject>()
         for (index in 0 until included.length()) {
             val resource = included.optJSONObject(index) ?: continue
             val key = resource.string("type") to resource.string("id")
-            if (resources.put(key, resource) != null) throw ApiException(0, "Related anime metadata is ambiguous.")
+            if (resources.put(key, resource) != null) throw ApiException(0, L10n.tr(R.string.t_related_anime_metadata_is_ambiguous, "Related anime metadata is ambiguous."))
         }
         val entries = (0 until minOf(data.length(), 20)).mapNotNull { index ->
             val relationship = data.optJSONObject(index) ?: return@mapNotNull null
@@ -249,19 +252,19 @@ class AnimeCatalogApi internal constructor(
     private fun fetch(address: String): JSONObject {
         val now = monotonicMillis()
         val wait = synchronized(pages) { unavailableUntil - now }
-        if (wait > 0) throw ApiException(429, "The anime catalog is busy. Please wait before trying again.",
+        if (wait > 0) throw ApiException(429, L10n.tr(R.string.t_the_anime_catalog_is_busy_please, "The anime catalog is busy. Please wait before trying again."),
             retryAfterSeconds = ((wait + 999) / 1000).coerceAtMost(86400).toInt())
         return try { publicJson(address) } catch (error: ApiException) {
             when (error.code) {
                 429 -> {
                     val retry = error.retryAfterSeconds.coerceAtLeast(30).coerceAtMost(86400)
                     synchronized(pages) { unavailableUntil = now + retry * 1000L }
-                    throw ApiException(429, "The anime catalog is busy. Please wait before trying again.",
+                    throw ApiException(429, L10n.tr(R.string.t_the_anime_catalog_is_busy_please, "The anime catalog is busy. Please wait before trying again."),
                         retryAfterSeconds = retry)
                 }
-                404 -> throw ApiException(404, "This anime's metadata is currently unavailable. Try searching for the title in Movies or TV shows.")
-                401, 403 -> throw ApiException(error.code, "The anime catalog could not be accessed. Please try again later.")
-                in 500..599 -> throw ApiException(error.code, "The anime catalog is temporarily unavailable. Please try again later.")
+                404 -> throw ApiException(404, L10n.tr(R.string.t_this_anime_s_metadata_is_currently, "This anime's metadata is currently unavailable. Try searching for the title in Movies or TV shows."))
+                401, 403 -> throw ApiException(error.code, L10n.tr(R.string.t_the_anime_catalog_could_not_be, "The anime catalog could not be accessed. Please try again later."))
+                in 500..599 -> throw ApiException(error.code, L10n.tr(R.string.t_the_anime_catalog_is_temporarily_unavailable, "The anime catalog is temporarily unavailable. Please try again later."))
                 else -> throw error
             }
         }
@@ -269,14 +272,14 @@ class AnimeCatalogApi internal constructor(
 
     internal fun parsePage(payload: JSONObject, skip: Int = 0, type: String = "all"): AnimePage {
         validateType(type)
-        val data = payload.optJSONArray("data") ?: throw ApiException(0, "The anime catalog returned an unreadable response.")
+        val data = payload.optJSONArray("data") ?: throw ApiException(0, L10n.tr(R.string.t_the_anime_catalog_returned_an_unreadable, "The anime catalog returned an unreadable response."))
         val included = payload.optJSONArray("included") ?: JSONArray()
         val references = mutableMapOf<Pair<String, String>, JSONObject>()
         for (i in 0 until included.length()) {
             val item = included.optJSONObject(i) ?: continue
             val identity = item.optString("type") to item.optString("id")
             // Duplicate relationship keys are ambiguous and must never cross-link identities.
-            if (identity in references) throw ApiException(0, "The anime catalog returned ambiguous metadata.")
+            if (identity in references) throw ApiException(0, L10n.tr(R.string.t_the_anime_catalog_returned_ambiguous_metadata, "The anime catalog returned ambiguous metadata."))
             references[identity] = item
         }
         val items = (0 until minOf(data.length(), PAGE_SIZE)).mapNotNull { index ->
@@ -375,7 +378,7 @@ class AnimeCatalogApi internal constructor(
     private fun JSONObject.string(key: String): String = (opt(key) as? String)?.trim().orEmpty()
     private fun validateType(type: String) = require(type in setOf("all", "movie", "series", "special")) { "Choose anime series, movies, or specials and OVAs." }
     private fun unmapped(): Nothing = throw ApiException(0,
-        "This anime does not have one unambiguous IMDb match. Search for its title in Movies or TV shows and choose the matching title. No episode has been guessed.")
+        L10n.tr(R.string.t_this_anime_does_not_have_one, "This anime does not have one unambiguous IMDb match. Search for its title in Movies or TV shows and choose the matching title. No episode has been guessed."))
 
     internal companion object {
         /** Kitsu synopses end with credit notes such as "(Source: Crunchyroll)" or "[Written by MAL Rewrite]". */

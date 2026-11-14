@@ -4,10 +4,11 @@ import android.content.Context
 import androidx.media3.exoplayer.DefaultLoadControl
 
 /** How far ahead the player downloads. The byte budget follows the app's memory so long buffers cannot exhaust it. */
-internal enum class ReadAhead(val label: String, val seconds: Int) {
+internal enum class ReadAhead(private val english: String, val seconds: Int) {
     STANDARD("Standard · 50 seconds", 50),
     LONG("Long · 2 minutes", 120),
-    MAXIMUM("Maximum · 5 minutes", 300)
+    MAXIMUM("Maximum · 5 minutes", 300);
+    val label: String get() = UiText.of(english)
 }
 
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])

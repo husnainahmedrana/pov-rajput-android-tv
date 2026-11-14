@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import org.json.JSONObject
 import java.net.URI
 
@@ -29,13 +32,13 @@ internal object AnimeEpisodeCatalogParser {
     fun parse(payload: JSONObject, anime: AnimeTitle, canonical: MediaItemData): AnimeEpisodeCatalog {
         val meta = payload.optJSONObject("meta") ?: unavailable()
         check(meta.optString("id") == "kitsu:${anime.kitsuId}" && meta.optString("kitsu_id") == anime.kitsuId &&
-            meta.optString("type") == anime.type && canonical.type == anime.type) { "The anime metadata does not match the selected title." }
+            meta.optString("type") == anime.type && canonical.type == anime.type) { L10n.tr(R.string.t_the_anime_metadata_does_not_match, "The anime metadata does not match the selected title.") }
         if (!canonical.imdbId.matches(Regex("tt[0-9]{5,12}"))) unavailable()
         val selected = canonical.copy(title = anime.title, year = anime.year.ifBlank { canonical.year },
             poster = anime.poster.ifBlank { canonical.poster }, background = anime.background.ifBlank { canonical.background },
             description = anime.description.ifBlank { canonical.description }, genres = (listOf("Anime") + anime.genres + canonical.genres).distinct())
         if (anime.type == "movie") return AnimeEpisodeCatalog(anime, selected.copy(episodes = emptyList()), emptyList(),
-            notice = "Anime movie. Playback and WeTrakr use this film's IMDb identity.")
+            notice = L10n.tr(R.string.t_anime_movie_playback_and_wetrakr_use, "Anime movie. Playback and WeTrakr use this film's IMDb identity."))
         val videos = meta.optJSONArray("videos") ?: unavailable()
         val canonicalEpisodes = canonical.episodes.associateBy { it.season to it.episode }
         val candidates = (0 until videos.length()).mapNotNull { index ->
@@ -64,19 +67,19 @@ internal object AnimeEpisodeCatalogParser {
             .filterValues { it.size == 1 }.values.flatten().sortedBy { it.catalogEpisode }
         val groups = choices.groupBy { it.identity.season }.toSortedMap().map { (season, episodes) ->
             val label = when {
-                anime.category == "special" && season == 0 -> "Specials and OVAs"
-                anime.category == "special" -> "Special presentation · Season $season"
-                season == 0 -> "Specials"
-                else -> "Season $season"
+                anime.category == "special" && season == 0 -> L10n.tr(R.string.t_specials_and_ovas, "Specials and OVAs")
+                anime.category == "special" -> L10n.tr(R.string.t_special_presentation_season_x, "Special presentation · Season %1\$s", season)
+                season == 0 -> L10n.tr(R.string.t_specials, "Specials")
+                else -> L10n.tr(R.string.t_season_x, "Season %1\$s", season)
             }
             AnimeEpisodeGroup(label, season, episodes)
         }
         val missing = videos.length() - choices.size
         val note = when {
-            choices.isEmpty() -> "Episode mappings for this anime entry could not be verified. Choose a matching title manually; no episodes have been substituted."
+            choices.isEmpty() -> L10n.tr(R.string.t_episode_mappings_for_this_anime_entry, "Episode mappings for this anime entry could not be verified. Choose a matching title manually; no episodes have been substituted.")
             missing > 0 -> "$missing episode ${if (missing == 1) "mapping is" else "mappings are"} unavailable. Only verified episodes from this anime entry are shown."
-            anime.category == "special" -> "Special or OVA presentation. Source searches and WeTrakr keep the original show episode numbers."
-            else -> "Only this selected season or part is shown. Source searches and WeTrakr keep the original show episode numbers."
+            anime.category == "special" -> L10n.tr(R.string.t_special_or_ova_presentation_source_searches, "Special or OVA presentation. Source searches and WeTrakr keep the original show episode numbers.")
+            else -> L10n.tr(R.string.t_only_this_selected_season_or_part, "Only this selected season or part is shown. Source searches and WeTrakr keep the original show episode numbers.")
         }
         val scopedEpisodes = choices.map { choice -> EpisodeData(choice.identity.season, choice.identity.episode,
             choice.title, choice.released, choice.thumbnail) }
@@ -94,5 +97,5 @@ internal object AnimeEpisodeCatalogParser {
         val uri = URI(value)
         value.takeIf { uri.scheme.equals("https", true) && !uri.host.isNullOrBlank() && uri.userInfo == null }.orEmpty()
     } catch (_: Exception) { "" }
-    private fun unavailable(): Nothing = throw ApiException(0, "Verified anime episode metadata is currently unavailable. Please try again later.")
+    private fun unavailable(): Nothing = throw ApiException(0, L10n.tr(R.string.t_verified_anime_episode_metadata_is_currently, "Verified anime episode metadata is currently unavailable. Please try again later."))
 }

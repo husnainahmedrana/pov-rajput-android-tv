@@ -10,7 +10,8 @@ import re
 import sys
 import urllib.request
 
-SITE = "https://pov.rajput.cc"
+SITE = "https://nabrio.rajput.cc"
+LOGO = f"{SITE}/img/nabrio-icon.png"
 LIMIT = 4096  # Discord embed description limit
 
 
@@ -36,12 +37,14 @@ def build(notes: str, tag: str, repo: str) -> dict:
         text = text[: room - 40].rsplit("\n", 1)[0] + "\n\n…more in the full notes."
     return {
         "username": "Nabrio Releases",
+        "avatar_url": LOGO,
         "allowed_mentions": {"parse": []},
         "embeds": [{
             "title": f"🚀 {title} is out",
             "url": release_url,
             "description": text + footer,
-            "color": 0xE040FB,
+            "color": 0xE50914,
+            "thumbnail": {"url": LOGO},
         }],
     }
 
@@ -62,7 +65,7 @@ def main() -> None:
     request = urllib.request.Request(
         url + "?wait=true",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "User-Agent": "pov-rajput-release"},
+        headers={"Content-Type": "application/json", "User-Agent": "nabrio-release"},
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=30) as response:

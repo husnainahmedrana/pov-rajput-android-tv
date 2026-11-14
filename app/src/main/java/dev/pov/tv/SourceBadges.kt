@@ -31,10 +31,12 @@ internal data class SourceBadge(val label: String, val tone: SourceBadgeTone = S
                                 val mbps: Double? = null, val parts: List<String> = listOf(label))
 
 /** How link badges look, chosen in Settings → Sources (Color by type by default). Kept in plain preferences: it's a look, not a secret. */
-internal enum class BadgeStyle(val id: String, val label: String, val description: String) {
-    COLOR_BY_TYPE("color", "Color by type", "One flat colour per kind of tag, as a thin outline: quality, size, HDR, audio, languages, source."),
-    AURORA("aurora", "Aurora", "Gradient chips in cool aurora colours; the size badge heats up with the bitrate."),
-    SUNSET("sunset", "Sunset", "Gradient chips in warm sunset colours; the size badge heats up with the bitrate.");
+internal enum class BadgeStyle(val id: String, private val labelId: Int, private val labelText: String, private val descriptionId: Int, private val descriptionText: String) {
+    COLOR_BY_TYPE("color", R.string.t_color_by_type, "Color by type", R.string.t_bs_color_desc, "One flat colour per kind of tag, as a thin outline: quality, size, HDR, audio, languages, source."),
+    AURORA("aurora", R.string.t_aurora, "Aurora", R.string.t_bs_aurora_desc, "Gradient chips in cool aurora colours; the size badge heats up with the bitrate."),
+    SUNSET("sunset", R.string.t_sunset, "Sunset", R.string.t_bs_sunset_desc, "Gradient chips in warm sunset colours; the size badge heats up with the bitrate.");
+    val label: String get() = L10n.tr(labelId, labelText)
+    val description: String get() = L10n.tr(descriptionId, descriptionText)
     companion object {
         const val KEY = "badge_style"
         private fun preferences(context: Context) = context.applicationContext.getSharedPreferences("pov_ui", Context.MODE_PRIVATE)
@@ -104,17 +106,17 @@ internal object SourceBadges {
         return when {
             // A debrid add-on's link: the service it comes from, and whether it is cached there.
             source.directUrl.isNotEmpty() && source.addonCached == false && source.servedBy in DebridServices.IDS ->
-                SourceBadge("NOT CACHED · ${DebridServices.name(source.servedBy!!).uppercase()}", SourceBadgeTone.UNCACHED)
+                SourceBadge(L10n.tr(R.string.t_not_cached_x, "NOT CACHED · %1\$s", DebridServices.name(source.servedBy!!).uppercase()), SourceBadgeTone.UNCACHED)
             source.directUrl.isNotEmpty() && source.servedBy in DebridServices.IDS ->
-                SourceBadge("CACHED · ${DebridServices.name(source.servedBy!!).uppercase()}", SourceBadgeTone.CACHED)
+                SourceBadge(L10n.tr(R.string.t_cached_x, "CACHED · %1\$s", DebridServices.name(source.servedBy!!).uppercase()), SourceBadgeTone.CACHED)
             // An indexer's link, streamed from the viewer's own news providers.
             // A Usenet link that already failed this session (taken down, an archive): greyed, so it isn't picked again.
             UsenetPlayback.failed(source.directUrl) -> SourceBadge("UNAVAILABLE", SourceBadgeTone.UNCACHED)
             UsenetLinks.isNzb(source.directUrl) -> SourceBadge("USENET", SourceBadgeTone.USENET)
             source.directUrl.isNotEmpty() -> SourceBadge("DIRECT", SourceBadgeTone.CACHED)
-            cachedOn.isNotEmpty() -> SourceBadge("CACHED · ${cachedOn.joinToString(" + ").uppercase()}", SourceBadgeTone.CACHED)
-            checkOnPlay.isNotEmpty() -> SourceBadge("CHECK ON PLAY", SourceBadgeTone.UNCACHED)
-            else -> SourceBadge("NOT CACHED", SourceBadgeTone.UNCACHED)
+            cachedOn.isNotEmpty() -> SourceBadge(L10n.tr(R.string.t_cached_x, "CACHED · %1\$s", cachedOn.joinToString(" + ").uppercase()), SourceBadgeTone.CACHED)
+            checkOnPlay.isNotEmpty() -> SourceBadge(L10n.tr(R.string.t_check_on_play, "CHECK ON PLAY"), SourceBadgeTone.UNCACHED)
+            else -> SourceBadge(L10n.tr(R.string.t_not_cached, "NOT CACHED"), SourceBadgeTone.UNCACHED)
         }
     }
 
@@ -152,7 +154,7 @@ internal object SourceBadges {
             // The viewer's own indexer links keep their USENET badge beside the provider and indexer logos.
             if (!logos || cachedOn(source).isEmpty() || source.addonCached == false || UsenetLinks.isNzb(source.directUrl) ||
                 source.directUrl.isEmpty() && source.cachedServices.isEmpty()) add(minOf(2, size), status(source, checkOnPlay))
-            if (source.inLibrary) add(minOf(1, size), SourceBadge("IN LIBRARY", SourceBadgeTone.CACHED))
+            if (source.inLibrary) add(minOf(1, size), SourceBadge(L10n.tr(R.string.t_in_library, "IN LIBRARY"), SourceBadgeTone.CACHED))
         }
 
     /** [runtimeMinutes] (the title's runtime, when known) adds the estimated bitrate beside the size. */
@@ -189,7 +191,7 @@ internal object SourceBadges {
         val spoken = found.audio.sortedBy { if (languages != null && it == languages.audio) 0 else 1 }
         spoken.take(MAX_LANGUAGES).forEach { add(SourceBadge(languageTag(it), SourceBadgeTone.LANGUAGE)) }
         if (spoken.size > MAX_LANGUAGES) add(SourceBadge("+${spoken.size - MAX_LANGUAGES}", SourceBadgeTone.LANGUAGE))
-        if (spoken.isEmpty() && found.multiAudio) add(SourceBadge("MULTI AUDIO", SourceBadgeTone.LANGUAGE))
+        if (spoken.isEmpty() && found.multiAudio) add(SourceBadge(L10n.tr(R.string.t_multi_audio, "MULTI AUDIO"), SourceBadgeTone.LANGUAGE))
         if (languages != null && languages.subtitleMatch(source)) add(SourceBadge("${languageCode(languages.subtitle)} SUBS", SourceBadgeTone.LANGUAGE))
         group(buildList {
             when {

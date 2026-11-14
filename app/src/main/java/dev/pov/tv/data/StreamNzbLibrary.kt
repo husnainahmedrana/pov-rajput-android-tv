@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import org.json.JSONObject
 import java.net.URI
 
@@ -29,7 +32,7 @@ internal class StreamNzbLibrary(
         val token = reply.optString("token")
         if (!reply.optBoolean("success") || token.isBlank()) throw ApiException(401,
             reply.optString("error").takeIf { it.isNotBlank() && it != "null" }?.take(160) ?: "StreamNZB did not accept that username and password.")
-        if (reply.optBoolean("must_change_password")) throw ApiException(403, "Change the StreamNZB admin password in its dashboard first, then sign in here.")
+        if (reply.optBoolean("must_change_password")) throw ApiException(403, L10n.tr(R.string.t_change_the_streamnzb_admin_password_in, "Change the StreamNZB admin password in its dashboard first, then sign in here."))
         return token
     }
 

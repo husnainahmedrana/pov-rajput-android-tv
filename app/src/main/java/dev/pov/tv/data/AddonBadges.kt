@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import java.util.Locale
 
 /**
@@ -36,7 +39,7 @@ object AddonBadges {
     /** Usenet logos for AIOStreams links: news providers and indexers. */
     const val NEWSHOSTING = "newshosting"
     /** News providers the viewer can pick per add-on (id to name); blank shows no news-provider logo. */
-    val NEWS_PROVIDERS = listOf("" to "Not set", "easynews" to "Easynews", "newshosting" to "Newshosting", "eweka" to "Eweka", "giganews" to "Giganews", "usenetserver" to "UsenetServer", "frugalusenet" to "Frugal Usenet", "tweaknews" to "Tweaknews", "usenetfarm" to "Usenet.Farm", "newsdemon" to "NewsDemon", "pureusenet" to "Pure Usenet", "vipernews" to "ViperNews")
+    val NEWS_PROVIDERS get() = listOf("" to L10n.tr(R.string.t_not_set, "Not set"), "easynews" to "Easynews", "newshosting" to "Newshosting", "eweka" to "Eweka", "giganews" to "Giganews", "usenetserver" to "UsenetServer", "frugalusenet" to "Frugal Usenet", "tweaknews" to "Tweaknews", "usenetfarm" to "Usenet.Farm", "newsdemon" to "NewsDemon", "pureusenet" to "Pure Usenet", "vipernews" to "ViperNews")
     val NEWS_PROVIDER_IDS = NEWS_PROVIDERS.map { it.first }.filter(String::isNotEmpty).toSet()
     private val INDEXERS = listOf("geek" to "nzbgeek", "ninja" to "ninjacentral", "miatrix" to "miatrix",
         "crawler" to "usenetcrawler", "nest" to "nzbnest", "easynews" to "easynews", "slug" to "drunkenslug", "finder" to "nzbfinder",

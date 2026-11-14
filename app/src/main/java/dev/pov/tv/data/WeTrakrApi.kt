@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import android.os.SystemClock
 import org.json.JSONArray
 import org.json.JSONObject
@@ -9,7 +12,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Public native-client device flow with POV Rajput's registered WeTrakr app. Its Client ID is public by
+ * Public native-client device flow with Nabrio's registered WeTrakr app. Its Client ID is public by
  * design; no client secret is accepted, stored, or bundled. Requests made with a user's token count
  * against that user's own WeTrakr quota, not the app's.
  */
@@ -100,7 +103,7 @@ class WeTrakrApi internal constructor(
         val body = playbackBody(identity)
         try {
             val result = parseObject(request("/scrobble/playing", "DELETE", body))
-            if (result.optString("action") != "cancel") throw ApiException(0, "WeTrakr did not confirm removal. Try again.")
+            if (result.optString("action") != "cancel") throw ApiException(0, L10n.tr(R.string.t_wetrakr_did_not_confirm_removal_try, "WeTrakr did not confirm removal. Try again."))
         } catch (error: ApiException) {
             if (error.code != 404 || error.errorKey != "NO_SESSION") throw error
         }
@@ -153,14 +156,14 @@ class WeTrakrApi internal constructor(
     private fun accessToken(revision: String, force: String? = null): String = synchronized(refreshLock) {
         val snapshot = snapshot()
         if (snapshot.revision != revision) ended()
-        if (!connected()) throw ApiException(401, "Connect WeTrakr in Settings first.")
+        if (!connected()) throw ApiException(401, L10n.tr(R.string.t_connect_wetrakr_in_settings_first, "Connect WeTrakr in Settings first."))
         val expires = credentials.get("expires_at").toLongOrNull() ?: 0
         if (if (force != null) snapshot.access != force else expires > now() + 60_000) return@synchronized snapshot.access
         val fingerprint = MessageDigest.getInstance("SHA-256").digest(snapshot.refresh.toByteArray()).joinToString("") { "%02x".format(it) }
         synchronized(stateLock) {
             ensureCurrent(snapshot)
             if (snapshot.refresh.isBlank() || credentials.get("refresh_pending") == fingerprint) {
-                credentials.put(mapOf("reauth" to "true")); throw ApiException(401, "Link WeTrakr again to renew this session.")
+                credentials.put(mapOf("reauth" to "true")); throw ApiException(401, L10n.tr(R.string.t_link_wetrakr_again_to_renew_this, "Link WeTrakr again to renew this session."))
             }
             credentials.put(mapOf("refresh_pending" to fingerprint))
         }
@@ -180,7 +183,7 @@ class WeTrakrApi internal constructor(
         val limitingClient = appClient ?: clientId()
         if (appClient != null && appClient != clientId()) ended()
         val until = credentials.get("retry_at").toLongOrNull() ?: 0
-        if (now() < until) throw ApiException(429, "WeTrakr asked us to wait before making more requests.", retryAfterSeconds = ((until - now() + 999) / 1000).toInt())
+        if (now() < until) throw ApiException(429, L10n.tr(R.string.t_wetrakr_asked_us_to_wait_before, "WeTrakr asked us to wait before making more requests."), retryAfterSeconds = ((until - now() + 999) / 1000).toInt())
         val headers = mutableMapOf("wetrakr-api-version" to "1")
         if (access != null) { headers["wetrakr-api-key"] = checkNotNull(appClient); headers["Authorization"] = "Bearer $access" }
         try { return transport(path, method, headers, body) }
@@ -210,7 +213,7 @@ class WeTrakrApi internal constructor(
     private data class Cached(val at: Long, val records: List<JSONObject>)
     private fun pages(path: String, paginated: Boolean = true): List<JSONObject> {
         val revision = accountRevision()
-        if (!connected() || revision.isBlank()) throw ApiException(401, "Connect WeTrakr in Settings first.")
+        if (!connected() || revision.isBlank()) throw ApiException(401, L10n.tr(R.string.t_connect_wetrakr_in_settings_first, "Connect WeTrakr in Settings first."))
         val key = "$revision:$path"
         cache[key]?.takeIf { elapsed() - it.at in 0..120_000 }?.let { return it.records }
         val records = mutableListOf<JSONObject>()
@@ -220,7 +223,7 @@ class WeTrakrApi internal constructor(
             for (index in 0 until array.length()) array.optJSONObject(index)?.let(records::add)
             if (!paginated || array.length() < 100) { cache[key] = Cached(elapsed(), records); return records }
         }
-        throw ApiException(0, "This WeTrakr list is too large to load at once. Open it on the website.")
+        throw ApiException(0, L10n.tr(R.string.t_this_wetrakr_list_is_too_large, "This WeTrakr list is too large to load at once. Open it on the website."))
     }
     /** Only an owned/collaborated list selected by the user can be edited. */
     override fun removeListItem(listId: String, identity: PlaybackIdentity) {
@@ -231,7 +234,7 @@ class WeTrakrApi internal constructor(
         val result = parseObject(request("/sync/lists/$listId/items/remove", "POST", body))
         if ((result.optJSONObject("notFound")?.optJSONArray(target)?.length() ?: 0) > 0 ||
             (result.optJSONObject("errored")?.optJSONArray(target)?.length() ?: 0) > 0 || result.optJSONObject("removed") == null) {
-            throw ApiException(0, "WeTrakr could not confirm list removal. Refresh the list and try again.")
+            throw ApiException(0, L10n.tr(R.string.t_wetrakr_could_not_confirm_list_removal, "WeTrakr could not confirm list removal. Refresh the list and try again."))
         }
         cache.clear()
     }
@@ -325,7 +328,7 @@ class WeTrakrApi internal constructor(
                 if (key == "errored" && rows.all { it?.optString("error")?.let { reason ->
                     reason == "Already watched!" || reason.startsWith("Already added!")
                 } == true }) alreadyWatched = true
-                else throw ApiException(0, "WeTrakr could not mark every episode. Refresh your library before retrying.")
+                else throw ApiException(0, L10n.tr(R.string.t_wetrakr_could_not_mark_every_episode, "WeTrakr could not mark every episode. Refresh your library before retrying."))
             }
         }
         if (!alreadyWatched && result.optJSONObject("added") == null && result.optJSONObject("existing") == null) malformed()
@@ -347,7 +350,7 @@ class WeTrakrApi internal constructor(
                 if (replay && key == "errored" && reasons.isNotEmpty() && reasons.all {
                     it == "Already watched!" || it.startsWith("Already added!")
                 }) return@synchronized
-                throw ApiException(0, "WeTrakr could not apply this update. Refresh your library to check its current state.")
+                throw ApiException(0, L10n.tr(R.string.t_wetrakr_could_not_apply_this_update, "WeTrakr could not apply this update. Refresh your library to check its current state."))
             }
         }
         if (result.optJSONObject(if (remove) "removed" else "added") == null && result.optJSONObject("existing") == null) malformed()
@@ -384,7 +387,7 @@ class WeTrakrApi internal constructor(
         val body = playbackBody(identity).put("progress", percent.coerceIn(0.0, 100.0)).put("app_version", "POV Rajput 0.2.11")
         val result = parseObject(request("/scrobble/$action?min_progress=95", "POST", body))
         val accepted = if (action == "stop") setOf("pause", "scrobble") else setOf(action)
-        if (result.optBoolean("ignored") || result.optString("action") !in accepted) throw ApiException(0, "WeTrakr did not accept this playback update.")
+        if (result.optBoolean("ignored") || result.optString("action") !in accepted) throw ApiException(0, L10n.tr(R.string.t_wetrakr_did_not_accept_this_playback, "WeTrakr did not accept this playback update."))
         cache.clear(); true
     }
     private fun validate(identity: PlaybackIdentity) {
@@ -397,12 +400,12 @@ class WeTrakrApi internal constructor(
         return value
     }
     private fun parseObject(raw: String) = try { JSONObject(raw) } catch (_: Exception) { malformed() }
-    private fun malformed(): Nothing = throw ApiException(0, "WeTrakr returned an unreadable response. Try again later.")
-    private fun ended(): Nothing = throw ApiException(410, "This WeTrakr connection changed or expired. Link it again in Settings.")
+    private fun malformed(): Nothing = throw ApiException(0, L10n.tr(R.string.t_wetrakr_returned_an_unreadable_response_try, "WeTrakr returned an unreadable response. Try again later."))
+    private fun ended(): Nothing = throw ApiException(410, L10n.tr(R.string.t_this_wetrakr_connection_changed_or_expired, "This WeTrakr connection changed or expired. Link it again in Settings."))
     private fun emptyAccount() = listOf("access_token", "refresh_token", "expires_at", "account_revision", "refresh_pending", "reauth").associateWith { "" }
     companion object {
         private const val BASE = "https://api.wetrakr.com"
-        /** POV Rajput's registered WeTrakr application (public identifier, not a secret). */
+        /** Nabrio's registered WeTrakr application (public identifier, not a secret). */
         const val CLIENT_ID = "68a87ec819a3083e4884821c24ab8c0a"
         fun validClientId(value: String) = value.matches(Regex("[A-Za-z0-9_-]{16,256}"))
         private val stateLock = Any()

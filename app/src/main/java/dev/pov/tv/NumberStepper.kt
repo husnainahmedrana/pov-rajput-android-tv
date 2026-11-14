@@ -120,7 +120,7 @@ internal object NumberStepper {
         up.setOnClickListener { step(1) }
         down.setOnClickListener { step(-1) }
 
-        card.addView(text(if (DeviceLayout.tv) "▲ ▼  change      OK  save      Back  cancel" else "Tap ▲ or ▼ to change", 12f, MUTED).apply { gravity = Gravity.CENTER },
+        card.addView(text(if (DeviceLayout.tv) L10n.tr(R.string.t_change_ok_save_back_cancel, "▲ ▼  change      OK  save      Back  cancel") else L10n.tr(R.string.t_tap_or_to_change, "Tap ▲ or ▼ to change"), 12f, MUTED).apply { gravity = Gravity.CENTER },
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(18) })
         // Touch screens get buttons; on TV, OK and Back do the same without leaving the number.
         if (!DeviceLayout.tv) {
@@ -130,8 +130,8 @@ internal object NumberStepper {
                 background = if (filled) rounded(Color.WHITE, 24) else rounded(Color.TRANSPARENT, 24, 1, 0x66FFFFFF)
                 setOnClickListener { action() }
             }
-            buttons.addView(pill("Cancel", false) { dialog.dismiss() }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { rightMargin = dp(10) })
-            buttons.addView(pill("Save", true) { done(current); dialog.dismiss() }, LinearLayout.LayoutParams(0, dp(46), 1f))
+            buttons.addView(pill(L10n.tr(R.string.t_cancel, "Cancel"), false) { dialog.dismiss() }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { rightMargin = dp(10) })
+            buttons.addView(pill(L10n.tr(R.string.t_save, "Save"), true) { done(current); dialog.dismiss() }, LinearLayout.LayoutParams(0, dp(46), 1f))
             card.addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
         }
 

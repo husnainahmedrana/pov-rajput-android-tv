@@ -93,7 +93,7 @@ class PlayerActivity : Activity() {
     private var endedAt = 0L
     private val rowIds = listOf(R.id.pov_stop, androidx.media3.ui.R.id.exo_rew, androidx.media3.ui.R.id.exo_play_pause,
         androidx.media3.ui.R.id.exo_ffwd, R.id.pov_next_episode, R.id.pov_jump_30, R.id.pov_jump_60, R.id.pov_jump_90, R.id.pov_jump_120,
-        R.id.pov_audio, R.id.pov_speed, R.id.pov_browse,
+        R.id.pov_audio, R.id.pov_speed, R.id.pov_screen_fit, R.id.pov_browse,
         R.id.pov_info, R.id.pov_episodes)
     private var streamsDialog: Dialog? = null
     private val streamsChanged: () -> Unit = { if (!stopped && streamsDialog != null && streamsDialog === activeDialog && activeDialog?.isShowing == true) showStreams() }
@@ -113,6 +113,12 @@ class PlayerActivity : Activity() {
             if (failure != null && observedError !== failure) showPlaybackFailure(failure)
             if (!InAppPlaybackSession.hasActive()) finish()
         }
+    }
+
+    // The app's own language (Settings → Language); "Device language" leaves the context as it is.
+    override fun attachBaseContext(newBase: android.content.Context) {
+        L10n.attach(AppLanguage.wrap(newBase.applicationContext ?: newBase))
+        super.attachBaseContext(AppLanguage.wrap(newBase))
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -180,15 +186,17 @@ class PlayerActivity : Activity() {
             // The seek bar and buttons sit in the lower part of the controls; touches there stay theirs.
             gestures = PhonePlayerGestures(this, view, seekLabel, { player },
                 overControls = { y -> view.isControllerFullyVisible && y > view.height * 0.6f }, showControls = { controls.show() },
-                onSeekPreview = { showThumb(it) })
+                onSeekPreview = { showThumb(it) },
+                // Pinch out fills the screen (no black bars), pinch in shows the whole picture again.
+                onPinch = { zoomIn -> setScreenFit(if (zoomIn) PlayerScreenFit.FILL else PlayerScreenFit.FIT, announce = true) })
         }
         buildSplash()
         openCurtain()
         val reuse = InAppPlaybackSession.hasActive() &&
             (intent.getBooleanExtra("reuse_session", false) || (savedInstanceState != null && InAppPlaybackSession.matches(intent)))
         if (!reuse && !InAppPlaybackSession.start(this, intent, savedInstanceState)) {
-            showSheet("Cannot open video", "This playback link is invalid. Choose the source again.",
-                listOf(PlayerSheetChoice("Back to browsing") { finish() }))
+            showSheet(getString(R.string.t_cannot_open_video), getString(R.string.t_this_playback_link_is_invalid_choose),
+                listOf(PlayerSheetChoice(getString(R.string.t_back_to_browsing)) { finish() }))
         }
     }
 
@@ -229,7 +237,10 @@ class PlayerActivity : Activity() {
         // One press steps through the common speeds; holding OK opens the full list (with the slower ones).
         speedButton.setOnClickListener { cycleSpeed() }
         speedButton.setOnLongClickListener { showSpeed(); true }
-        view.findViewById<Button>(R.id.pov_browse).apply { text = "Streams"; setOnClickListener { showStreams() } }
+        // Screen: Fit (whole picture) → Fill (no black bars, edges cropped) → Stretch; remembered for every video.
+        view.findViewById<Button>(R.id.pov_screen_fit).setOnClickListener { setScreenFit(screenFit.next(), announce = true) }
+        setScreenFit(PlayerScreenFit.load(this), announce = false)
+        view.findViewById<Button>(R.id.pov_browse).apply { text = getString(R.string.t_streams_2); setOnClickListener { showStreams() } }
         // Stop ends the session (no mini player) and returns to the page the video was started from.
         view.findViewById<View>(R.id.pov_stop).setOnClickListener { InAppPlaybackSession.stop(); finish() }
         view.findViewById<DefaultTimeBar>(androidx.media3.ui.R.id.exo_progress).apply {
@@ -325,7 +336,7 @@ class PlayerActivity : Activity() {
     private fun setSplash(show: Boolean) {
         if (!::splash.isInitialized) return
         if (show) {
-            splashTitle.text = InAppPlaybackSession.title.ifBlank { "Loading" }
+            splashTitle.text = InAppPlaybackSession.title.ifBlank { getString(R.string.t_loading) }
             if (splash.visibility != View.VISIBLE) { splash.alpha = 0f; splash.visibility = View.VISIBLE }
             splash.animate().cancel(); splash.animate().alpha(1f).setDuration(220).start()
             if (splashPulse == null) splashPulse = ValueAnimator.ofFloat(1f, 0.35f).apply {
@@ -395,7 +406,7 @@ class PlayerActivity : Activity() {
         val creditsKnown = segments.any { it.kind == SkipKind.CREDITS }
         val action = when {
             series && segment?.kind == SkipKind.CREDITS && segment.endMs == null ->
-                SkipAction("next", "Next Episode", (position - segment.startMs).toFloat() / (duration - segment.startMs), true) { playNextEpisode() }
+                SkipAction("next", getString(R.string.t_next_episode), (position - segment.startMs).toFloat() / (duration - segment.startMs), true) { playNextEpisode() }
             segment != null -> {
                 val end = segment.endMs ?: duration
                 SkipAction("${segment.kind}:${segment.startMs}", segment.kind.label, (position - segment.startMs).toFloat() / (end - segment.startMs), false) {
@@ -403,7 +414,7 @@ class PlayerActivity : Activity() {
                 }
             }
             series && !creditsKnown && duration - position in 1..40_000 ->
-                SkipAction("next", "Next Episode", 1f - (duration - position) / 40_000f, true) { playNextEpisode() }
+                SkipAction("next", getString(R.string.t_next_episode), 1f - (duration - position) / 40_000f, true) { playNextEpisode() }
             else -> null
         }
         if (action == null || action.key in skipUsed) { hideSkip(); nextCountdownFrom = 0L; return }
@@ -424,7 +435,7 @@ class PlayerActivity : Activity() {
         val elapsed = now - nextCountdownFrom
         if (elapsed >= NEXT_COUNTDOWN_MS) { nextCountdownFrom = 0L; playNextEpisode(); return }
         val seconds = ((NEXT_COUNTDOWN_MS - elapsed + 999) / 1000).coerceAtLeast(1)
-        skipPill.show("Next Episode in $seconds", elapsed.toFloat() / NEXT_COUNTDOWN_MS)
+        skipPill.show(getString(R.string.t_next_episode_in_x, seconds), elapsed.toFloat() / NEXT_COUNTDOWN_MS)
     }
     /** When the Next Episode countdown started (0: not counting), moved on while paused so the countdown holds. */
     private var nextCountdownFrom = 0L
@@ -459,7 +470,7 @@ class PlayerActivity : Activity() {
         if (exo == null || exo.duration <= 0 || remaining <= 0) { label.visibility = View.GONE; return }
         val speed = exo.playbackParameters.speed.takeIf { it > 0f } ?: 1f
         val end = java.util.Date(System.currentTimeMillis() + (remaining / speed).toLong())
-        label.text = "Ends at " + java.text.SimpleDateFormat("h:mm a", java.util.Locale.US).format(end)
+        label.text = getString(R.string.t_ends_at) + android.text.format.DateFormat.getTimeFormat(this).format(end)
         label.visibility = View.VISIBLE
     }
 
@@ -516,7 +527,7 @@ class PlayerActivity : Activity() {
             val at = points.getOrNull(index)
             button.visibility = if (at == null) View.GONE else View.VISIBLE
             if (at != null && button.tag != at) {
-                button.tag = at; button.text = jumpLabel(at); button.contentDescription = "Jump to ${jumpLabel(at)}"
+                button.tag = at; button.text = jumpLabel(at); button.contentDescription = getString(R.string.t_jump_to_x, jumpLabel(at))
             }
         }
         updateSplash()
@@ -527,7 +538,7 @@ class PlayerActivity : Activity() {
         // media badges take its place; without a logo the name stays.
         val logoShown = ::pauseLogoArt.isInitialized && pauseLogoArt.drawable != null
         view.findViewById<TextView>(R.id.pov_playback_title).apply {
-            text = InAppPlaybackSession.title.ifBlank { "Now playing" }
+            text = InAppPlaybackSession.title.ifBlank { getString(R.string.t_now_playing) }
             visibility = if (logoShown) View.GONE else View.VISIBLE
         }
         view.findViewById<View>(R.id.pov_media_badges)?.let { badges ->
@@ -541,7 +552,7 @@ class PlayerActivity : Activity() {
         view.findViewById<PlayerBadgeRow>(R.id.pov_media_badges)?.show(PlayerMediaBadges.from(PlayerMediaFacts.from(
             InAppPlaybackSession.mediaName, InAppPlaybackSession.mediaSize, player?.videoFormat, player?.audioFormat)) +
             listOfNotNull(PlayerBadge("USENET", PlayerBadgeKind.USENET).takeIf { usenet }))
-        speedButton.text = "Speed · ${speedLabel(player?.playbackParameters?.speed ?: 1f)}"
+        speedButton.text = getString(R.string.t_speed_x, speedLabel(player?.playbackParameters?.speed ?: 1f))
         controls.refreshPlaybackState()
     }
 
@@ -552,31 +563,31 @@ class PlayerActivity : Activity() {
             cachedLinkAttempt = false; setResult(RESULT_FIRST_USER, Intent().putExtra("cached_identity", intent.getStringExtra("identity"))); InAppPlaybackSession.stop(); finish(); return
         }
         if (error is VideoCompatibilityException) {
-            showSheet("Choose a compatible video", error.issue.message,
-                listOf(PlayerSheetChoice("Choose another source") { showStreams() }))
+            showSheet(getString(R.string.t_choose_a_compatible_video), error.issue.message,
+                listOf(PlayerSheetChoice(getString(R.string.t_choose_another_source)) { showStreams() }))
             return
         }
-        showSheet("Playback stopped", "${failureReason(error)} Code: ${error.errorCodeName}",
+        showSheet(getString(R.string.t_playback_stopped), getString(R.string.t_x_code_x, failureReason(error), error.errorCodeName),
             listOf(
-                PlayerSheetChoice("Retry") { if (!stopped) { observedError = null; InAppPlaybackSession.retry() } },
+                PlayerSheetChoice(getString(R.string.t_retry)) { if (!stopped) { observedError = null; InAppPlaybackSession.retry() } },
                 // The title's other links open right here in the Streams panel; picking one continues from the same spot.
-                PlayerSheetChoice("Browse sources") { showStreams() }
+                PlayerSheetChoice(getString(R.string.t_browse_sources)) { showStreams() }
             ))
     }
 
     /** What actually went wrong, from the player's error code, instead of one message for every failure. */
     private fun failureReason(error: PlaybackException): String = when (error.errorCode) {
         PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS, PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND, PlaybackException.ERROR_CODE_IO_NO_PERMISSION ->
-            "The server refused this link. It may have expired: choose it again from the sources, or pick another one."
+            getString(R.string.t_the_server_refused_this_link_it)
         PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT, PlaybackException.ERROR_CODE_TIMEOUT ->
-            "The link took too long to respond. The server may be busy: try again, or pick another source."
+            getString(R.string.t_the_link_took_too_long_to)
         PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ->
-            "The connection to the server was lost. Check the internet connection, then try again."
+            L10n.tr(R.string.t_the_connection_to_the_server_was, "The connection to the server was lost. Check the internet connection, then try again.")
         in PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED..PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED ->
-            "This file couldn't be read. It may be damaged or in an unsupported format: pick another source."
+            L10n.tr(R.string.t_this_file_couldn_t_be_read, "This file couldn't be read. It may be damaged or in an unsupported format: pick another source.")
         in PlaybackException.ERROR_CODE_DECODER_INIT_FAILED..PlaybackException.ERROR_CODE_DECODING_RESOURCES_RECLAIMED ->
-            "This ${if (DeviceLayout.tv) "TV" else "device"} couldn't decode this video or audio. Pick another source."
-        else -> "The video stream stopped unexpectedly, even after retrying. Try again, or pick another source."
+            getString(R.string.t_this_x_couldn_t_decode_this, if (DeviceLayout.tv) "TV" else "device")
+        else -> getString(R.string.t_the_video_stream_stopped_unexpectedly_even)
     }
 
     private fun trackChoices(exo: Player) = TRACK_TYPES.flatMap { PlayerTrackOptions.choices(exo.currentTracks, exo.trackSelectionParameters, it) }
@@ -584,7 +595,7 @@ class PlayerActivity : Activity() {
     /** One sheet for both: Audio and Subtitles side by side, opened with [type]'s column focused. */
     private fun showTracks(type: Int) {
         val exo = player ?: return
-        val title = "Audio & Subtitles"
+        val title = getString(R.string.t_audio_subtitles)
         val loading = exo.playbackState == Player.STATE_IDLE || exo.playbackState == Player.STATE_BUFFERING
         val columns = TRACK_TYPES.map { trackType ->
             val choices = PlayerTrackOptions.choices(exo.currentTracks, exo.trackSelectionParameters, trackType)
@@ -594,13 +605,13 @@ class PlayerActivity : Activity() {
                         it.mediaTrackGroup == choice.group && choice.index in 0 until it.length && it.isTrackSupported(choice.index)
                     }
                     if (stillAvailable) exo.trackSelectionParameters = PlayerTrackOptions.apply(exo.trackSelectionParameters, choice)
-                    else showSheet(title, "Tracks changed. Open this menu again to choose a current track.",
-                        listOf(PlayerSheetChoice("Close") {}))
+                    else showSheet(title, getString(R.string.t_tracks_changed_open_this_menu_again),
+                        listOf(PlayerSheetChoice(getString(R.string.t_close)) {}))
                 }
             } }
-            val menuRows = if (trackType == C.TRACK_TYPE_TEXT) rows + PlayerSheetChoice("Subtitle sync · ${SubtitleSync.label()}") { showSubtitleSync() } +
-                PlayerSheetChoice("Subtitle style") { showSubtitleStyle() } else rows + PlayerSheetChoice("Volume boost · ${boostLabel()}") { showBoost() }
-            PlayerSheetColumn(if (trackType == C.TRACK_TYPE_AUDIO) "Audio" else "Subtitles",
+            val menuRows = if (trackType == C.TRACK_TYPE_TEXT) rows + PlayerSheetChoice(getString(R.string.t_subtitle_sync_x, SubtitleSync.label())) { showSubtitleSync() } +
+                PlayerSheetChoice(getString(R.string.t_subtitle_style)) { showSubtitleStyle() } else rows + PlayerSheetChoice(getString(R.string.t_volume_boost_x, boostLabel())) { showBoost() }
+            PlayerSheetColumn(if (trackType == C.TRACK_TYPE_AUDIO) getString(R.string.t_audio) else getString(R.string.t_subtitles),
                 PlayerTrackOptions.description(choices, trackType, loading), menuRows)
         }
         showSheet(title, "", columns, TRACK_TYPES.indexOf(type).coerceAtLeast(0))
@@ -622,33 +633,33 @@ class PlayerActivity : Activity() {
 
     private fun showSubtitleStyle() {
         val preferences = SubtitlePreferences(this)
-        showSheet("Subtitle style", "Applies to text subtitles. Image subtitles keep their original appearance. Colors, outline and background are in Settings → Audio & Subtitles → Subtitle style.", listOf(
-            PlayerSheetChoice("Presets · Netflix, Prime, YouTube-style…") { showSubtitlePresets() },
-            PlayerSheetChoice("Font · ${preferences.fontLabel}") { showSubtitleFonts() },
-            PlayerSheetChoice("Transparent background", preferences.transparentBackground) {
+        showSheet(getString(R.string.t_subtitle_style), getString(R.string.t_applies_to_text_subtitles_image_subtitles), listOf(
+            PlayerSheetChoice(getString(R.string.t_presets_netflix_prime_youtube_style)) { showSubtitlePresets() },
+            PlayerSheetChoice(getString(R.string.t_font_x, preferences.fontLabel)) { showSubtitleFonts() },
+            PlayerSheetChoice(getString(R.string.t_transparent_background), preferences.transparentBackground) {
                 preferences.transparentBackground = !preferences.transparentBackground
                 preferences.applyTo(view); InAppPlaybackSession.refreshSubtitleStyle(); showSubtitleStyle()
             },
-            PlayerSheetChoice("Bold text", preferences.boldText) {
+            PlayerSheetChoice(getString(R.string.t_bold_text), preferences.boldText) {
                 preferences.boldText = !preferences.boldText
                 preferences.applyTo(view); InAppPlaybackSession.refreshSubtitleStyle(); showSubtitleStyle()
             },
-            PlayerSheetChoice("Subtitle size · ${preferences.sizeLabel}") { showSubtitleSize() },
-            PlayerSheetChoice("Subtitle position · ${preferences.positionLabel}") { showSubtitlePosition() }
+            PlayerSheetChoice(getString(R.string.t_subtitle_size_x, preferences.sizeLabel)) { showSubtitleSize() },
+            PlayerSheetChoice(getString(R.string.t_subtitle_position_x, preferences.positionLabel)) { showSubtitlePosition() }
         ))
     }
 
     private fun showSubtitlePresets() {
         val preferences = SubtitlePreferences(this)
-        showSheet("Subtitle presets", "Sets the font, colors, outline and background together.", SubtitlePreferences.PRESETS.map { (id, label) ->
+        showSheet(getString(R.string.t_subtitle_presets), getString(R.string.t_sets_the_font_colors_outline_and), SubtitlePreferences.PRESETS.map { (id, label) ->
             PlayerSheetChoice(label) { preferences.applyPreset(id); preferences.applyTo(view); InAppPlaybackSession.refreshSubtitleStyle(); showSubtitleStyle() }
         })
     }
 
     private fun showSubtitleFonts() {
         val preferences = SubtitlePreferences(this)
-        val fonts = listOf(SubtitlePreferences.Companion.Font("", "Device default", "Your TV's caption font")) + SubtitlePreferences.FONTS
-        showSheet("Subtitle font", "Free look-alikes of the fonts streaming apps use.", fonts.map { font ->
+        val fonts = listOf(SubtitlePreferences.Companion.Font("", getString(R.string.t_device_default), getString(R.string.t_your_tv_s_caption_font))) + SubtitlePreferences.FONTS
+        showSheet(getString(R.string.t_subtitle_font), getString(R.string.t_free_look_alikes_of_the_fonts), fonts.map { font ->
             PlayerSheetChoice(font.label, preferences.font == font.id) {
                 preferences.font = font.id; preferences.applyTo(view); InAppPlaybackSession.refreshSubtitleStyle(); showSubtitleFonts()
             }
@@ -668,7 +679,7 @@ class PlayerActivity : Activity() {
 
     private fun showSubtitleSize() {
         val preferences = SubtitlePreferences(this)
-        showSheet("Subtitle size", "Medium keeps the original size.", SubtitlePreferences.SIZES.mapIndexed { index, size ->
+        showSheet(getString(R.string.t_subtitle_size), getString(R.string.t_medium_keeps_the_original_size), SubtitlePreferences.SIZES.mapIndexed { index, size ->
             PlayerSheetChoice(SubtitlePreferences.SIZE_LABELS[index], preferences.sizePercent == size) {
                 preferences.sizePercent = size
                 preferences.applyTo(view); InAppPlaybackSession.refreshSubtitleStyle(); showSubtitleStyle()
@@ -677,25 +688,25 @@ class PlayerActivity : Activity() {
     }
 
     private fun boostLabel() = when {
-        boost.gainDb == 0 -> "Off"
-        boost.state == VolumeBoostState.UNAVAILABLE -> "Unavailable"
-        else -> "+${boost.gainDb} dB"
+        boost.gainDb == 0 -> getString(R.string.t_off)
+        boost.state == VolumeBoostState.UNAVAILABLE -> getString(R.string.t_unavailable)
+        else -> getString(R.string.t_x_db, boost.gainDb)
     }
 
     private fun showBoost() {
-        showSheet("Volume boost",
-            "Boost decoded PCM audio in software for this playback session. Encoded passthrough bypasses it. Off restores normal audio.",
+        showSheet(getString(R.string.t_volume_boost),
+            getString(R.string.t_boost_decoded_pcm_audio_in_software),
             SessionVolumeBoost.STEPS.map { db -> PlayerSheetChoice(
-                if (db == 0) "Off · Normal audio" else "+$db dB", boost.gainDb == db
+                if (db == 0) getString(R.string.t_off_normal_audio_2) else getString(R.string.t_x_db, db), boost.gainDb == db
             ) {
                 if (player != null && !stopped) {
                     val state = InAppPlaybackSession.setVolumeBoostGain(db)
                     updateControls()
                     val result = when (state) {
-                        VolumeBoostState.OFF -> "Volume boost off"
-                        VolumeBoostState.WAITING_FOR_AUDIO -> "Software boost will start when decoded audio flows"
-                        VolumeBoostState.UNAVAILABLE -> "Software boost is unavailable on this audio route"
-                        VolumeBoostState.REQUESTED -> "+${boost.gainDb} dB software boost active"
+                        VolumeBoostState.OFF -> getString(R.string.t_volume_boost_off)
+                        VolumeBoostState.WAITING_FOR_AUDIO -> getString(R.string.t_software_boost_will_start_when_decoded)
+                        VolumeBoostState.UNAVAILABLE -> getString(R.string.t_software_boost_is_unavailable_on_this)
+                        VolumeBoostState.REQUESTED -> getString(R.string.t_x_db_software_boost_active, boost.gainDb)
                     }
                     Toast.makeText(this, result, Toast.LENGTH_SHORT).show()
                 }
@@ -705,9 +716,9 @@ class PlayerActivity : Activity() {
     /** Kodi-style tempo: audio is time-stretched with its pitch kept, for this playback only. */
     private fun showSpeed() {
         val current = player?.playbackParameters?.speed ?: 1f
-        showSheet("Playback speed",
-            "Voices keep their normal pitch. Applies to this video only. Dolby or DTS sent to a receiver is decoded by the app while sped up.",
-            SPEEDS.map { speed -> PlayerSheetChoice(if (speed == 1f) "Normal · 1×" else speedLabel(speed), current == speed) { applySpeed(speed) } })
+        showSheet(getString(R.string.t_playback_speed),
+            getString(R.string.t_voices_keep_their_normal_pitch_applies),
+            SPEEDS.map { speed -> PlayerSheetChoice(if (speed == 1f) getString(R.string.t_normal_1) else speedLabel(speed), current == speed) { applySpeed(speed) } })
     }
 
     /** 1× → 1.25× → 1.5× → 1.75× → 2× → 1×; from a slower speed (picked in the full list) the next step is 1×. */
@@ -718,12 +729,28 @@ class PlayerActivity : Activity() {
         // The new speed flashes briefly in the middle of the screen.
         if (!seekPreview.active) {
             seekLabel.removeCallbacks(hideSpeedFlash)
-            seekLabel.text = if (next == 1f) "Normal · 1×" else speedLabel(next)
+            seekLabel.text = if (next == 1f) getString(R.string.t_normal_1) else speedLabel(next)
             seekLabel.visibility = View.VISIBLE
             seekLabel.postDelayed(hideSpeedFlash, 900)
         }
     }
     private val hideSpeedFlash = Runnable { if (!seekPreview.active) seekLabel.visibility = View.GONE }
+
+    private var screenFit = PlayerScreenFit.FIT
+
+    /** Applies Fit / Fill / Stretch; a change the viewer made is remembered and flashed in the middle like Speed. */
+    private fun setScreenFit(fit: PlayerScreenFit, announce: Boolean) {
+        screenFit = fit
+        view.resizeMode = fit.resizeMode
+        view.findViewById<Button>(R.id.pov_screen_fit).text = getString(R.string.t_screen_x, getString(fit.label))
+        if (!announce) return
+        PlayerScreenFit.save(this, fit)
+        seekLabel.removeCallbacks(hideSpeedFlash)
+        seekLabel.text = getString(R.string.t_screen_x, getString(fit.label))
+        seekLabel.visibility = View.VISIBLE
+        seekLabel.postDelayed(hideSpeedFlash, 900)
+        controls.userInteraction()
+    }
 
     private fun applySpeed(speed: Float) {
         val exo = player ?: return
@@ -734,7 +761,7 @@ class PlayerActivity : Activity() {
         view.postDelayed({
             if (player === exo && !stopped && speed != 1f && exo.playbackParameters.speed != speed) {
                 updateControls()
-                Toast.makeText(this, "This audio can't be played at a different speed", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, getString(R.string.t_this_audio_can_t_be_played), Toast.LENGTH_LONG).show()
             }
         }, 2_000)
     }
@@ -743,14 +770,14 @@ class PlayerActivity : Activity() {
         (if (speed == speed.toInt().toFloat()) speed.toInt().toString() else speed.toString().trimEnd('0')) + "×"
 
     private fun showOptionsMenu() {
-        showSheet("Playback options", "Choose an action. Playback continues while you browse.",
+        showSheet(getString(R.string.t_playback_options), getString(R.string.t_choose_an_action_playback_continues_while),
             listOf(
-                PlayerSheetChoice("Audio & Subtitles") { showTracks(C.TRACK_TYPE_AUDIO) },
-                PlayerSheetChoice("Subtitle style") { showSubtitleStyle() },
-                PlayerSheetChoice("Volume boost") { showBoost() },
-                PlayerSheetChoice("Playback speed") { showSpeed() },
-                PlayerSheetChoice("Browse while playing") { finish() },
-                PlayerSheetChoice("Stop playback") { InAppPlaybackSession.stop(); finish() }
+                PlayerSheetChoice(getString(R.string.t_audio_subtitles)) { showTracks(C.TRACK_TYPE_AUDIO) },
+                PlayerSheetChoice(getString(R.string.t_subtitle_style)) { showSubtitleStyle() },
+                PlayerSheetChoice(getString(R.string.t_volume_boost)) { showBoost() },
+                PlayerSheetChoice(getString(R.string.t_playback_speed)) { showSpeed() },
+                PlayerSheetChoice(getString(R.string.t_browse_while_playing)) { finish() },
+                PlayerSheetChoice(getString(R.string.t_stop_playback)) { InAppPlaybackSession.stop(); finish() }
             ))
     }
 
@@ -761,7 +788,7 @@ class PlayerActivity : Activity() {
     private fun showStreams() {
         val media = InAppPlaybackSession.playbackIdentity
         if (media == null || !media.imdbId.startsWith("tt")) {
-            showSheet("Streams", "Other links are available for titles from ${BuildConfig.APP_SHORT}'s catalogs.", listOf(PlayerSheetChoice("Close") { activeDialog?.dismiss() }))
+            showSheet(getString(R.string.t_streams_2), getString(R.string.t_other_links_are_available_for_titles, BuildConfig.APP_SHORT), listOf(PlayerSheetChoice(getString(R.string.t_close)) { activeDialog?.dismiss() }))
             streamsDialog = activeDialog; return
         }
         if (!StreamChoices.has(media)) StreamChoices.searcher?.invoke(media)
@@ -770,9 +797,9 @@ class PlayerActivity : Activity() {
         val playing = InAppPlaybackSession.mediaName
         when {
             links == null && ours && StreamChoices.failed ->
-                showSheet("Streams", "The link search failed. Check your connection and try again.", listOf(PlayerSheetChoice("Try again") { StreamChoices.searcher?.invoke(media); showStreams() }))
-            links == null -> showSheet("Streams", "Searching for links… they appear here in a moment.", listOf(PlayerSheetChoice("Searching…", selectable = false) {}))
-            links.isEmpty() -> showSheet("Streams", "No other links were found for this title.", listOf(PlayerSheetChoice("Close") { activeDialog?.dismiss() }))
+                showSheet(getString(R.string.t_streams_2), getString(R.string.t_the_link_search_failed_check_your), listOf(PlayerSheetChoice(getString(R.string.t_try_again_2)) { StreamChoices.searcher?.invoke(media); showStreams() }))
+            links == null -> showSheet(getString(R.string.t_streams_2), getString(R.string.t_searching_for_links_they_appear_here), listOf(PlayerSheetChoice(getString(R.string.t_searching), selectable = false) {}))
+            links.isEmpty() -> showSheet(getString(R.string.t_streams_2), getString(R.string.t_no_other_links_were_found_for), listOf(PlayerSheetChoice(getString(R.string.t_close)) { activeDialog?.dismiss() }))
             else -> {
                 // Quality, size, ≈bitrate (from this video's length), HDR, codec and language badges, as in the source list.
                 val languages = SourceSortPreferences(this).languages
@@ -791,7 +818,7 @@ class PlayerActivity : Activity() {
                     val name = SourceBadges.name(source)
                     val current = source === nowPlaying
                     // Only the badges, the release name and the source's own name, as in the source list.
-                    StreamsPanel.Entry(source.provider.split(" + ").map(String::trim).filter(String::isNotBlank).ifEmpty { listOf("Other") }, PlayerSheetChoice(name.ifBlank { source.title }, detail = SourceBadges.origin(source),
+                    StreamsPanel.Entry(source.provider.split(" + ").map(String::trim).filter(String::isNotBlank).ifEmpty { listOf(getString(R.string.t_other)) }, PlayerSheetChoice(name.ifBlank { source.title }, detail = SourceBadges.origin(source),
                         badges = SourceBadges.forRow(source, languages, minutes, checkOnPlay, logos = true),
                         logos = SourceBadges.cachedOn(source).map(PlaybackDebrid::logo), playing = current,
                         hold = PlaybackDebrid.choices(source, checkOnPlay).takeIf { it.isNotEmpty() }?.let { services -> { pickDebrid(media, source, services) } }) {
@@ -809,22 +836,22 @@ class PlayerActivity : Activity() {
 
     /** Prepares the picked link here in the player and switches to it at the same spot; the player never closes. */
     private fun pickStream(media: PlaybackIdentity, source: dev.pov.tv.data.SourceItem) {
-        if (switching) { Toast.makeText(this, "Preparing the link you picked…", Toast.LENGTH_SHORT).show(); return }
+        if (switching) { Toast.makeText(this, getString(R.string.t_preparing_the_link_you_picked), Toast.LENGTH_SHORT).show(); return }
         // After a failure the player may already be gone; the saved position still lets the new link continue.
         val at = player?.currentPosition ?: 0L
         val ordered = StreamChoices.items.orEmpty()
         activeDialog?.dismiss()
-        runSwitch(media, source, at, "Preparing ${source.title.lineSequence().firstOrNull().orEmpty().take(60)}…") { switcher.prepare(source, media, ordered) }
+        runSwitch(media, source, at, getString(R.string.t_preparing_x, source.title.lineSequence().firstOrNull().orEmpty().take(60))) { switcher.prepare(source, media, ordered) }
     }
 
     /** Hold OK on a link in Streams: pick the debrid service it plays on, continuing at the same spot. */
     private fun pickDebrid(media: PlaybackIdentity, source: dev.pov.tv.data.SourceItem, services: List<Pair<String, String>>) {
-        showSheet("Play with…", SourceBadges.name(source).ifBlank { source.title }.take(80), services.map { (service, label) ->
+        showSheet(getString(R.string.t_play_with), SourceBadges.name(source).ifBlank { source.title }.take(80), services.map { (service, label) ->
             PlayerSheetChoice(label) {
-                if (switching) { Toast.makeText(this, "Preparing the link you picked…", Toast.LENGTH_SHORT).show(); return@PlayerSheetChoice }
+                if (switching) { Toast.makeText(this, getString(R.string.t_preparing_the_link_you_picked), Toast.LENGTH_SHORT).show(); return@PlayerSheetChoice }
                 val at = player?.currentPosition ?: 0L
                 activeDialog?.dismiss()
-                runSwitch(media, source, at, "Preparing on ${dev.pov.tv.data.DebridServices.name(service)}…") {
+                runSwitch(media, source, at, getString(R.string.t_preparing_on_x, dev.pov.tv.data.DebridServices.name(service))) {
                     switcher.prepare(source, media, StreamChoices.items.orEmpty(), only = service)
                 }
             }
@@ -836,17 +863,17 @@ class PlayerActivity : Activity() {
         switching = true
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
         Thread {
-            val result = runCatching(work).getOrElse { StreamSwitcher.Result.Failed(it.message ?: "This link could not be prepared. Pick another link.") }
+            val result = runCatching(work).getOrElse { StreamSwitcher.Result.Failed(it.message ?: getString(R.string.t_this_link_could_not_be_prepared)) }
             runOnUiThread {
                 switching = false
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 when (result) {
                     is StreamSwitcher.Result.Ready -> startSwitchedStream(media, result, at)
                     is StreamSwitcher.Result.Failed -> Toast.makeText(this, result.message, Toast.LENGTH_LONG).show()
-                    is StreamSwitcher.Result.ChooseFile -> showSheet("Choose a file", "This link has several videos. Pick the one to play.",
+                    is StreamSwitcher.Result.ChooseFile -> showSheet(getString(R.string.t_choose_a_file), getString(R.string.t_this_link_has_several_videos_pick),
                         result.files.map { (id, name, size) ->
-                            PlayerSheetChoice(name, detail = if (size > 0) "%.2f GB".format(java.util.Locale.ROOT, size / 1_000_000_000.0) else "") {
-                                runSwitch(media, source, at, "Preparing ${name.take(60)}…") { switcher.file(result.prepared, source, id) }
+                            PlayerSheetChoice(name, detail = if (size > 0) getString(R.string.t_2f_gb).format(java.util.Locale.ROOT, size / 1_000_000_000.0) else "") {
+                                runSwitch(media, source, at, getString(R.string.t_preparing_x, name.take(60))) { switcher.file(result.prepared, source, id) }
                             }
                         })
                 }
@@ -865,7 +892,7 @@ class PlayerActivity : Activity() {
             .putExtra("headers", org.json.JSONObject(ready.headers).toString())
         observedError = null
         if (!InAppPlaybackSession.start(this, intent)) {
-            Toast.makeText(this, "This link did not return a playable web link. Pick another link.", Toast.LENGTH_LONG).show(); return
+            Toast.makeText(this, getString(R.string.t_this_link_did_not_return_a), Toast.LENGTH_LONG).show(); return
         }
         InAppPlaybackSession.attachPlayerView(view)
         updateControls()
@@ -981,13 +1008,13 @@ class PlayerActivity : Activity() {
         seekrLoad = uiScope.launch {
             val started = android.os.SystemClock.elapsedRealtime()
             val track = runCatching { tv.seekr.previews.android.Seekr.create(key).loadTrack(content, durationMs) }
-                .onFailure { android.util.Log.w(SeekrPreferences.TAG, "Seekr lookup failed", it) }.getOrNull()?.takeIf { !it.isEmpty }
-            android.util.Log.i(SeekrPreferences.TAG, "Seekr ${if (track != null) "has" else "has no"} previews for $id (${android.os.SystemClock.elapsedRealtime() - started} ms)")
+                .onFailure { android.util.Log.w(SeekrPreferences.TAG, getString(R.string.t_seekr_lookup_failed), it) }.getOrNull()?.takeIf { !it.isEmpty }
+            android.util.Log.i(SeekrPreferences.TAG, getString(R.string.t_seekr_x_previews_for_x_x, if (track != null) "has" else "has no", id, android.os.SystemClock.elapsedRealtime() - started))
             if (track == null) return@launch
             seekrTrack = track
             val sheets = android.os.SystemClock.elapsedRealtime()
             runCatching { track.prefetchSheets() }
-            android.util.Log.i(SeekrPreferences.TAG, "Seekr sprite sheets ready in ${android.os.SystemClock.elapsedRealtime() - sheets} ms")
+            android.util.Log.i(SeekrPreferences.TAG, getString(R.string.t_seekr_sprite_sheets_ready_in_x, android.os.SystemClock.elapsedRealtime() - sheets))
         }
     }
 

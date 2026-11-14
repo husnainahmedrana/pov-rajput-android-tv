@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import android.content.Context
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
@@ -27,7 +30,7 @@ class GitHubUpdates(private val context: Context) {
 
     fun download(release: Release, progress: (Long, Long) -> Unit): File {
         val file = apkFile
-        check(file.parentFile!!.isDirectory || file.parentFile!!.mkdirs()) { "Cannot create update storage." }
+        check(file.parentFile!!.isDirectory || file.parentFile!!.mkdirs()) { L10n.tr(R.string.t_cannot_create_update_storage, "Cannot create update storage.") }
         val partial = File(file.parentFile, "download.part")
         try {
             var received = 0L
@@ -39,10 +42,10 @@ class GitHubUpdates(private val context: Context) {
                     if (now - last > 150_000_000L) { progress(received, release.candidate.size); last = now }
                 }
             }
-            check(received == release.candidate.size) { "The APK download is incomplete. Try again." }
+            check(received == release.candidate.size) { L10n.tr(R.string.t_the_apk_download_is_incomplete_try, "The APK download is incomplete. Try again.") }
             validate(partial, release)
-            if (file.exists()) check(file.delete()) { "Cannot replace the previous update." }
-            check(partial.renameTo(file)) { "Cannot save the update." }
+            if (file.exists()) check(file.delete()) { L10n.tr(R.string.t_cannot_replace_the_previous_update, "Cannot replace the previous update.") }
+            check(partial.renameTo(file)) { L10n.tr(R.string.t_cannot_save_the_update, "Cannot save the update.") }
             progress(received, received)
             return file
         } finally { partial.delete() }
@@ -55,12 +58,12 @@ class GitHubUpdates(private val context: Context) {
             val buffer = ByteArray(64 * 1024)
             while (true) { val count = input.read(buffer); if (count < 0) break; digest.update(buffer, 0, count) }
         }
-        check(hex(digest.digest()) == release.sha256) { "Update checksum did not match. Download it again." }
+        check(hex(digest.digest()) == release.sha256) { L10n.tr(R.string.t_update_checksum_did_not_match_download, "Update checksum did not match. Download it again.") }
         val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
         val installed = context.packageManager.getPackageInfo(context.packageName, flags)
         val archive = context.packageManager.getPackageArchiveInfo(file.absolutePath, flags)
-            ?: error("The downloaded APK is invalid.")
-        check(archive.packageName == context.packageName) { "The update belongs to a different app." }
+            ?: error(L10n.tr(R.string.t_the_downloaded_apk_is_invalid, "The downloaded APK is invalid."))
+        check(archive.packageName == context.packageName) { L10n.tr(R.string.t_the_update_belongs_to_a_different, "The update belongs to a different app.") }
         check(code(archive) == release.code && archive.versionName == release.version && release.code > code(installed)) {
             "This APK is not a newer compatible version."
         }
@@ -68,7 +71,7 @@ class GitHubUpdates(private val context: Context) {
             "Debug APKs cannot be installed through the release updater."
         }
         val currentSigners = signers(installed)
-        check(currentSigners.isNotEmpty() && signers(archive) == currentSigners) { "The update signing certificate does not match this app." }
+        check(currentSigners.isNotEmpty() && signers(archive) == currentSigners) { L10n.tr(R.string.t_the_update_signing_certificate_does_not, "The update signing certificate does not match this app.") }
     }
 
     @Suppress("DEPRECATION")
@@ -100,19 +103,19 @@ class GitHubUpdates(private val context: Context) {
             val manifest = asset(MANIFEST_ASSET) ?: return null
             fun url(asset: JSONObject, name: String): String {
                 val expected = "https://github.com/$REPOSITORY/releases/download/$tag/$name"
-                check(asset.optString("browser_download_url") == expected) { "Unexpected release asset address." }
+                check(asset.optString("browser_download_url") == expected) { L10n.tr(R.string.t_unexpected_release_asset_address, "Unexpected release asset address.") }
                 return expected
             }
             val size = apk.optLong("size")
-            check(size in 1..MAX_APK) { "Release APK size is invalid." }
+            check(size in 1..MAX_APK) { L10n.tr(R.string.t_release_apk_size_is_invalid, "Release APK size is invalid.") }
             return Candidate(tag, json.optString("body").take(12_000), url(apk, APK_ASSET), url(manifest, MANIFEST_ASSET), size)
         }
         internal fun manifest(json: JSONObject, candidate: Candidate, installed: Long): Release? {
-            check(json.optInt("schema") == 1 && json.optString("packageName") == UPDATE_PACKAGE) { "Incompatible update information." }
+            check(json.optInt("schema") == 1 && json.optString("packageName") == UPDATE_PACKAGE) { L10n.tr(R.string.t_incompatible_update_information, "Incompatible update information.") }
             val code = json.getLong("versionCode")
             val version = json.getString("versionName")
             val checksum = json.getString("sha256").lowercase(java.util.Locale.ROOT)
-            check(candidate.tag == "v$version" && code > 0 && checksum.matches(Regex("[0-9a-f]{64}"))) { "Invalid update information." }
+            check(candidate.tag == "v$version" && code > 0 && checksum.matches(Regex("[0-9a-f]{64}"))) { L10n.tr(R.string.t_invalid_update_information, "Invalid update information.") }
             return if (code > installed) Release(candidate, code, version, checksum) else null
         }
         internal fun allowedDownload(address: URL): Boolean = address.protocol == "https" && address.userInfo == null &&
@@ -122,27 +125,27 @@ class GitHubUpdates(private val context: Context) {
         private fun transfer(address: String, maximum: Long, consume: (ByteArray, Int) -> Unit) {
             var target = URL(address)
             repeat(6) { hop ->
-                check(allowedDownload(target)) { "The update download address is not trusted." }
+                check(allowedDownload(target)) { L10n.tr(R.string.t_the_update_download_address_is_not, "The update download address is not trusted.") }
                 val connection = target.openConnection() as HttpsURLConnection
                 connection.useCaches = false  // release checks and APK downloads always come fresh
                 connection.connectTimeout = 15_000; connection.readTimeout = 25_000
                 connection.instanceFollowRedirects = false
-                connection.setRequestProperty("User-Agent", "POV-Rajput-Updater")
+                connection.setRequestProperty("User-Agent", "${dev.pov.tv.BuildConfig.APP_NAME}-Updater")
                 try {
                     val status = connection.responseCode
                     if (status in setOf(301, 302, 303, 307, 308)) {
-                        check(hop < 5) { "Too many update download redirects." }
-                        target = URL(target, connection.getHeaderField("Location") ?: error("Missing download redirect."))
+                        check(hop < 5) { L10n.tr(R.string.t_too_many_update_download_redirects, "Too many update download redirects.") }
+                        target = URL(target, connection.getHeaderField("Location") ?: error(L10n.tr(R.string.t_missing_download_redirect, "Missing download redirect.")))
                     } else {
-                        check(status == 200) { "GitHub download failed ($status). Try again later." }
-                        check(connection.contentLengthLong <= maximum) { "Update download is too large." }
+                        check(status == 200) { L10n.tr(R.string.t_github_download_failed_x_try_again, "GitHub download failed (%1\$s). Try again later.", status) }
+                        check(connection.contentLengthLong <= maximum) { L10n.tr(R.string.t_update_download_is_too_large, "Update download is too large.") }
                         var size = 0L
                         connection.inputStream.use { input ->
                             val buffer = ByteArray(64 * 1024)
                             while (true) {
                                 if (Thread.currentThread().isInterrupted) throw InterruptedException()
                                 val count = input.read(buffer); if (count < 0) break
-                                size += count; check(size <= maximum) { "Update download is too large." }
+                                size += count; check(size <= maximum) { L10n.tr(R.string.t_update_download_is_too_large, "Update download is too large.") }
                                 consume(buffer, count)
                             }
                         }
@@ -150,7 +153,7 @@ class GitHubUpdates(private val context: Context) {
                     }
                 } finally { connection.disconnect() }
             }
-            error("Update download failed.")
+            error(L10n.tr(R.string.t_update_download_failed, "Update download failed."))
         }
     }
 }

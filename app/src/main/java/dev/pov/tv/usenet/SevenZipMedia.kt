@@ -1,5 +1,8 @@
 package dev.pov.tv.usenet
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -26,8 +29,8 @@ internal object SevenZipMedia {
                 .setMaxMemoryLimitKiB(64 * 1024).setPassword(password).get() }
             log("7z: directory read in ${ms()} ms (${channel.readCalls} reads), ${archive.entries.count()} entries")
             val entry = archive.entries.filter { !it.isDirectory && it.name.orEmpty().substringAfterLast('.').lowercase() in videos }
-                .maxByOrNull { it.size } ?: throw IOException("The 7z archive contains no video.")
-            if (entry.size <= 0) throw IOException("The 7z video is empty.")
+                .maxByOrNull { it.size } ?: throw IOException(L10n.tr(R.string.t_the_7z_archive_contains_no_video, "The 7z archive contains no video."))
+            if (entry.size <= 0) throw IOException(L10n.tr(R.string.t_the_7z_video_is_empty, "The 7z video is empty."))
             SevenZipAes.open(source, archive, entry, password)?.also { log("7z: encrypted video, key ready at ${ms()} ms") }?.let { direct ->
                 try {
                     val head = ByteArray(16)
@@ -38,7 +41,7 @@ internal object SevenZipMedia {
                         count += n
                     }
                     if (!UsenetMedia.looksLikeVideo(head.copyOf(count)))
-                        throw IOException("The supplied 7z password could not unlock a recognizable video.")
+                        throw IOException(L10n.tr(R.string.t_the_supplied_7z_password_could_not, "The supplied 7z password could not unlock a recognizable video."))
                     log("7z: first bytes checked at ${ms()} ms")
                     return UsenetMedia.Opened(direct, entry.name, "7z · encrypted · direct")
                 } catch (error: Exception) { direct.close(); throw error }
@@ -51,27 +54,27 @@ internal object SevenZipMedia {
             if (methods.isNotEmpty() && methods.all { it.method == org.apache.commons.compress.archivers.sevenz.SevenZMethod.COPY }
                 && channel.readCalls == readsBefore) {
                 val start = channel.position()
-                if (start < 0 || entry.size > source.size - start) throw IOException("The stored 7z video exceeds the archive size.")
+                if (start < 0 || entry.size > source.size - start) throw IOException(L10n.tr(R.string.t_the_stored_7z_video_exceeds_the, "The stored 7z video exceeds the archive size."))
                 log("7z: stored video ready at ${ms()} ms")
                 // The video is usually not the archive's last entry, so the set's own tail isn't its end: fetch that now.
                 source.prefetch(start + entry.size - minOf(entry.size, VIDEO_TAIL_BYTES), minOf(entry.size, VIDEO_TAIL_BYTES))
                 return UsenetMedia.Opened(Stored(source, archive, start, entry.size), entry.name, "7z · direct")
             }
-            if (cache == null) throw IOException("Compressed 7z playback needs a temporary cache directory.")
+            if (cache == null) throw IOException(L10n.tr(R.string.t_compressed_7z_playback_needs_a_temporary, "Compressed 7z playback needs a temporary cache directory."))
             val directory = File(cache, "usenet-decoded")
-            if (!directory.isDirectory && !directory.mkdirs()) throw IOException("Can't create the 7z playback cache.")
+            if (!directory.isDirectory && !directory.mkdirs()) throw IOException(L10n.tr(R.string.t_can_t_create_the_7z_playback, "Can't create the 7z playback cache."))
             // One playback session owns this directory. Remove leftovers from a killed process.
             directory.listFiles()?.filter { it.name.startsWith("video-") && it.name.endsWith(".tmp") }?.forEach { it.delete() }
             if (entry.size > (directory.usableSpace - RESERVE).coerceAtLeast(0))
-                throw IOException("7z playback needs %.1f GB of free temporary storage. Choose a smaller release or a plain video.".format(entry.size / 1e9 + RESERVE / 1e9))
+                throw IOException(L10n.tr(R.string.t_7z_playback_needs_1f_gb_of, "7z playback needs %.1f GB of free temporary storage. Choose a smaller release or a plain video.").format(entry.size / 1e9 + RESERVE / 1e9))
             spool = File.createTempFile("video-", ".tmp", directory)
             val decoded = Decoded(source, archive, input, spool, entry.size)
             return UsenetMedia.Opened(decoded, entry.name, "7z · temporary cache · forward seeks may buffer")
         } catch (error: Exception) {
             try { archive?.close() } finally { source.close(); spool?.delete() }
             if (error is org.apache.commons.compress.PasswordRequiredException)
-                throw IOException("This 7z release needs a password, but its NZB did not provide one.", error)
-            throw IOException("7z playback: ${error.message ?: "this archive could not be opened"}", error)
+                throw IOException(L10n.tr(R.string.t_this_7z_release_needs_a_password, "This 7z release needs a password, but its NZB did not provide one."), error)
+            throw IOException(L10n.tr(R.string.t_7z_playback_x, "7z playback: %1\$s", error.message ?: "this archive could not be opened"), error)
         }
     }
 
@@ -80,12 +83,12 @@ internal object SevenZipMedia {
                          private val start: Long, override val size: Long) : ByteSource {
         @Volatile private var closed = false
         override fun read(position: Long, target: ByteArray, offset: Int, length: Int): Int {
-            if (closed) throw IOException("The 7z stream is closed.")
+            if (closed) throw IOException(L10n.tr(R.string.t_the_7z_stream_is_closed, "The 7z stream is closed."))
             require(position >= 0 && offset >= 0 && length >= 0 && offset <= target.size - length)
             if (length == 0) return 0
             if (position >= size) return -1
             val got = source.read(start + position, target, offset, minOf(length.toLong(), size - position).toInt())
-            if (got < 0) throw IOException("The stored 7z video ended early.")
+            if (got < 0) throw IOException(L10n.tr(R.string.t_the_stored_7z_video_ended_early, "The stored 7z video ended early."))
             return got
         }
         override fun close() { closed = true; try { archive.close() } finally { source.close() } }
@@ -104,7 +107,7 @@ internal object SevenZipMedia {
         @Volatile private var closed = false
 
         override fun read(position: Long, target: ByteArray, offset: Int, length: Int): Int = synchronized(lock) {
-            if (closed) throw IOException("The 7z stream is closed.")
+            if (closed) throw IOException(L10n.tr(R.string.t_the_7z_stream_is_closed, "The 7z stream is closed."))
             failure?.let { throw it }
             require(position >= 0 && offset >= 0 && length >= 0 && offset <= target.size - length)
             if (length == 0) return@synchronized 0
@@ -113,10 +116,10 @@ internal object SevenZipMedia {
             val end = position + count
             try {
                 while (decoded < end) {
-                    if (closed) throw IOException("The 7z stream is closed.")
-                    if (file.parentFile!!.usableSpace < RESERVE) throw IOException("Not enough free storage for the 7z playback cache.")
+                    if (closed) throw IOException(L10n.tr(R.string.t_the_7z_stream_is_closed, "The 7z stream is closed."))
+                    if (file.parentFile!!.usableSpace < RESERVE) throw IOException(L10n.tr(R.string.t_not_enough_free_storage_for_the, "Not enough free storage for the 7z playback cache."))
                     val got = input.read(buffer, 0, minOf(buffer.size.toLong(), end - decoded).toInt())
-                    if (got <= 0) throw IOException("The 7z video ended before its stated size.")
+                    if (got <= 0) throw IOException(L10n.tr(R.string.t_the_7z_video_ended_before_its, "The 7z video ended before its stated size."))
                     output.seek(decoded); output.write(buffer, 0, got); decoded += got
                 }
                 output.seek(position); output.readFully(target, offset, count)

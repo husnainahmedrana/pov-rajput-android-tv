@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URI
@@ -29,7 +32,7 @@ class LinkDebrids internal constructor(
         require(service in IDS)
         val key = value.trim()
         require(key.length in 8..512 && key.none { it.isWhitespace() || it.isISOControl() }) { "Enter your ${DebridServices.name(service)} API key." }
-        check(validate(service, key)) { "${DebridServices.name(service)} could not validate this API key." }
+        check(validate(service, key)) { L10n.tr(R.string.t_x_could_not_validate_this_api, "%1\$s could not validate this API key.", DebridServices.name(service)) }
         if (cancelled()) return
         saveKey(service, key)
     }
@@ -45,8 +48,8 @@ class LinkDebrids internal constructor(
         val query = hashes.joinToString("&") { "items[]=$it" }
         val response = json(transport.get(premiumizeUrl("cache/check?$query", key), emptyMap()))
         premiumizeOk(response)
-        val answers = response.optJSONArray("response") ?: throw IllegalStateException("Premiumize cache availability is unknown.")
-        check(answers.length() == hashes.size) { "Premiumize cache availability is unknown." }
+        val answers = response.optJSONArray("response") ?: throw IllegalStateException(L10n.tr(R.string.t_premiumize_cache_availability_is_unknown, "Premiumize cache availability is unknown."))
+        check(answers.length() == hashes.size) { L10n.tr(R.string.t_premiumize_cache_availability_is_unknown, "Premiumize cache availability is unknown.") }
         return hashes.filterIndexed { index, _ -> answers.optBoolean(index, false) }.toSet()
     }
 
@@ -60,25 +63,25 @@ class LinkDebrids internal constructor(
             "alldebrid" -> allDebrid(key, hash)
             "premiumize" -> premiumize(key, hash)
             "debridlink" -> debridLink(key, hash)
-            else -> error("Unknown debrid service.")
+            else -> error(L10n.tr(R.string.t_unknown_debrid_service, "Unknown debrid service."))
         } ?: return null
         val eligible = try { EpisodeFilename.choices(files.map { VideoCandidate(it.id, it.name, it.size) }, source.title, identity) }
             catch (_: IllegalStateException) { return null }
-        check(keyFor(service) == key) { "The ${DebridServices.name(service)} account changed. Please try again." }
+        check(keyFor(service) == key) { L10n.tr(R.string.t_the_x_account_changed_please_try, "The %1\$s account changed. Please try again.", DebridServices.name(service)) }
         return PreparedSource.Links(service, files.filter { file -> eligible.any { it.id == file.id } }, identity,
             EpisodeFilename.preferredId(eligible, source.title), tag(key))
     }
 
     /** A playable HTTPS address for one prepared file. Real-Debrid and AllDebrid hand out hoster links that must be unlocked first. */
     fun streamUrl(prepared: PreparedSource.Links, file: DebridFile): String {
-        check(ownsTag(prepared.service, prepared.accountTag)) { "The ${DebridServices.name(prepared.service)} account changed. Select the source again." }
+        check(ownsTag(prepared.service, prepared.accountTag)) { L10n.tr(R.string.t_the_x_account_changed_select_the, "The %1\$s account changed. Select the source again.", DebridServices.name(prepared.service)) }
         val key = credential(prepared.service)
         val url = when (prepared.service) {
             "realdebrid" -> json(transport.form("POST", "$REAL_DEBRID/unrestrict/link", bearer(key), listOf("link" to file.link))).optString("download")
             "alldebrid" -> {
                 val data = allDebridData(transport.get("$ALL_DEBRID/v4/link/unlock?agent=$AGENT&link=${Net.encode(file.link)}", bearer(key)))
                 data.optString("link").ifBlank {
-                    throw IllegalStateException("AllDebrid is still preparing this file. Try again in a moment.")
+                    throw IllegalStateException(L10n.tr(R.string.t_alldebrid_is_still_preparing_this_file, "AllDebrid is still preparing this file. Try again in a moment."))
                 }
             }
             else -> file.link
@@ -98,7 +101,7 @@ class LinkDebrids internal constructor(
     private fun realDebrid(key: String, hash: String, source: SourceItem, identity: PlaybackIdentity): List<DebridFile>? {
         val auth = bearer(key)
         val id = json(transport.form("POST", "$REAL_DEBRID/torrents/addMagnet", auth, listOf("magnet" to magnet(hash)))).optString("id")
-        check(TORRENT_ID.matches(id)) { "Real-Debrid did not accept this link." }
+        check(TORRENT_ID.matches(id)) { L10n.tr(R.string.t_real_debrid_did_not_accept_this, "Real-Debrid did not accept this link.") }
         var keep = false
         try {
             var info = waitFor(4_000) { json(transport.get("$REAL_DEBRID/torrents/info/$id", auth)).takeIf { it.optString("status") != "magnet_conversion" } }
@@ -178,20 +181,20 @@ class LinkDebrids internal constructor(
     private fun <T : Any> waitFor(limitMs: Long, attempt: () -> T?): T? {
         val deadline = now() + limitMs * 1_000_000
         while (true) {
-            if (Thread.currentThread().isInterrupted) throw InterruptedException("Source preparation cancelled.")
+            if (Thread.currentThread().isInterrupted) throw InterruptedException(L10n.tr(R.string.t_source_preparation_cancelled, "Source preparation cancelled."))
             attempt()?.let { return it }
             if (now() >= deadline) return null
             pause(700)
         }
     }
 
-    private fun credential(service: String) = keyFor(service).also { check(it.isNotBlank()) { "Connect ${DebridServices.name(service)} in Settings first." } }
+    private fun credential(service: String) = keyFor(service).also { check(it.isNotBlank()) { L10n.tr(R.string.t_connect_x_in_settings_first, "Connect %1\$s in Settings first.", DebridServices.name(service)) } }
     private fun premiumizeUrl(path: String, key: String) = "$PREMIUMIZE/$path${if ('?' in path) "&" else "?"}apikey=${Net.encode(key)}"
     private fun bearer(key: String) = mapOf("Authorization" to "Bearer $key")
-    private fun json(text: String): JSONObject = try { JSONObject(text) } catch (_: Exception) { throw IllegalStateException("The debrid service returned an unreadable response.") }
+    private fun json(text: String): JSONObject = try { JSONObject(text) } catch (_: Exception) { throw IllegalStateException(L10n.tr(R.string.t_the_debrid_service_returned_an_unreadable, "The debrid service returned an unreadable response.")) }
 
     private fun premiumizeOk(response: JSONObject) =
-        check(response.optString("status") == "success") { "Premiumize could not complete the request. Check your API key and plan." }
+        check(response.optString("status") == "success") { L10n.tr(R.string.t_premiumize_could_not_complete_the_request, "Premiumize could not complete the request. Check your API key and plan.") }
 
     private fun allDebridData(text: String): JSONObject {
         val response = json(text)

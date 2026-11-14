@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import java.net.URI
 import java.util.Locale
 import org.json.JSONObject
@@ -78,7 +81,7 @@ class SourceResolver internal constructor(
         var stoppedEarly = false
         fun results(): List<SourceItem> = deduplicate(answers.filterNotNull().flatten()).map { source ->
             val on = services.filter { source.infoHash in cachedOn.getValue(it) }
-            val unavailable = if (source.infoHash.isNotBlank()) failedServices.map { "${DebridServices.name(it)} cache unavailable" } else emptyList()
+            val unavailable = if (source.infoHash.isNotBlank()) failedServices.map { L10n.tr(R.string.t_x_cache_unavailable, "%1\$s cache unavailable", DebridServices.name(it)) } else emptyList()
             source.copy(cached = on.isNotEmpty(), cachedServices = on,
                 detail = (listOf(source.detail) + unavailable).filter { it.isNotBlank() }.joinToString(" · "))
         }.sortedByDescending { it.cached }
@@ -145,8 +148,8 @@ class SourceResolver internal constructor(
         expired.forEach { index -> providers.getOrNull(index)?.let { timing?.invoke(it, null) } }
         val late = (expired + pending.sorted()).map { names[it] }
         check(successful > 0) {
-            if (late.isNotEmpty() && failures.isEmpty()) "No source provider answered in time. Try again, or raise the time limits in Settings."
-            else "The enabled source providers could not be reached. Try again or check source providers in Settings."
+            if (late.isNotEmpty() && failures.isEmpty()) L10n.tr(R.string.t_no_source_provider_answered_in_time, "No source provider answered in time. Try again, or raise the time limits in Settings.")
+            else L10n.tr(R.string.t_the_enabled_source_providers_could_not, "The enabled source providers could not be reached. Try again or check source providers in Settings.")
         }
         val results = results()
         return SearchResult(results, failures, late, stoppedEarly && pending.isNotEmpty())
@@ -177,6 +180,7 @@ class SourceResolver internal constructor(
             if (identity.type == "series" && EpisodeFilename.isExplicitMismatch(title, identity.season, identity.episode)) return@mapNotNull null
             // Add-ons match short titles loosely: "Dark Angel S01E02" or "Darkness S01E02" (other shows) turn up for "Dark".
             if (identity.type == "series" && EpisodeFilename.namesAnotherShow(title, identity.title)) return@mapNotNull null
+            if (identity.type == "series" && EpisodeFilename.namesAMovie(title)) return@mapNotNull null
             // An add-on that holds the viewer's debrid key says which service in the link's name ("[TB+] Torrentio").
             val debridTag = if (direct.isBlank()) null else AddonDebridTag.of(stream.optString("name"))
             val fileIndex = if (stream.has("fileIdx") && !stream.isNull("fileIdx")) stream.optInt("fileIdx", -1).takeIf { it >= 0 } else null
@@ -258,9 +262,9 @@ class SourceResolver internal constructor(
             // side by side, so a full Torrentio list costs roughly one round trip instead of several.
             val batches = hashes.chunked(when (service) { "offcloud" -> 100; "premiumize" -> 50; else -> 40 })
             fun check(batch: List<String>) {
-                if (Thread.currentThread().isInterrupted) throw InterruptedException("Source search cancelled.")
+                if (Thread.currentThread().isInterrupted) throw InterruptedException(L10n.tr(R.string.t_source_search_cancelled, "Source search cancelled."))
                 val found = when (service) {
-                    "offcloud" -> checkNotNull(offcloud()) { "Connect Offcloud in Settings." }.cached(batch)
+                    "offcloud" -> checkNotNull(offcloud()) { L10n.tr(R.string.t_connect_offcloud_in_settings_2, "Connect Offcloud in Settings.") }.cached(batch)
                     "torbox" -> torbox.cached(batch)
                     else -> checkNotNull(links).cached(service, batch)
                 }
@@ -298,7 +302,7 @@ class SourceResolver internal constructor(
     fun prepare(source: SourceItem, identity: PlaybackIdentity, only: String? = null): PreparedSource {
         validateIdentity(identity)
         require(identity.type != "series" || !EpisodeFilename.isExplicitMismatch(source.title, identity.season, identity.episode)) {
-            "This source identifies a different episode. Choose another source."
+            L10n.tr(R.string.t_this_source_identifies_a_different_episode, "This source identifies a different episode. Choose another source.")
         }
         if (source.directUrl.isNotBlank()) {
             require(isWebLink(source.directUrl)) { "Only HTTP and HTTPS video sources are supported." }
@@ -307,12 +311,12 @@ class SourceResolver internal constructor(
         val hash = source.infoHash.lowercase(Locale.ROOT)
         require(HASH.matches(hash)) { "The selected source has no valid torrent hash." }
         val services = activeServices()
-        check(services.isNotEmpty()) { "Connect a debrid service in Settings first." }
+        check(services.isNotEmpty()) { L10n.tr(R.string.t_connect_a_debrid_service_in_settings_2, "Connect a debrid service in Settings first.") }
         if (only != null) {
-            check(only in services) { "Connect ${DebridServices.name(only)} in Settings first." }
+            check(only in services) { L10n.tr(R.string.t_connect_x_in_settings_first, "Connect %1\$s in Settings first.", DebridServices.name(only)) }
             // Real-Debrid-style services only know by trying; the others are checked first so nothing is downloaded.
             if (only !in LinkDebrids.CHECK_ON_PLAY) check(hash in checkCaches(listOf(only), listOf(hash)).single().hashes) {
-                "This link isn't cached on ${DebridServices.name(only)}. Choose another service."
+                L10n.tr(R.string.t_this_link_isn_t_cached_on_4, "This link isn't cached on %1\$s. Choose another service.", DebridServices.name(only))
             }
             return prepareWith(only, source.copy(cached = true), identity)
         }
@@ -320,26 +324,26 @@ class SourceResolver internal constructor(
         val cachedOn = availability.filter { hash in it.hashes }.map { it.service }
         var failure: Exception? = null
         for (service in cachedOn) {
-            if (Thread.currentThread().isInterrupted) throw InterruptedException("Source preparation cancelled.")
+            if (Thread.currentThread().isInterrupted) throw InterruptedException(L10n.tr(R.string.t_source_preparation_cancelled, "Source preparation cancelled."))
             try { return prepareWith(service, source.copy(cached = true), identity) }
             catch (error: InterruptedException) { throw error }
             catch (error: java.util.concurrent.CancellationException) { throw error }
             catch (error: Exception) { if (failure == null) failure = error }
         }
         failure?.let { throw it }
-        check(!source.cached) { "This source is no longer cached on your connected services. Refresh sources before starting a cloud download." }
-        check(availability.none { it.failed }) { "Cache availability could not be verified. Try again before starting a download." }
+        check(!source.cached) { L10n.tr(R.string.t_this_source_is_no_longer_cached_2, "This source is no longer cached on your connected services. Refresh sources before starting a cloud download.") }
+        check(availability.none { it.failed }) { L10n.tr(R.string.t_cache_availability_could_not_be_verified, "Cache availability could not be verified. Try again before starting a download.") }
         val downloadService = source.downloadService ?: services.firstOrNull { it in DebridServices.TRANSFERS }
-            ?: throw IllegalStateException("This link isn't cached on your connected services. Choose another link.")
-        check(downloadService in services) { "The selected download account changed. Refresh sources." }
+            ?: throw IllegalStateException(L10n.tr(R.string.t_this_link_isn_t_cached_on_3, "This link isn't cached on your connected services. Choose another link."))
+        check(downloadService in services) { L10n.tr(R.string.t_the_selected_download_account_changed_refresh, "The selected download account changed. Refresh sources.") }
         return prepareWith(downloadService, source.copy(cached = false), identity)
     }
 
     private fun prepareWith(service: String, source: SourceItem, identity: PlaybackIdentity): PreparedSource = when (service) {
-        "offcloud" -> checkNotNull(offcloud()) { "Connect Offcloud in Settings first." }.prepare(source, identity)
+        "offcloud" -> checkNotNull(offcloud()) { L10n.tr(R.string.t_connect_offcloud_in_settings_first, "Connect Offcloud in Settings first.") }.prepare(source, identity)
         "torbox" -> prepareTorBox(source, identity)
         else -> checkNotNull(links).prepare(service, source, identity)
-            ?: throw IllegalStateException("This link is no longer cached on ${DebridServices.name(service)}. Refresh sources.")
+            ?: throw IllegalStateException(L10n.tr(R.string.t_this_link_is_no_longer_cached, "This link is no longer cached on %1\$s. Refresh sources.", DebridServices.name(service)))
     }
 
     /** Connected services that can only tell whether a link is cached by trying it. */
@@ -360,7 +364,7 @@ class SourceResolver internal constructor(
             .take(LinkDebrids.CHECK_LIMIT)
         tries.forEachIndexed { index, source ->
             for (service in services) {
-                if (Thread.currentThread().isInterrupted) throw InterruptedException("Source preparation cancelled.")
+                if (Thread.currentThread().isInterrupted) throw InterruptedException(L10n.tr(R.string.t_source_preparation_cancelled, "Source preparation cancelled."))
                 progress(index + 1, tries.size, service)
                 val prepared = try { api.prepare(service, source, identity) }
                     catch (error: InterruptedException) { throw error }
@@ -379,13 +383,13 @@ class SourceResolver internal constructor(
         val hash = source.infoHash.lowercase(Locale.ROOT)
         require(HASH.matches(hash)) { "The selected source has no valid torrent hash." }
         if (hash in torbox.cached(listOf(hash))) return torbox.prepareCached(source, identity)
-        check(!source.cached) { "This source is no longer cached. Refresh sources before starting a cloud download." }
+        check(!source.cached) { L10n.tr(R.string.t_this_source_is_no_longer_cached_3, "This source is no longer cached. Refresh sources before starting a cloud download.") }
         val transfer = torbox.addMagnet(hash)
         // Cached transfers normally expose files immediately. Uncached transfers stay in TorBox;
         // a bounded wait keeps the UI from spinning indefinitely and never deletes user transfers.
         val deadline = monotonicNanos() + 20_000_000_000L
         do {
-            if (Thread.currentThread().isInterrupted) throw InterruptedException("Source preparation was cancelled.")
+            if (Thread.currentThread().isInterrupted) throw InterruptedException(L10n.tr(R.string.t_source_preparation_was_cancelled, "Source preparation was cancelled."))
             val folder = try {
                 torbox.folder("torrents", transfer)
             } catch (error: ApiException) {
@@ -393,7 +397,7 @@ class SourceResolver internal constructor(
                 if (error.code == 404 || error.errorKey == "ITEM_NOT_FOUND") null else throw error
             }
             if (folder != null && folder.ready && folder.files.isNotEmpty()) {
-                check(folder.id == transfer && folder.kind == "torrents") { "TorBox returned a different transfer. Open the selected file in your cloud library." }
+                check(folder.id == transfer && folder.kind == "torrents") { L10n.tr(R.string.t_torbox_returned_a_different_transfer_open, "TorBox returned a different transfer. Open the selected file in your cloud library.") }
                 val videos = folder.files.map { VideoCandidate(it.id, it.name, it.size) }
                 val eligible = EpisodeFilename.choices(videos, source.title, identity)
                 val files = eligible.map { CloudFile(it.id, it.name, it.size) }
@@ -404,18 +408,18 @@ class SourceResolver internal constructor(
             if (remaining <= 0) break
             pause(minOf(1_500, (remaining + 999_999) / 1_000_000))
         } while (!Thread.currentThread().isInterrupted)
-        throw IllegalStateException("This transfer is not ready to play yet. It remains in your TorBox library; try again once TorBox has finished processing it.")
+        throw IllegalStateException(L10n.tr(R.string.t_this_transfer_is_not_ready_to, "This transfer is not ready to play yet. It remains in your TorBox library; try again once TorBox has finished processing it."))
     }
 
     /** Compatibility for callers that can handle only a single, unambiguous stream. */
     fun resolve(source: SourceItem, identity: PlaybackIdentity): String = when (val prepared = prepare(source, identity)) {
         is PreparedSource.Direct -> prepared.url
         is PreparedSource.OffcloudFiles -> prepared.files.singleOrNull()?.url
-            ?: throw IllegalStateException("Choose a video file before playing.")
+            ?: throw IllegalStateException(L10n.tr(R.string.t_choose_a_video_file_before_playing, "Choose a video file before playing."))
         is PreparedSource.Links -> prepared.files.singleOrNull()?.let { streamUrl(prepared, it) }
-            ?: throw IllegalStateException("Choose a video file before playing.")
+            ?: throw IllegalStateException(L10n.tr(R.string.t_choose_a_video_file_before_playing, "Choose a video file before playing."))
         is PreparedSource.Files -> {
-            val file = prepared.automaticFile ?: throw IllegalStateException("This source contains multiple video versions. Choose a video file before playing.")
+            val file = prepared.automaticFile ?: throw IllegalStateException(L10n.tr(R.string.t_this_source_contains_multiple_video_versions, "This source contains multiple video versions. Choose a video file before playing."))
             val url = if (prepared.accountTag != null) prepared.resolvedUrls.getValue(file.id)
                 else torbox.streamUrl(prepared.folder.kind, prepared.folder.id, file.id)
             require(isHttps(url)) { "TorBox did not return a supported HTTPS playback link." }
@@ -427,7 +431,7 @@ class SourceResolver internal constructor(
         require(IMDB_ID.matches(identity.imdbId)) { "This title has no supported IMDb identifier." }
         require(identity.type == "movie" || identity.type == "series") { "This media type is not supported." }
         require(identity.type != "series" || (identity.season >= 0 && identity.episode > 0)) {
-            "Choose an episode before searching for sources."
+            L10n.tr(R.string.t_choose_an_episode_before_searching_for, "Choose an episode before searching for sources.")
         }
     }
 
@@ -468,7 +472,7 @@ internal interface SourceTorBox {
     fun folder(kind: String, id: Long): CloudFolder
     fun streamUrl(kind: String, folderId: Long, fileId: Long): String
     fun prepareCached(source: SourceItem, identity: PlaybackIdentity): PreparedSource.Files =
-        error("Cached TorBox resolution is unavailable.")
+        error(L10n.tr(R.string.t_cached_torbox_resolution_is_unavailable, "Cached TorBox resolution is unavailable."))
 }
 
 /** File selection intentionally does not equate a provider's zero-based fileIdx with a TorBox file id. */
@@ -510,6 +514,21 @@ internal object EpisodeFilename {
 
     private val REGIONS = setOf("us", "uk", "au", "nz", "ca")
 
+    /**
+     * A film offered for an episode: add-ons match "Dark" to "Dark (2026) 1080p HDRip [Telugu + Hindi]". Episode links
+     * name the episode or the season ("S01E02", "1x02", "Season 1", "Complete"); a name with none of that but a year
+     * is a movie. Daily shows (dated "2026.11.14") and absolute numbering ("Show - 02") are never hidden.
+     */
+    fun namesAMovie(name: String): Boolean {
+        val lower = name.lowercase(Locale.ROOT)
+        if (DATED.containsMatchIn(lower) || SEASON_OR_EPISODE.containsMatchIn(lower) || ABSOLUTE.containsMatchIn(lower)) return false
+        return YEAR.containsMatchIn(lower)
+    }
+    private val DATED = Regex("(?:19|20)\\d\\d[ ._-]\\d{1,2}[ ._-]\\d{1,2}(?!\\d)")
+    private val SEASON_OR_EPISODE = Regex("(?<![a-z0-9])(?:s\\d{1,2}|e\\d{1,4}|ep ?\\d{1,4}|\\d{1,2}x\\d{1,3}|seasons?|series|episodes?|complete|saison|staffel|temporada|stagione)(?![a-z])")
+    private val ABSOLUTE = Regex(" - \\d{1,4}(?![0-9a-z])")
+    private val YEAR = Regex("(?<!\\d)(?:19|20)\\d\\d(?!\\d)")
+
     fun isExplicitMismatch(name: String, season: Int, episode: Int): Boolean {
         val markers = episodes(name)
         return markers.isNotEmpty() && (season to episode) !in markers
@@ -518,9 +537,9 @@ internal object EpisodeFilename {
     /** Preserve every eligible edition, in service order; choice belongs to the user. */
     fun choices(files: List<VideoCandidate>, sourceTitle: String, identity: PlaybackIdentity): List<VideoCandidate> {
         val videos = files.filter { it.id >= 0 && videoExtension.containsMatchIn(it.name) && !sample.containsMatchIn(it.name) }
-        if (videos.isEmpty()) throw IllegalStateException("This transfer does not contain a playable video file yet.")
+        if (videos.isEmpty()) throw IllegalStateException(L10n.tr(R.string.t_this_transfer_does_not_contain_a, "This transfer does not contain a playable video file yet."))
         if (videos.groupBy { it.id }.any { (_, entries) -> entries.distinct().size > 1 }) {
-            throw IllegalStateException("TorBox returned conflicting video file identifiers. Refresh the cloud folder before selecting a file.")
+            throw IllegalStateException(L10n.tr(R.string.t_torbox_returned_conflicting_video_file_identifiers, "TorBox returned conflicting video file identifiers. Refresh the cloud folder before selecting a file."))
         }
         val unique = videos.distinctBy { it.id }
         if (identity.type == "movie") return unique
@@ -530,9 +549,9 @@ internal object EpisodeFilename {
         if (exact.size == 1) return exact
         if (unique.size == 1 && !isExplicitMismatch(unique[0].name, identity.season, identity.episode)) return unique
         if (unique.all { isExplicitMismatch(it.name, identity.season, identity.episode) }) {
-            throw IllegalStateException("This source contains a different episode. Choose another source.")
+            throw IllegalStateException(L10n.tr(R.string.t_this_source_contains_a_different_episode, "This source contains a different episode. Choose another source."))
         }
-        throw IllegalStateException("This pack's episode files could not be matched safely. Select the correct file and identify its episode from TorBox Cloud.")
+        throw IllegalStateException(L10n.tr(R.string.t_this_pack_s_episode_files_could, "This pack's episode files could not be matched safely. Select the correct file and identify its episode from TorBox Cloud."))
     }
 
     fun preferredId(files: List<VideoCandidate>, sourceTitle: String): Long? =
@@ -540,7 +559,7 @@ internal object EpisodeFilename {
 
     fun select(files: List<VideoCandidate>, sourceTitle: String, identity: PlaybackIdentity): VideoCandidate {
         val videos = files.filter { videoExtension.containsMatchIn(it.name) && !sample.containsMatchIn(it.name) }
-        if (videos.isEmpty()) throw IllegalStateException("This transfer does not contain a playable video file yet.")
+        if (videos.isEmpty()) throw IllegalStateException(L10n.tr(R.string.t_this_transfer_does_not_contain_a, "This transfer does not contain a playable video file yet."))
         val exact = videos.filter { filenameKey(it.name) == filenameKey(sourceTitle) }
         if (exact.size == 1 && (identity.type != "series" || !isExplicitMismatch(exact[0].name, identity.season, identity.episode))) {
             return exact[0]
@@ -548,16 +567,16 @@ internal object EpisodeFilename {
         if (identity.type == "series") {
             val matched = videos.filter { (identity.season to identity.episode) in episodes(it.name) }
             if (matched.size == 1) return matched[0]
-            if (matched.size > 1) throw IllegalStateException("This pack has multiple files for the selected episode. Choose another source or select the file from TorBox Cloud.")
+            if (matched.size > 1) throw IllegalStateException(L10n.tr(R.string.t_this_pack_has_multiple_files_for, "This pack has multiple files for the selected episode. Choose another source or select the file from TorBox Cloud."))
         }
         if (videos.size == 1) {
             val only = videos[0]
             if (identity.type == "series" && isExplicitMismatch(only.name, identity.season, identity.episode)) {
-                throw IllegalStateException("This source contains a different episode. Choose another source.")
+                throw IllegalStateException(L10n.tr(R.string.t_this_source_contains_a_different_episode, "This source contains a different episode. Choose another source."))
             }
             return only
         }
-        throw IllegalStateException("This pack contains multiple videos and the correct file could not be identified safely. Choose another source or select a file from TorBox Cloud.")
+        throw IllegalStateException(L10n.tr(R.string.t_this_pack_contains_multiple_videos_and, "This pack contains multiple videos and the correct file could not be identified safely. Choose another source or select a file from TorBox Cloud."))
     }
 
     private fun filenameKey(value: String): String = value.substringAfterLast('/').substringAfterLast('\\')

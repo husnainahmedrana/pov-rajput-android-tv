@@ -58,7 +58,10 @@ internal object DeviceVideoSupport {
     }
 
     /** "TV" or "DEVICE" for the short capital notes in the link list. */
-    val noun: String get() = if (DeviceLayout.tv) "TV" else "DEVICE"
+    val noun: String get() = if (DeviceLayout.tv) L10n.tr(R.string.t_noun_tv_caps, "TV") else L10n.tr(R.string.t_noun_device_caps, "DEVICE")
+
+    /** The note [problem] gives a Dolby Vision-only link this device can't show ("Hide Dolby Vision-only" compares against it). */
+    fun dolbyVisionOnlyNote(): String = L10n.tr(R.string.t_dolby_vision_only_not_supported_on, "DOLBY VISION ONLY · NOT SUPPORTED ON THIS %1\$s", noun)
 
     /** Why [source] likely won't play here, as a short capital note for the link list, or null when it should. */
     fun problem(source: SourceItem, caps: Caps = caps()): String? = problem("${source.title} ${source.detail}".take(4000), source.qualityHeight, caps)
@@ -72,7 +75,7 @@ internal object DeviceVideoSupport {
         val dv = has("DV|DOVI|DOLBY[ ._-]*VISION")
         val hdrBase = has("HDR10\\+|HDR10PLUS|HDR10|HDR|HLG")
         // Dolby Vision with no HDR10/HLG picture underneath (Profile 5, common on web releases) needs a real DV decoder.
-        if (dv && !hdrBase && !caps.dolbyVision) return "DOLBY VISION ONLY · NOT SUPPORTED ON THIS $noun"
+        if (dv && !hdrBase && !caps.dolbyVision) return dolbyVisionOnlyNote()
         val codec = when {
             has("AV1") -> "av1"
             has("HEVC|[HX][ ._-]?265") -> "hevc"
@@ -83,11 +86,11 @@ internal object DeviceVideoSupport {
             else -> "avc"
         }
         val label = mapOf("hevc" to "HEVC", "avc" to "H.264", "av1" to "AV1", "vp9" to "VP9").getValue(codec)
-        val limit = caps.maxHeight[codec] ?: return "$label · NOT SUPPORTED ON THIS $noun"
-        if ((height ?: 0) > limit) return "ABOVE THIS $noun'S ${DecoderLimits.label(limit)} $label LIMIT"
+        val limit = caps.maxHeight[codec] ?: return L10n.tr(R.string.t_x_not_supported_on_this_x, "%1\$s · NOT SUPPORTED ON THIS %2\$s", label, noun)
+        if ((height ?: 0) > limit) return L10n.tr(R.string.t_above_this_x_s_x_x, "ABOVE THIS %1\$s'S %2\$s %3\$s LIMIT", noun, DecoderLimits.label(limit), label)
         // 10-bit HEVC (all HDR) without a hardware Main 10 decoder falls back to software: fine at 1080p, not above.
         if (codec == "hevc" && !caps.hevc10 && (dv || hdrBase || has("10[ ._-]?BITS?")) && (height ?: 0) > SOFTWARE_LIMIT)
-            return "10-BIT HEVC ABOVE 1080p · NOT SUPPORTED ON THIS $noun"
+            return L10n.tr(R.string.t_10_bit_hevc_above_1080p_not, "10-BIT HEVC ABOVE 1080p · NOT SUPPORTED ON THIS %1\$s", noun)
         return null
     }
 }

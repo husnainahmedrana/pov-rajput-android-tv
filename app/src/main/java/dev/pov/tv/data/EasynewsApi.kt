@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import java.net.URI
 import java.util.Base64
 import java.util.Locale
@@ -28,11 +31,11 @@ class EasynewsApi internal constructor(
     fun verify(username: String, password: String) {
         val html = try { get("https://account.easynews.com/editinfo.php", Easynews.auth(username, password)) }
         catch (error: ApiException) {
-            if (error.code == 401 || error.code == 403) throw ApiException(error.code, "Easynews didn't accept this username and password.")
+            if (error.code == 401 || error.code == 403) throw ApiException(error.code, L10n.tr(R.string.t_easynews_didn_t_accept_this_username, "Easynews didn't accept this username and password."))
             throw error
         }
         if (!Regex("(?is)<form\\b[^>]*\\bid\\s*=\\s*['\"]accountForm['\"]").containsMatchIn(html)) {
-            throw ApiException(401, "Easynews didn't verify this account. Check your username, password and web-access plan.")
+            throw ApiException(401, L10n.tr(R.string.t_easynews_didn_t_verify_this_account, "Easynews didn't verify this account. Check your username, password and web-access plan."))
         }
     }
 
@@ -64,7 +67,7 @@ class EasynewsApi internal constructor(
         val url = "$BASE/2.0/search/solr-search/advanced?" + params.joinToString("&") { Net.encode(it.first) + "=" + Net.encode(it.second) }
         val json = try { JSONObject(get(url, Easynews.auth(username, password))) }
             catch (error: ApiException) { throw error }
-            catch (_: Exception) { throw ApiException(0, "Easynews returned an unreadable search response.") }
+            catch (_: Exception) { throw ApiException(0, L10n.tr(R.string.t_easynews_returned_an_unreadable_search_response, "Easynews returned an unreadable search response.")) }
         return parse(json)
     }
 
@@ -101,7 +104,7 @@ class EasynewsApi internal constructor(
         .replace(Regex("[^a-z0-9]+"), " ").trim()
 
     internal fun parse(json: JSONObject): List<SourceItem> {
-        val data = json.optJSONArray("data") ?: throw ApiException(0, "Easynews returned an unsupported search response. Its website may have changed.")
+        val data = json.optJSONArray("data") ?: throw ApiException(0, L10n.tr(R.string.t_easynews_returned_an_unsupported_search_response, "Easynews returned an unsupported search response. Its website may have changed."))
         if (data.length() == 0) return emptyList()
         val down = json.optString("downURL").trimEnd('/')
         // Easynews ignores the port in the address (every port redirects to HTTPS 443), but the farm picks the server.

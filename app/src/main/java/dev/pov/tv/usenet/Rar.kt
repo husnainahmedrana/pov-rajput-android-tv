@@ -1,5 +1,8 @@
 package dev.pov.tv.usenet
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import java.io.IOException
 
 /** The set can't be streamed (compressed, encrypted, damaged): the message says why in viewer terms. */
@@ -33,7 +36,7 @@ object Rar {
         return when {
             isNew(head) -> newEntries(volume, limit)
             isRar(head) -> oldEntries(volume, limit)
-            else -> throw UnsupportedSetException("This part is not a RAR volume.")
+            else -> throw UnsupportedSetException(L10n.tr(R.string.t_this_part_is_not_a_rar, "This part is not a RAR volume."))
         }
     }
 
@@ -63,7 +66,7 @@ object Rar {
             val headSize = u16(fixed, 5)
             if (headSize < 7) break
             when (type) {
-                0x73 -> if (flags and 0x0080 != 0) throw UnsupportedSetException("This set is password-protected.")
+                0x73 -> if (flags and 0x0080 != 0) throw UnsupportedSetException(L10n.tr(R.string.t_this_set_is_password_protected, "This set is password-protected."))
                 0x7b -> return found                                       // end of archive
             }
             if (type == 0x74) {
@@ -107,7 +110,7 @@ object Rar {
                 if (byte and 0x80 == 0) return value
                 shift += 7
             }
-            throw UnsupportedSetException("This RAR volume's headers can't be read.")
+            throw UnsupportedSetException(L10n.tr(R.string.t_this_rar_volume_s_headers_can, "This RAR volume's headers can't be read."))
         }
     }
 
@@ -130,7 +133,7 @@ object Rar {
             val dataSize = if (flags and 0x02 != 0L) cursor.vint() else 0L
             val dataAt = bodyAt + headSize
             when (type) {
-                4L -> throw UnsupportedSetException("This set is password-protected.")
+                4L -> throw UnsupportedSetException(L10n.tr(R.string.t_this_set_is_password_protected, "This set is password-protected."))
                 5L -> return found                                         // end of archive
                 2L -> {
                     val fileFlags = cursor.vint()
@@ -141,7 +144,7 @@ object Rar {
                     val compression = cursor.vint()
                     cursor.vint()                                          // host system
                     val nameSize = cursor.vint().toInt()
-                    if (nameSize < 0 || cursor.at + nameSize > body.size) throw UnsupportedSetException("This RAR volume's headers can't be read.")
+                    if (nameSize < 0 || cursor.at + nameSize > body.size) throw UnsupportedSetException(L10n.tr(R.string.t_this_rar_volume_s_headers_can, "This RAR volume's headers can't be read."))
                     val name = String(body, cursor.at, nameSize, Charsets.UTF_8)
                     // The extra area closes the header; a record of type 1 in it means the file is encrypted.
                     var encrypted = false
@@ -185,7 +188,7 @@ class VolumeSet(
         val piece = pieces[index]
         val within = position - starts[index]
         val count = piece.volume.read(piece.offset + within, target, offset, minOf(length.toLong(), piece.length - within).toInt())
-        if (count < 0) throw IOException("A part of the set ended early.")
+        if (count < 0) throw IOException(L10n.tr(R.string.t_a_part_of_the_set_ended, "A part of the set ended early."))
         if (index != current) {
             // The reader moved to another volume: let go of what the ones it left were holding (the set's two ends stay).
             val before = current

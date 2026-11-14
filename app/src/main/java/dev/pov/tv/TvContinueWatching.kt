@@ -30,7 +30,7 @@ internal class TvContinueWatching(private val context: Context) {
         put("content_id",PREFIX+entry.key)
         put("type",if(identity.type=="series") TvContract.PreviewPrograms.TYPE_TV_EPISODE else TvContract.PreviewPrograms.TYPE_MOVIE)
         put("title",identity.title)
-        put("short_description",listOf(if(identity.type=="series") "S${identity.season} E${identity.episode}" else "", "${entry.percent.toInt()}% watched").filter(String::isNotBlank).joinToString(" · "))
+        put("short_description",listOf(if(identity.type=="series") "S${identity.season} E${identity.episode}" else "", L10n.tr(R.string.t_x_watched, "%1\$s%% watched", entry.percent.toInt())).filter(String::isNotBlank).joinToString(" · "))
         put("intent_uri",LauncherResumeLink.intent(context,identity).toUri(Intent.URI_INTENT_SCHEME))
         put("poster_art_uri","https://images.metahub.space/background/medium/${identity.imdbId}/img")
         put("poster_art_aspect_ratio",TvContract.PreviewPrograms.ASPECT_RATIO_16_9)
@@ -38,21 +38,35 @@ internal class TvContinueWatching(private val context: Context) {
         if(entry.duration>0) { put("duration_millis",entry.duration.coerceAtMost(Int.MAX_VALUE.toLong()).toInt());put("last_playback_position_millis",(entry.duration*entry.percent/100).toLong().coerceAtMost(Int.MAX_VALUE.toLong()).toInt()) }
     }
     private fun channel():Long {
-        ownRows(TvContract.Channels.CONTENT_URI).firstOrNull { it.key==PREFIX+"channel" }?.let { return it.id }
+        ownRows(TvContract.Channels.CONTENT_URI).firstOrNull { it.key==PREFIX+"channel" }?.let { existing ->
+            // A channel made by an older version keeps its first logo and name: refresh both once per logo version
+            // (the POV → Nabrio rename), and the name whenever the app language changes.
+            val name=L10n.tr(R.string.t_continue_watching, "Continue Watching")
+            if(prefs.getString(LOGO_KEY,null)!=LOGO_VERSION || prefs.getString(NAME_KEY,null)!=name) {
+                runCatching { resolver.update(TvContract.buildChannelUri(existing.id),ContentValues().apply { put("display_name",name) },null,null) }
+                if(runCatching { writeLogo(existing.id) }.isSuccess) prefs.edit().putString(LOGO_KEY,LOGO_VERSION).putString(NAME_KEY,name).apply()
+            }
+            return existing.id
+        }
         val values=ContentValues().apply {
-            put("type",TvContract.Channels.TYPE_PREVIEW);put("display_name","Continue Watching")
+            put("type",TvContract.Channels.TYPE_PREVIEW);put("display_name",L10n.tr(R.string.t_continue_watching, "Continue Watching"))
             put("internal_provider_id",PREFIX+"channel")
             put("app_link_intent_uri",Intent(context,MainActivity::class.java).toUri(Intent.URI_INTENT_SCHEME))
         }
         val uri=resolver.insert(TvContract.Channels.CONTENT_URI,values) ?: error("Channel unavailable")
         val id=ContentUris.parseId(uri)
-        runCatching {
-            val bitmap=Bitmap.createBitmap(128,128,Bitmap.Config.ARGB_8888)
-            context.getDrawable(R.drawable.pov_logo)?.apply { setBounds(0,0,128,128);draw(Canvas(bitmap)) }
-            resolver.openOutputStream(TvContract.buildChannelLogoUri(id))?.use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) };bitmap.recycle()
-        }
+        if(runCatching { writeLogo(id) }.isSuccess)
+            prefs.edit().putString(LOGO_KEY,LOGO_VERSION).putString(NAME_KEY,L10n.tr(R.string.t_continue_watching, "Continue Watching")).apply()
         TvContract.requestChannelBrowsable(context,id)
         return id
+    }
+    /** The app's current logo as the row's channel logo (the launcher shows it beside the row title). */
+    private fun writeLogo(id:Long) {
+        val bitmap=Bitmap.createBitmap(128,128,Bitmap.Config.ARGB_8888)
+        try {
+            context.getDrawable(R.drawable.pov_logo)?.apply { setBounds(0,0,128,128);draw(Canvas(bitmap)) }
+            checkNotNull(resolver.openOutputStream(TvContract.buildChannelLogoUri(id))).use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) }
+        } finally { bitmap.recycle() }
     }
     /** An unavailable/locked provider never interrupts playback or clears other apps' rows. */
     fun publish(entries:List<Entry>) = synchronized(SYNC_LOCK) { runCatching {
@@ -86,8 +100,8 @@ internal class TvContinueWatching(private val context: Context) {
             old.forEach { resolver.delete(ContentUris.withAppendedId(table,it.id),null,null) }
         }
         if(!enabled(context)) ownRows(TvContract.Channels.CONTENT_URI).forEach { resolver.delete(TvContract.buildChannelUri(it.id),null,null) }
-        prefs.edit().putString("published",map.toString()).putString("status","Synced ${if(enabled(context)) wanted.size else 0} titles").apply()
-    }.onFailure { prefs.edit().putString("status","TV launcher integration unavailable").apply() }.isSuccess }
+        prefs.edit().putString("published",map.toString()).putString("status",L10n.tr(R.string.t_synced_x_titles, "Synced %1\$s titles", if(enabled(context)) wanted.size else 0)).apply()
+    }.onFailure { prefs.edit().putString("status",L10n.tr(R.string.t_tv_launcher_integration_unavailable, "TV launcher integration unavailable")).apply() }.isSuccess }
     fun sync(refreshRemote:Boolean=false) = synchronized(SYNC_LOCK) { syncInternal(refreshRemote) }
     private fun syncInternal(refreshRemote:Boolean) {
         if(!supported(context)) return
@@ -125,6 +139,10 @@ internal class TvContinueWatching(private val context: Context) {
         const val PREFS="tv_continue_watching"
         const val CACHE="wetrakr.continue_cache"
         const val PREFIX="pov-continue:"
+        /** Bump when the logo changes, so existing launcher rows get the new one. */
+        private const val LOGO_VERSION="nabrio-1"
+        private const val LOGO_KEY="channel_logo"
+        private const val NAME_KEY="channel_name"
         private const val JOB_ID=7341
         private val SYNC_LOCK=Any()
         private val worker=Executors.newSingleThreadScheduledExecutor { runnable -> Thread(runnable,"pov-tv-home").apply { isDaemon=true } }

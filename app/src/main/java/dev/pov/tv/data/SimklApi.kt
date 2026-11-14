@@ -1,12 +1,15 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Simkl over its AUTH V2 device flow with POV Rajput's registered app. The Client ID is public by design;
+ * Simkl over its AUTH V2 device flow with Nabrio's registered app. The Client ID is public by design;
  * no client secret exists for this app type. Requests carry the user's token and count against that user's
  * own Simkl quota. Access tokens last 7 days and are refreshed with the 180-day refresh token.
  */
@@ -49,7 +52,7 @@ class SimklApi internal constructor(
         } catch (error: ApiException) {
             when (error.errorKey) {
                 "authorization_pending", "slow_down" -> return@synchronized false
-                "expired_token" -> throw ApiException(410, "This Simkl code expired. Choose Retry to request a new code.")
+                "expired_token" -> throw ApiException(410, L10n.tr(R.string.t_this_simkl_code_expired_choose_retry, "This Simkl code expired. Choose Retry to request a new code."))
                 else -> throw error
             }
         }
@@ -82,7 +85,7 @@ class SimklApi internal constructor(
             // At 90% or more a stop marks it watched; below that Simkl keeps a resumable paused session.
             val result = parseObject(request("POST", "/scrobble/$action" + if (action == "stop") "?min_progress=$WATCHED" else "", body))
             val accepted = if (action == "stop") setOf("pause", "scrobble") else setOf(action)
-            if (result.optString("action") !in accepted) throw ApiException(0, "Simkl did not accept this playback update.")
+            if (result.optString("action") !in accepted) throw ApiException(0, L10n.tr(R.string.t_simkl_did_not_accept_this_playback, "Simkl did not accept this playback update."))
         } catch (error: ApiException) {
             // 409: this title was already finished within the last hour. 404: Simkl cannot match it; retrying won't help.
             if (error.code != 409 && error.code != 404) throw error
@@ -152,7 +155,7 @@ class SimklApi internal constructor(
             // Simkl removes a title through its history endpoint, which also erases watch history. Only a title that is
             // purely on the watchlist is removed; one with history stays untouched.
             if (watchlist(identity.type).none { it.imdbId == identity.imdbId })
-                throw ApiException(0, "This title isn't on your Simkl watchlist. Titles you've watched are kept so their history isn't erased.")
+                throw ApiException(0, L10n.tr(R.string.t_this_title_isn_t_on_your, "This title isn't on your Simkl watchlist. Titles you've watched are kept so their history isn't erased."))
             val body = JSONObject().put(group, JSONArray().put(JSONObject().put("ids", ids(identity))))
             checkFound(parseObject(request("POST", "/sync/history/remove", body)), group)
         }
@@ -203,7 +206,7 @@ class SimklApi internal constructor(
 
     override fun lists(): List<Pair<String, String>> = emptyList()
     override fun listItems(id: String): List<MediaItemData> = emptyList()
-    override fun removeListItem(listId: String, identity: PlaybackIdentity) = throw ApiException(0, "Simkl lists aren't supported yet.")
+    override fun removeListItem(listId: String, identity: PlaybackIdentity) = throw ApiException(0, L10n.tr(R.string.t_simkl_lists_aren_t_supported_yet, "Simkl lists aren't supported yet."))
     override fun likedLists(): List<Pair<String, String>> = emptyList()
     override fun likedListItems(id: String): List<MediaItemData> = emptyList()
     override fun likedListPreview(id: String): List<MediaItemData> = emptyList()
@@ -220,7 +223,7 @@ class SimklApi internal constructor(
     private fun checkFound(result: JSONObject, group: String) {
         val missing = result.optJSONObject("not_found") ?: return
         if ((missing.optJSONArray(group)?.length() ?: 0) > 0 || (missing.optJSONArray("episodes")?.length() ?: 0) > 0)
-            throw ApiException(0, "Simkl couldn't find this title.")
+            throw ApiException(0, L10n.tr(R.string.t_simkl_couldn_t_find_this_title, "Simkl couldn't find this title."))
     }
 
     private fun itemBody(identity: PlaybackIdentity): JSONObject =
@@ -307,11 +310,11 @@ class SimklApi internal constructor(
     }
     private fun required(result: JSONObject, key: String) = (result.opt(key) as? String)?.takeIf { it.isNotBlank() } ?: malformed()
     private fun parseObject(text: String) = try { JSONObject(text) } catch (_: Exception) { malformed() }
-    private fun malformed(): Nothing = throw ApiException(0, "Simkl returned an unreadable response. Try again later.")
-    private fun ended(): Nothing = throw ApiException(410, "This Simkl connection changed or expired. Link it again in Settings.")
+    private fun malformed(): Nothing = throw ApiException(0, L10n.tr(R.string.t_simkl_returned_an_unreadable_response_try, "Simkl returned an unreadable response. Try again later."))
+    private fun ended(): Nothing = throw ApiException(410, L10n.tr(R.string.t_this_simkl_connection_changed_or_expired, "This Simkl connection changed or expired. Link it again in Settings."))
 
     companion object {
-        /** POV Rajput's registered Simkl application (AUTH V2, device sign-in; public identifier, not a secret). */
+        /** Nabrio's registered Simkl application (AUTH V2, device sign-in; public identifier, not a secret). */
         const val CLIENT_ID = "d07365e45e403abc28fd1ae4c315d2eb585e2850789451a2077ba427622b465b"
         private const val BASE = "https://api.simkl.com"
         private const val WATCHED = 90

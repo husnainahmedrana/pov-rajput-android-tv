@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -45,7 +48,7 @@ class Newznab(
             val age = release.postedAt?.let { ((now() - it) / 86_400_000L).coerceAtLeast(0) }
             SourceItem(title = release.title.take(500), provider = indexer.name, directUrl = UsenetLinks.mark(release.link),
                 sizeBytes = release.size, qualityHeight = SourceMetadata.qualityHeight(release.title), usenet = true, indexer = indexer.name, newsProvider = newsProvider,
-                detail = listOfNotNull("Usenet", indexer.name, age?.let { if (it == 0L) "today" else if (it == 1L) "1 day old" else "$it days old" },
+                detail = listOfNotNull("Usenet", indexer.name, age?.let { if (it == 0L) L10n.tr(R.string.t_today_lower, "today") else if (it == 1L) L10n.tr(R.string.t_1_day_old, "1 day old") else L10n.tr(R.string.t_x_days_old, "%1\$s days old", it) },
                     release.grabs?.takeIf { it > 0 }?.let { "$it grabs" }).joinToString(" · "))
         }
     }
@@ -54,10 +57,11 @@ class Newznab(
     fun test(indexer: NewznabIndexer, agent: String): String {
         val text = get(address(indexer, "t=caps"), agent)
         error(text)?.let { throw ApiException(0, it) }
-        if ("<caps" !in text) throw ApiException(0, "This address didn't answer like a Newznab indexer.")
+        if ("<caps" !in text) throw ApiException(0, L10n.tr(R.string.t_this_address_didn_t_answer_like, "This address didn't answer like a Newznab indexer."))
         capsCache.remove(indexer.id)
         val movie = supported(text, "movie-search"); val tv = supported(text, "tv-search")
-        return "Connected · movies by ${if ("imdbid" in movie) "IMDb id" else "name"} · shows by ${if ("imdbid" in tv) "IMDb id" else "name"}"
+        fun by(id: Boolean) = if (id) L10n.tr(R.string.t_by_imdb_id, "IMDb id") else L10n.tr(R.string.t_by_name, "name")
+        return L10n.tr(R.string.t_connected_movies_by_x_shows_by_x, "Connected · movies by %1\$s · shows by %2\$s", by("imdbid" in movie), by("imdbid" in tv))
     }
 
     private fun caps(indexer: NewznabIndexer, agent: String): Caps = capsCache.getOrPut(indexer.id) {
@@ -112,9 +116,9 @@ class Newznab(
         val code = Regex("code=\"(\\d+)\"").find(element)?.groupValues?.get(1)?.toIntOrNull()
         val described = Regex("description=\"([^\"]*)\"").find(element)?.groupValues?.get(1)?.let(::unescape)?.take(120).orEmpty()
         return when (code) {
-            100, 101, 102 -> "The indexer didn't accept this API key."
-            429, 500 -> "The indexer's daily limit is used up."
-            else -> "The indexer answered: ${described.ifBlank { "error $code" }}"
+            100, 101, 102 -> L10n.tr(R.string.t_the_indexer_didn_t_accept_this, "The indexer didn't accept this API key.")
+            429, 500 -> L10n.tr(R.string.t_the_indexer_s_daily_limit_is, "The indexer's daily limit is used up.")
+            else -> L10n.tr(R.string.t_the_indexer_answered_x, "The indexer answered: %1\$s", described.ifBlank { "error $code" })
         }
     }
 
@@ -153,8 +157,8 @@ class Newznab(
 
         /** A plain GET over HTTP or HTTPS (a home NZBHydra2 is usually plain HTTP), capped at [limit] bytes. */
         fun fetch(address: String, agent: String, limit: Int): String {
-            val url = try { URL(address) } catch (_: Exception) { throw ApiException(0, "The indexer address is invalid.") }
-            if (url.protocol != "https" && url.protocol != "http") throw ApiException(0, "The indexer address is invalid.")
+            val url = try { URL(address) } catch (_: Exception) { throw ApiException(0, L10n.tr(R.string.t_the_indexer_address_is_invalid, "The indexer address is invalid.")) }
+            if (url.protocol != "https" && url.protocol != "http") throw ApiException(0, L10n.tr(R.string.t_the_indexer_address_is_invalid, "The indexer address is invalid."))
             val connection = url.openConnection() as HttpURLConnection
             try {
                 connection.connectTimeout = 12_000; connection.readTimeout = 25_000; connection.useCaches = false
@@ -162,9 +166,9 @@ class Newznab(
                 connection.setRequestProperty("Accept", "*/*")
                 val status = connection.responseCode
                 if (status !in 200..299) throw ApiException(status, when (status) {
-                    401, 403 -> "The indexer refused the request. Check the API key."
-                    429 -> "The indexer's limit is used up for now."
-                    else -> "The indexer answered with error $status."
+                    401, 403 -> L10n.tr(R.string.t_the_indexer_refused_the_request_check, "The indexer refused the request. Check the API key.")
+                    429 -> L10n.tr(R.string.t_the_indexer_s_limit_is_used, "The indexer's limit is used up for now.")
+                    else -> L10n.tr(R.string.t_the_indexer_answered_with_error_x, "The indexer answered with error %1\$s.", status)
                 })
                 val out = ByteArrayOutputStream()
                 connection.inputStream.use { input ->
@@ -172,13 +176,13 @@ class Newznab(
                     while (true) {
                         val count = input.read(buffer)
                         if (count < 0) break
-                        if (out.size() + count > limit) throw ApiException(0, "The indexer's answer is too large.")
+                        if (out.size() + count > limit) throw ApiException(0, L10n.tr(R.string.t_the_indexer_s_answer_is_too, "The indexer's answer is too large."))
                         out.write(buffer, 0, count)
                     }
                 }
                 return out.toString("UTF-8")
             } catch (error: ApiException) { throw error
-            } catch (error: IOException) { throw ApiException(0, "The indexer couldn't be reached.")
+            } catch (error: IOException) { throw ApiException(0, L10n.tr(R.string.t_the_indexer_couldn_t_be_reached, "The indexer couldn't be reached."))
             } finally { connection.disconnect() }
         }
     }

@@ -13,10 +13,10 @@ android {
         manifestPlaceholders["appLabel"] = providers.gradleProperty("povAppLabel").orElse("Nabrio").get()
         minSdk = 26
         targetSdk = 35
-        versionCode = 66
+        versionCode = 67
         // Test builds can raise it (-PpovVersionCode=…) so a TV launcher reloads a changed icon; releases leave it alone.
         providers.gradleProperty("povVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
-        versionName = "0.4.0-rajput"
+        versionName = "0.4.1-rajput"
         testInstrumentationRunner = providers.gradleProperty("povTestRunner")
             .orElse("dev.pov.tv.PlaybackAuditInstrumentation").get()
     }
@@ -94,6 +94,9 @@ android {
         listOf("debug", "release").forEach { sourceSets.getByName(it).res.srcDir("brand/$brand/res") }
     }
     testOptions { unitTests.isIncludeAndroidResources = true }
+    // Translated text uses %1$s placeholders for every value, numbers included: Android formats them correctly,
+    // and translators only ever see one kind of placeholder.
+    lint { disable += "StringFormatMatches" }
     packaging { resources.excludes += setOf("META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*") }
 }
 

@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -62,7 +65,7 @@ object Net {
     private fun parseObject(text: String): JSONObject = try {
         if (text.isBlank()) JSONObject() else JSONObject(text)
     } catch (_: Exception) {
-        throw ApiException(0, "The service returned an unreadable response.")
+        throw ApiException(0, L10n.tr(R.string.t_the_service_returned_an_unreadable_response, "The service returned an unreadable response."))
     }
 
     private fun request(
@@ -70,14 +73,14 @@ object Net {
         publicMetadata: Boolean = false, redirectsLeft: Int = 5
     ): String {
         val target = try { URL(address) } catch (_: Exception) {
-            throw ApiException(0, "The service address is invalid.")
+            throw ApiException(0, L10n.tr(R.string.t_the_service_address_is_invalid, "The service address is invalid."))
         }
         if (target.protocol != "https" || target.host.isNullOrBlank() || target.userInfo != null) {
-            throw ApiException(0, "A secure HTTPS service address is required.")
+            throw ApiException(0, L10n.tr(R.string.t_a_secure_https_service_address_is, "A secure HTTPS service address is required."))
         }
         if (publicMetadata) {
             publicMetadataTarget(address)
-            check(method == "GET" && headers.isEmpty() && bytes == null) { "Public metadata requests cannot carry credentials." }
+            check(method == "GET" && headers.isEmpty() && bytes == null) { L10n.tr(R.string.t_public_metadata_requests_cannot_carry_credentials, "Public metadata requests cannot carry credentials.") }
         }
         var connection: HttpURLConnection? = null
         try {
@@ -115,7 +118,7 @@ object Net {
                     val count = input.read(buffer)
                     if (count < 0) break
                     if (out.size() + count > 16 * 1024 * 1024) {
-                        throw ApiException(0, "The service response is too large.")
+                        throw ApiException(0, L10n.tr(R.string.t_the_service_response_is_too_large, "The service response is too large."))
                     }
                     out.write(buffer, 0, count)
                 }
@@ -144,11 +147,11 @@ object Net {
         } catch (e: ApiException) {
             throw e
         } catch (_: SocketTimeoutException) {
-            throw ApiException(0, "The service request timed out. Please try again.")
+            throw ApiException(0, L10n.tr(R.string.t_the_service_request_timed_out_please, "The service request timed out. Please try again."))
         } catch (_: SSLException) {
-            throw ApiException(0, "A secure connection to the service could not be established.")
+            throw ApiException(0, L10n.tr(R.string.t_a_secure_connection_to_the_service, "A secure connection to the service could not be established."))
         } catch (_: IOException) {
-            throw ApiException(0, "The service could not be reached. Check your connection.")
+            throw ApiException(0, L10n.tr(R.string.t_the_service_could_not_be_reached, "The service could not be reached. Check your connection."))
         } finally {
             connection?.disconnect()
         }
@@ -156,21 +159,21 @@ object Net {
 
     internal fun publicMetadataTarget(address: String): URL {
         val target = try { URL(address) } catch (_: Exception) {
-            throw ApiException(0, "The public catalog address is invalid.")
+            throw ApiException(0, L10n.tr(R.string.t_the_public_catalog_address_is_invalid, "The public catalog address is invalid."))
         }
         if (target.protocol != "https" || target.host.lowercase(Locale.ROOT) !in PUBLIC_METADATA_HOSTS ||
             target.userInfo != null || target.query != null || target.ref != null || target.port !in setOf(-1, 443)) {
-            throw ApiException(0, "The public catalog returned an unsupported address.")
+            throw ApiException(0, L10n.tr(R.string.t_the_public_catalog_returned_an_unsupported, "The public catalog returned an unsupported address."))
         }
         return target
     }
 
     internal fun publicMetadataRedirect(current: URL, location: String?, redirectsLeft: Int): URL {
-        if (redirectsLeft <= 0) throw ApiException(0, "The public catalog redirected too many times.")
-        if (location.isNullOrBlank()) throw ApiException(0, "The public catalog returned an incomplete redirect.")
+        if (redirectsLeft <= 0) throw ApiException(0, L10n.tr(R.string.t_the_public_catalog_redirected_too_many, "The public catalog redirected too many times."))
+        if (location.isNullOrBlank()) throw ApiException(0, L10n.tr(R.string.t_the_public_catalog_returned_an_incomplete, "The public catalog returned an incomplete redirect."))
         publicMetadataTarget(current.toExternalForm())
         val next = try { URL(current, location) } catch (_: Exception) {
-            throw ApiException(0, "The public catalog returned an invalid redirect.")
+            throw ApiException(0, L10n.tr(R.string.t_the_public_catalog_returned_an_invalid, "The public catalog returned an invalid redirect."))
         }
         return publicMetadataTarget(next.toExternalForm())
     }

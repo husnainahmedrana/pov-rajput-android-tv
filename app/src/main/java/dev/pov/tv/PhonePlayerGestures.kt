@@ -26,7 +26,17 @@ internal class PhonePlayerGestures(
     private val showControls: () -> Unit,
     /** The swipe-seek target for a seek preview thumbnail, or null when the swipe ends. */
     private val onSeekPreview: (Long?) -> Unit = {},
+    /** A two-finger pinch: true when spread apart (fill the screen), false when pinched together (fit). */
+    private val onPinch: (Boolean) -> Unit = {},
 ) {
+    private var pinchScale = 1f
+    private val pinch = android.view.ScaleGestureDetector(activity, object : android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScaleBegin(detector: android.view.ScaleGestureDetector): Boolean { pinchScale = 1f; return true }
+        override fun onScale(detector: android.view.ScaleGestureDetector): Boolean { pinchScale *= detector.scaleFactor; return true }
+        override fun onScaleEnd(detector: android.view.ScaleGestureDetector) {
+            if (pinchScale > 1.1f) onPinch(true) else if (pinchScale < 0.9f) onPinch(false)
+        }
+    })
     private enum class Mode { NONE, SEEK, BRIGHTNESS, VOLUME, CONSUMED }
     private var mode = Mode.NONE
     private var ignored = false
@@ -61,6 +71,13 @@ internal class PhonePlayerGestures(
             startX = event.x; startY = event.y
         }
         if (ignored) return false
+        // Two fingers: a pinch (fit / fill), never a swipe-seek, brightness or volume change.
+        pinch.onTouchEvent(event)
+        if (event.pointerCount > 1 || pinch.isInProgress) {
+            if (mode == Mode.SEEK) onSeekPreview(null)
+            mode = Mode.CONSUMED
+            return true
+        }
         detector.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_MOVE -> if (mode == Mode.NONE) begin(event) else if (mode != Mode.CONSUMED) move(event)

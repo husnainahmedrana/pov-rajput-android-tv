@@ -8,7 +8,7 @@ internal class VolumeBoostPreferences(context: android.content.Context) {
     var defaultDb: Int
         get() = preferences.getInt("default_boost_db", 0).takeIf { it in SessionVolumeBoost.STEPS } ?: 0
         set(value) { require(value in SessionVolumeBoost.STEPS); preferences.edit().putInt("default_boost_db", value).apply() }
-    val label: String get() = if (defaultDb == 0) "Off" else "+$defaultDb dB"
+    val label: String get() = if (defaultDb == 0) L10n.tr(R.string.t_off, "Off") else L10n.tr(R.string.t_x_db, "+%1\$s dB", defaultDb)
 }
 
 /**

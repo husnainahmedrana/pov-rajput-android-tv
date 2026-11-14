@@ -1,5 +1,7 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.UiText
+
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -32,7 +34,7 @@ internal object DetailCrew {
             .groupBy { it.id }.values.take(14).map { credits ->
                 val first = credits.first()
                 TmdbCatalog.CastMember(first.id, first.name,
-                    credits.map { labels[it.role] ?: it.role }.distinct().take(2).joinToString(" · "),
+                    credits.map { UiText.of(labels[it.role] ?: it.role) }.distinct().take(2).joinToString(" · "),
                     credits.firstOrNull { it.photo.isNotBlank() }?.photo.orEmpty(), crew = true)
             }
     }

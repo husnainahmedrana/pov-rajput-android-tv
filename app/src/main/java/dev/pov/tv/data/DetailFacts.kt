@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDate
@@ -11,37 +14,37 @@ import java.util.Locale
  * (with `credits` appended for a movie's director). Missing or junk values are left out, not shown blank.
  */
 internal object DetailFacts {
-    private val dateFormat = DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.ENGLISH)
+    private val dateFormat get() = DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.getDefault())
 
     fun from(data: JSONObject, type: String): List<Pair<String, String>> {
         val facts = mutableListOf<Pair<String, String>>()
         fun add(label: String, value: String?) { if (!value.isNullOrBlank()) facts += label to value }
         if (type == "movie") {
             val crew = data.optJSONObject("credits")?.optJSONArray("crew")
-            add("Directed by", names(crew) { it.optString("job") == "Director" })
-            add("Released", date(data.optString("release_date")))
-            add("Runtime", duration(data.optInt("runtime")))
-            add("Language", language(data))
-            add("Studio", names(data.optJSONArray("production_companies")))
-            add("Budget", money(data.optLong("budget")))
-            add("Box office", money(data.optLong("revenue")))
+            add(L10n.tr(R.string.t_directed_by, "Directed by"), names(crew) { it.optString("job") == "Director" })
+            add(L10n.tr(R.string.t_released, "Released"), date(data.optString("release_date")))
+            add(L10n.tr(R.string.t_runtime, "Runtime"), duration(data.optInt("runtime")))
+            add(L10n.tr(R.string.t_language, "Language"), language(data))
+            add(L10n.tr(R.string.t_studio, "Studio"), names(data.optJSONArray("production_companies")))
+            add(L10n.tr(R.string.t_budget, "Budget"), money(data.optLong("budget")))
+            add(L10n.tr(R.string.t_box_office, "Box office"), money(data.optLong("revenue")))
         } else {
-            add("Created by", names(data.optJSONArray("created_by")))
-            add("Network", names(data.optJSONArray("networks")))
-            add("First aired", date(data.optString("first_air_date")))
+            add(L10n.tr(R.string.t_created_by, "Created by"), names(data.optJSONArray("created_by")))
+            add(L10n.tr(R.string.t_network, "Network"), names(data.optJSONArray("networks")))
+            add(L10n.tr(R.string.t_first_aired, "First aired"), date(data.optString("first_air_date")))
             val status = data.optString("status")
-            if (status == "Ended" || status == "Canceled") add("Last aired", date(data.optString("last_air_date")))
-            add("Status", when (status) {
-                "Returning Series" -> "Still running"; "Ended" -> "Ended"; "Canceled" -> "Cancelled"
-                "In Production" -> "In production"; "Planned" -> "Planned"; else -> null
+            if (status == "Ended" || status == "Canceled") add(L10n.tr(R.string.t_last_aired, "Last aired"), date(data.optString("last_air_date")))
+            add(L10n.tr(R.string.t_status, "Status"), when (status) {
+                "Returning Series" -> L10n.tr(R.string.t_still_running, "Still running"); "Ended" -> L10n.tr(R.string.t_ended, "Ended"); "Canceled" -> L10n.tr(R.string.t_cancelled, "Cancelled")
+                "In Production" -> L10n.tr(R.string.t_in_production, "In production"); "Planned" -> L10n.tr(R.string.t_planned, "Planned"); else -> null
             })
             val seasons = data.optInt("number_of_seasons"); val episodes = data.optInt("number_of_episodes")
-            add("Seasons", listOfNotNull(
+            add(L10n.tr(R.string.t_seasons, "Seasons"), listOfNotNull(
                 seasons.takeIf { it > 0 }?.let { "$it ${if (it == 1) "season" else "seasons"}" },
                 episodes.takeIf { it > 0 }?.let { "$it ${if (it == 1) "episode" else "episodes"}" },
             ).joinToString(" · "))
-            add("Episode length", duration(data.optJSONArray("episode_run_time")?.optInt(0) ?: 0))
-            add("Language", language(data))
+            add(L10n.tr(R.string.t_episode_length, "Episode length"), duration(data.optJSONArray("episode_run_time")?.optInt(0) ?: 0))
+            add(L10n.tr(R.string.t_language, "Language"), language(data))
         }
         return facts
     }

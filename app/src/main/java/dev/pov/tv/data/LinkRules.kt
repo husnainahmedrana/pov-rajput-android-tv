@@ -1,7 +1,11 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import org.json.JSONArray
 import org.json.JSONObject
+import dev.pov.tv.UiText
 import java.util.Locale
 
 /**
@@ -10,9 +14,14 @@ import java.util.Locale
  */
 object LinkRules {
     /** A ready-made switch: an id, its name, a short example of what it matches, and the pattern itself. */
-    data class Preset(val id: String, val label: String, val example: String, val pattern: Regex)
+    data class Preset(val id: String, private val name: String, private val sample: String, val pattern: Regex) {
+        val label: String get() = UiText.of(name)
+        val example: String get() = UiText.of(sample)
+    }
     /** One group of trusted release groups (Remux, WEB-DL…), each switched on or off on its own. */
-    data class GroupSet(val id: String, val label: String, val groups: List<String>, val onByDefault: Boolean = true)
+    data class GroupSet(val id: String, private val name: String, val groups: List<String>, val onByDefault: Boolean = true) {
+        val label: String get() = UiText.of(name)
+    }
 
     private fun words(vararg values: String) = Regex("(?i)(?<![a-z0-9])(?:${values.joinToString("|")})(?![a-z0-9])")
 
@@ -112,10 +121,10 @@ object LinkRules {
     /** A viewer's own pattern, or null with the reason when it isn't valid. */
     fun pattern(text: String): Result<Regex?> {
         val clean = text.trim()
-        if (clean.length > MAX_PATTERN) return Result.failure(IllegalArgumentException("Keep the pattern under $MAX_PATTERN characters."))
+        if (clean.length > MAX_PATTERN) return Result.failure(IllegalArgumentException(L10n.tr(R.string.t_keep_the_pattern_under_x_characters, "Keep the pattern under %1\$s characters.", MAX_PATTERN)))
         if (clean.isEmpty()) return Result.success(null)
         return runCatching { Regex(clean, RegexOption.IGNORE_CASE) as Regex? }.recoverCatching { error ->
-            throw IllegalArgumentException("This pattern isn't valid: ${error.message?.lineSequence()?.firstOrNull().orEmpty().take(80)}")
+            throw IllegalArgumentException(L10n.tr(R.string.t_this_pattern_isn_t_valid_x, "This pattern isn't valid: %1\$s", error.message?.lineSequence()?.firstOrNull().orEmpty().take(80)))
         }
     }
 

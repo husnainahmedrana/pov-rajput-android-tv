@@ -32,7 +32,7 @@ internal object SubtitleSyncPicker {
         }
         fun update() {
             value.text = SubtitleSync.label()
-            value.contentDescription = "Subtitle sync ${SubtitleSync.label()}. Left for earlier, right for later."
+            value.contentDescription = L10n.tr(R.string.t_subtitle_sync_x_left_for_earlier, "Subtitle sync %1\$s. Left for earlier, right for later.", SubtitleSync.label())
         }
         fun step(button: String, ms: Long) = TextView(context).apply {
             text = button; textSize = 28f; gravity = Gravity.CENTER; setTextColor(Color.WHITE)
@@ -45,7 +45,7 @@ internal object SubtitleSyncPicker {
         row.addView(step("+", STEP_MS), LinearLayout.LayoutParams(dp(64), dp(56)))
         content.addView(row, LinearLayout.LayoutParams(-1, -2))
         content.addView(TextView(context).apply {
-            text = "◀  Left: subtitles earlier  ·  Right: subtitles later  ▶"; textSize = 14f; gravity = Gravity.CENTER
+            text = L10n.tr(R.string.t_left_subtitles_earlier_right_subtitles_later, "◀  Left: subtitles earlier  ·  Right: subtitles later  ▶"); textSize = 14f; gravity = Gravity.CENTER
             setTextColor(0xFFB6C6D8.toInt()); setPadding(0, dp(10), 0, 0)
         }, LinearLayout.LayoutParams(-1, -2))
         value.setOnKeyListener { _, keyCode, event ->
@@ -55,8 +55,8 @@ internal object SubtitleSyncPicker {
             true
         }
         update()
-        val dialog = AlertDialog.Builder(context).setTitle("Subtitle sync").setView(content)
-            .setPositiveButton("Done", null).setNeutralButton("Reset to 0", null).create()
+        val dialog = AlertDialog.Builder(context).setTitle(L10n.tr(R.string.t_subtitle_sync, "Subtitle sync")).setView(content)
+            .setPositiveButton(L10n.tr(R.string.t_done, "Done"), null).setNeutralButton(L10n.tr(R.string.t_reset_to_0, "Reset to 0"), null).create()
         dialog.setOnDismissListener { dismissed() }
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener { SubtitleSync.reset(); update(); value.requestFocus() }

@@ -96,12 +96,12 @@ class PlaybackStore(context: Context, private val pendingKey: String = "pending"
 
     /** Disconnecting or changing the tracking account must discard its unsent updates. */
     fun clearPending() = synchronized(lock) {
-        check(preferences.edit().remove(pendingKey).commit()) { "Pending playback updates could not be removed." }
+        check(preferences.edit().remove(pendingKey).commit()) { L10n.tr(R.string.t_pending_playback_updates_could_not_be, "Pending playback updates could not be removed.") }
     }
 
     private fun pendingLocked(): List<Pending> {
         val array = try { JSONArray(preferences.getString(pendingKey, "[]")) }
-            catch (_: Exception) { throw IllegalStateException("Saved playback updates could not be read.") }
+            catch (_: Exception) { throw IllegalStateException(L10n.tr(R.string.t_saved_playback_updates_could_not_be, "Saved playback updates could not be read.")) }
         var migrated = false
         val result = (0 until array.length()).map { index ->
             try {
@@ -109,7 +109,7 @@ class PlaybackStore(context: Context, private val pendingKey: String = "pending"
                 val revision = item.optString("revision").ifBlank { migrated = true; UUID.randomUUID().toString() }
                 Pending(PlaybackIdentity.fromJson(item.getJSONObject("identity")), item.getDouble("percent"), item.getString("action"), revision, item.optString("accountRevision"), item.optString("timestamp"), item.optString("scrobbleRevision"))
             } catch (_: Exception) {
-                throw IllegalStateException("A saved playback update could not be read.")
+                throw IllegalStateException(L10n.tr(R.string.t_a_saved_playback_update_could_not, "A saved playback update could not be read."))
             }
         }
         // Migrate old entries once, rather than generating a different revision on each read.
@@ -123,7 +123,7 @@ class PlaybackStore(context: Context, private val pendingKey: String = "pending"
             array.put(JSONObject().put("identity", it.identity.toJson()).put("percent", it.percent)
                 .put("action", it.action).put("revision", it.revision).put("accountRevision", it.accountRevision).put("timestamp", it.timestamp).put("scrobbleRevision", it.scrobbleRevision))
         }
-        check(preferences.edit().putString(pendingKey, array.toString()).commit()) { "Playback updates could not be saved." }
+        check(preferences.edit().putString(pendingKey, array.toString()).commit()) { L10n.tr(R.string.t_playback_updates_could_not_be_saved, "Playback updates could not be saved.") }
     }
 
     private fun sameMedia(first: PlaybackIdentity, second: PlaybackIdentity): Boolean =

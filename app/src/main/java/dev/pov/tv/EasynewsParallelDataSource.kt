@@ -59,7 +59,7 @@ internal class EasynewsParallelDataSource(
 
     override fun open(dataSpec: DataSpec): Long {
         transferInitializing(dataSpec)
-        if (dataSpec.httpMethod != DataSpec.HTTP_METHOD_GET) throw IOException("Only video GET requests are supported.")
+        if (dataSpec.httpMethod != DataSpec.HTTP_METHOD_GET) throw IOException(L10n.tr(R.string.t_only_video_get_requests_are_supported, "Only video GET requests are supported."))
         closed = false
         origin = dataSpec.uri.toString()
         val position = dataSpec.position
@@ -71,11 +71,11 @@ internal class EasynewsParallelDataSource(
             target = finalUrl
             code = first.responseCode
             headerFields = first.headerFields.mapNotNull { (key, values) -> key?.let { it to values } }.toMap()
-            if (code != 206) { disconnect(first); throw IOException("Easynews didn't accept a ranged download (HTTP $code). Set Easynews connections to 1.") }
+            if (code != 206) { disconnect(first); throw IOException(L10n.tr(R.string.t_easynews_didn_t_accept_a_ranged, "Easynews didn't accept a ranged download (HTTP %1\$s). Set Easynews connections to 1.", code)) }
             val range = first.getHeaderField("Content-Range").orEmpty()
             val start = range.substringAfter("bytes ").substringBefore('-').trim().toLongOrNull()
             val total = range.substringAfterLast('/').trim().toLongOrNull()
-            if (start != position || total == null) { disconnect(first); throw IOException("Easynews returned an unexpected byte range.") }
+            if (start != position || total == null) { disconnect(first); throw IOException(L10n.tr(R.string.t_easynews_returned_an_unexpected_byte_range, "Easynews returned an unexpected byte range.")) }
             end = if (bounded) minOf(total, position + dataSpec.length) else total
             address = Uri.parse(target)
             pool = Executors.newFixedThreadPool(connections) { task -> Thread(task, "easynews-piece").apply { isDaemon = true } }
@@ -90,7 +90,7 @@ internal class EasynewsParallelDataSource(
             transferStarted(dataSpec)
             return end - position
         } catch (failure: IOException) { close(); throw failure }
-        catch (_: RuntimeException) { close(); throw IOException("The Easynews connection couldn't be opened.") }
+        catch (_: RuntimeException) { close(); throw IOException(L10n.tr(R.string.t_the_easynews_connection_couldn_t_be, "The Easynews connection couldn't be opened.")) }
     }
 
     /** Keeps [connections] + 2 pieces requested ahead of the one being read. */
@@ -118,13 +118,13 @@ internal class EasynewsParallelDataSource(
                     } else { if (finalUrl != target) target = finalUrl; opened }
                 }
                 connection = null
-                if (current.responseCode != 206) { disconnect(current); throw IOException("Easynews returned HTTP ${current.responseCode}.") }
+                if (current.responseCode != 206) { disconnect(current); throw IOException(L10n.tr(R.string.t_easynews_returned_http_x, "Easynews returned HTTP %1\$s.", current.responseCode)) }
                 val from = current.getHeaderField("Content-Range")?.substringAfter("bytes ")?.substringBefore('-')?.trim()?.toLongOrNull()
-                if (from != piece.start + piece.filled) { disconnect(current); throw IOException("Easynews returned an unexpected byte range.") }
+                if (from != piece.start + piece.filled) { disconnect(current); throw IOException(L10n.tr(R.string.t_easynews_returned_an_unexpected_byte_range, "Easynews returned an unexpected byte range.")) }
                 try {
                     current.inputStream.use { input -> copy(input, piece) }
                 } finally { disconnect(current) }
-                if (piece.filled < piece.size) throw IOException("Easynews ended the download early.")
+                if (piece.filled < piece.size) throw IOException(L10n.tr(R.string.t_easynews_ended_the_download_early, "Easynews ended the download early."))
             } catch (error: IOException) {
                 connection?.let(::disconnect); connection = null
                 if (closed) return
@@ -134,7 +134,7 @@ internal class EasynewsParallelDataSource(
             } catch (_: RuntimeException) {
                 connection?.let(::disconnect); connection = null
                 if (closed) return
-                if (++attempts >= 4) { piece.fail(IOException("The Easynews connection failed.")); return }
+                if (++attempts >= 4) { piece.fail(IOException(L10n.tr(R.string.t_the_easynews_connection_failed, "The Easynews connection failed."))); return }
             }
         }
     }
@@ -152,7 +152,7 @@ internal class EasynewsParallelDataSource(
         var next = address
         for (redirect in 0..5) {
             if (closed) throw InterruptedIOException("Closed.")
-            if (!Easynews.isHost(next)) throw IOException("Easynews redirected outside its own service.")
+            if (!Easynews.isHost(next)) throw IOException(L10n.tr(R.string.t_easynews_redirected_outside_its_own_service, "Easynews redirected outside its own service."))
             val current = connect(URI(next))
             live += current
             current.instanceFollowRedirects = false
@@ -164,14 +164,14 @@ internal class EasynewsParallelDataSource(
             current.setRequestProperty("Range", "bytes=$from-$to")
             val status = current.responseCode
             if (status in listOf(301, 302, 303, 307, 308)) {
-                val location = current.getHeaderField("Location") ?: run { disconnect(current); throw IOException("Easynews sent an invalid redirect.") }
+                val location = current.getHeaderField("Location") ?: run { disconnect(current); throw IOException(L10n.tr(R.string.t_easynews_sent_an_invalid_redirect, "Easynews sent an invalid redirect.")) }
                 next = URI(next).resolve(location).toString()
                 disconnect(current)
                 continue
             }
             return current to next
         }
-        throw IOException("Easynews sent too many redirects.")
+        throw IOException(L10n.tr(R.string.t_easynews_sent_too_many_redirects, "Easynews sent too many redirects."))
     }
 
     private fun disconnect(connection: HttpURLConnection) { live -= connection; runCatching { connection.disconnect() } }
@@ -188,13 +188,13 @@ internal class EasynewsParallelDataSource(
             while (!closed && piece.filled <= readOffset && piece.failure == null) {
                 if (Thread.interrupted() && interruptedAt == 0L) interruptedAt = android.os.SystemClock.elapsedRealtime()
                 if (interruptedAt != 0L && android.os.SystemClock.elapsedRealtime() - interruptedAt > INTERRUPTED_WAIT_MS)
-                    throw InterruptedIOException("Easynews load cancelled.")
+                    throw InterruptedIOException(L10n.tr(R.string.t_easynews_load_cancelled, "Easynews load cancelled."))
                 try { piece.lock.wait(250) }
                 catch (_: InterruptedException) { if (interruptedAt == 0L) interruptedAt = android.os.SystemClock.elapsedRealtime() }
             }
         }
         if (closed) throw InterruptedIOException("Closed.")
-        if (piece.filled <= readOffset) throw piece.failure ?: IOException("Easynews stopped sending this video.")
+        if (piece.filled <= readOffset) throw piece.failure ?: IOException(L10n.tr(R.string.t_easynews_stopped_sending_this_video, "Easynews stopped sending this video."))
         val count = minOf(length, piece.filled - readOffset)
         System.arraycopy(piece.data, readOffset, buffer, offset, count)
         readOffset += count

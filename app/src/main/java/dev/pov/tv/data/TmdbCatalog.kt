@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import android.content.Context
 import org.json.JSONObject
 import java.util.Locale
@@ -310,7 +313,7 @@ class TmdbCatalog internal constructor(
         val separator = if ('?' in path) '&' else '?'
         val url = "$BASE$path${separator}language=en-US" + if (bearer) "" else "&api_key=$key"
         val raw = get(url, if (bearer) mapOf("Authorization" to "Bearer $key") else emptyMap())
-        return try { JSONObject(raw) } catch (_: Exception) { throw IllegalStateException("TMDB returned an unreadable response.") }
+        return try { JSONObject(raw) } catch (_: Exception) { throw IllegalStateException(L10n.tr(R.string.t_tmdb_returned_an_unreadable_response, "TMDB returned an unreadable response.")) }
     }
 
     private fun image(path: String, size: String) = if (path.startsWith('/')) "https://image.tmdb.org/t/p/$size$path" else ""

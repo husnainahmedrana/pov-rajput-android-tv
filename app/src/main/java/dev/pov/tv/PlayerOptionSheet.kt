@@ -57,7 +57,7 @@ internal object PlayerOptionSheet {
             text = title; textSize = 23f; setTextColor(Color.WHITE); typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
         }, LinearLayout.LayoutParams(0, -2, 1f))
         val close = Button(context).apply {
-            text = "Done"; textSize = 13f; isAllCaps = false; minWidth = dp(90)
+            text = L10n.tr(R.string.t_done, "Done"); textSize = 13f; isAllCaps = false; minWidth = dp(90)
             setTextColor(Color.WHITE); background = GradientDrawable().apply { setColor(0x24FFFFFF); cornerRadius = dp(10).toFloat() }
             setOnFocusChangeListener { _, focused ->
                 background = GradientDrawable().apply { setColor(if (focused) Color.WHITE else 0x24FFFFFF); cornerRadius = dp(10).toFloat() }
@@ -87,7 +87,7 @@ internal object PlayerOptionSheet {
                 Button(context).apply {
                     tag = if (split) "pov_sheet_choice_${column}_$index" else "pov_sheet_choice_$index"
                     text = if (choice.checked) "✓   ${choice.label}" else "     ${choice.label}"
-                    contentDescription = choice.label + if (choice.checked) ", selected" else ""
+                    contentDescription = choice.label + if (choice.checked) L10n.tr(R.string.t_selected_2, ", selected") else ""
                     textSize = 14f; isAllCaps = false; gravity = Gravity.CENTER_VERTICAL or Gravity.START
                     maxLines = 2; minHeight = dp(47); setPadding(dp(14), dp(7), dp(14), dp(7))
                     isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv
@@ -160,7 +160,7 @@ internal object PlayerOptionSheet {
             isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true
             setPadding(dp(14), dp(10), dp(14), dp(10))
             contentDescription = (choice.badges.map { it.label } + listOf(choice.label, choice.detail)).filter(String::isNotBlank).joinToString(". ") +
-                if (choice.checked) ", playing" else ""
+                if (choice.checked) L10n.tr(R.string.t_playing_2, ", playing") else ""
             addView(column, LinearLayout.LayoutParams(0, -2, 1f))
             if (choice.logos.isNotEmpty()) addView(LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
@@ -172,7 +172,7 @@ internal object PlayerOptionSheet {
                 }
             }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
             if (choice.playing) column.addView(TextView(context).apply {
-                text = "▶  NOW PLAYING"; textSize = 12f; setTextColor(0xFF46D369.toInt()); letterSpacing = 0.08f
+                text = L10n.tr(R.string.t_now_playing_2, "▶  NOW PLAYING"); textSize = 12f; setTextColor(0xFF46D369.toInt()); letterSpacing = 0.08f
                 typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
             }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
             if (choice.badges.isNotEmpty()) column.addView(SourceBadgeStrip(context, choice.badges), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(7) })

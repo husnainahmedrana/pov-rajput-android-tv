@@ -1,5 +1,8 @@
 package dev.pov.tv.usenet
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import java.io.Closeable
 import java.io.IOException
 import java.io.InputStream
@@ -22,7 +25,7 @@ class NntpServer(val host: String, val port: Int, val tls: Boolean, val user: St
 }
 
 /** The server does not have this article (430): a hole in the file, not a connection problem. */
-class MissingArticleException(messageId: String) : IOException("The news server no longer has article $messageId.")
+class MissingArticleException(messageId: String) : IOException(L10n.tr(R.string.t_the_news_server_no_longer_has, "The news server no longer has article %1\$s.", messageId))
 
 /** The server refused the login or the connection (too many connections, wrong password): retrying will not help. */
 class NntpRefusedException(val code: Int, message: String) : IOException(message)
@@ -58,7 +61,7 @@ internal class NntpConnection(
         socket = opened
         input = opened.getInputStream(); output = opened.getOutputStream()
         val greeting = status()
-        if (greeting.first != 200 && greeting.first != 201) throw NntpRefusedException(greeting.first, "The news server refused the connection (${greeting.first}).")
+        if (greeting.first != 200 && greeting.first != 201) throw NntpRefusedException(greeting.first, L10n.tr(R.string.t_the_news_server_refused_the_connection, "The news server refused the connection (%1\$s).", greeting.first))
         send("AUTHINFO USER ${server.user}"); flush()
         var answer = status()
         if (answer.first == 381) { send("AUTHINFO PASS ${server.password}"); flush(); answer = status() }
@@ -82,7 +85,7 @@ internal class NntpConnection(
         if (stop > position && buffer[stop - 1] == CR) stop--
         val line = String(buffer, position, stop - position, Charsets.ISO_8859_1)
         position = end + 1
-        val code = line.take(3).toIntOrNull() ?: throw IOException("The news server sent an unreadable answer.")
+        val code = line.take(3).toIntOrNull() ?: throw IOException(L10n.tr(R.string.t_the_news_server_sent_an_unreadable, "The news server sent an unreadable answer."))
         return code to line.drop(3).trim()
     }
 
@@ -123,7 +126,7 @@ internal class NntpConnection(
             }
             if (ended || fileSize < 0) continue                           // text before =ybegin or after =yend
             if (data === EMPTY) {
-                if (partSize <= 0 || partSize > MAX_PART) throw IOException("The article is not a usable yEnc part.")
+                if (partSize <= 0 || partSize > MAX_PART) throw IOException(L10n.tr(R.string.t_the_article_is_not_a_usable, "The article is not a usable yEnc part."))
                 data = ByteArray(partSize.toInt())
             }
             // The decode loop: every byte is shifted by 42; '=' marks an escaped byte shifted by a further 64.
@@ -135,11 +138,11 @@ internal class NntpConnection(
                     if (index >= stop) break
                     value = buffer[index++].toInt() - 64
                 }
-                if (filled >= room) throw IOException("The article holds more data than it states.")
+                if (filled >= room) throw IOException(L10n.tr(R.string.t_the_article_holds_more_data_than, "The article holds more data than it states."))
                 data[filled++] = (value - 42).toByte()
             }
         }
-        if (data === EMPTY) throw IOException("The article holds no yEnc data.")
+        if (data === EMPTY) throw IOException(L10n.tr(R.string.t_the_article_holds_no_yenc_data, "The article holds no yEnc data."))
         crc.reset(); crc.update(data, 0, filled)
         return Segment(data, filled, begin, fileSize, name, crcOk = ended && filled.toLong() == partSize && (expected == null || expected == crc.value))
     }
@@ -175,9 +178,9 @@ internal class NntpConnection(
                 System.arraycopy(buffer, position, buffer, 0, limit - position)
                 scan -= position; limit -= position; position = 0
             }
-            if (limit == buffer.size) throw IOException("The news server sent an overlong line.")
+            if (limit == buffer.size) throw IOException(L10n.tr(R.string.t_the_news_server_sent_an_overlong, "The news server sent an overlong line."))
             val count = input.read(buffer, limit, buffer.size - limit)
-            if (count < 0) throw IOException("The news server closed the connection.")
+            if (count < 0) throw IOException(L10n.tr(R.string.t_the_news_server_closed_the_connection, "The news server closed the connection."))
             limit += count
             received(count)
         }
@@ -225,7 +228,7 @@ internal class NntpConnection(
                 return secure
             } catch (error: Exception) {
                 try { plain.close() } catch (_: IOException) {}
-                throw error as? IOException ?: IOException("The news server connection couldn't be opened.", error)
+                throw error as? IOException ?: IOException(L10n.tr(R.string.t_the_news_server_connection_couldn_t, "The news server connection couldn't be opened."), error)
             }
         }
     }

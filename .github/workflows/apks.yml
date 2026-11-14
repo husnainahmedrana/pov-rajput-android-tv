@@ -87,8 +87,8 @@ jobs:
           SIGNED_RELEASE: ${{ steps.signing.outputs.signed }}
         run: |
           mkdir -p dist/debug dist/release
-          cp app/build/outputs/apk/tv/debug/app-tv-debug.apk dist/debug/POV-Rajput-TV-debug.apk
-          cp app/build/outputs/apk/mobile/debug/app-mobile-debug.apk dist/debug/POV-Rajput-Mobile-debug.apk
+          cp app/build/outputs/apk/tv/debug/app-tv-debug.apk dist/debug/Nabrio-TV-debug.apk
+          cp app/build/outputs/apk/mobile/debug/app-mobile-debug.apk dist/debug/Nabrio-Mobile-debug.apk
           if [[ "$SIGNED_RELEASE" == 'true' ]]; then
             for flavor in tv mobile; do
               "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "app/build/outputs/apk/$flavor/release/app-$flavor-release.apk"
@@ -104,15 +104,15 @@ jobs:
             python3 scripts/create-update-manifest.py dist/release/POV-Rajput-release.apk update.json dev.pov.tv.rajput
             python3 scripts/create-update-manifest.py dist/release/POV-Rajput-Mobile.apk update-mobile.json dev.pov.rajput.mobile
           else
-            cp app/build/outputs/apk/tv/release/app-tv-release-unsigned.apk dist/release/POV-Rajput-TV-UNSIGNED.apk
-            cp app/build/outputs/apk/mobile/release/app-mobile-release-unsigned.apk dist/release/POV-Rajput-Mobile-UNSIGNED.apk
+            cp app/build/outputs/apk/tv/release/app-tv-release-unsigned.apk dist/release/Nabrio-TV-UNSIGNED.apk
+            cp app/build/outputs/apk/mobile/release/app-mobile-release-unsigned.apk dist/release/Nabrio-Mobile-UNSIGNED.apk
           fi
           cp LICENSE dist/release/LICENSE.txt
           (cd dist/release && sha256sum *.apk > SHA256SUMS.txt)
       - name: Save debug APK
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: pov-rajput-debug-${{ github.run_number }}
+          name: nabrio-debug-${{ github.run_number }}
           path: dist/debug/
           retention-days: 14
           if-no-files-found: error
@@ -120,7 +120,7 @@ jobs:
       - name: Save release APK
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: pov-rajput-release-${{ github.run_number }}
+          name: nabrio-release-${{ github.run_number }}
           path: dist/release/
           retention-days: 30
           if-no-files-found: error
@@ -129,7 +129,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: pov-rajput-checks-${{ github.run_number }}
+          name: nabrio-checks-${{ github.run_number }}
           path: |
             app/build/reports/
             app/build/test-results/
@@ -152,7 +152,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v8.0.2
         with:
-          name: pov-rajput-release-${{ github.run_number }}
+          name: nabrio-release-${{ github.run_number }}
           path: release-assets
       - name: Create release with signed APK and checksums
         env:

@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import java.net.URI
 import java.util.Locale
 import java.util.UUID
@@ -28,7 +31,7 @@ class NewsProviders(private val get: (String) -> String, private val put: (Strin
                 NewsProvider(item.getString("id"), item.getString("name"), item.getString("host"), item.getInt("port"), item.optBoolean("tls", true),
                     item.getString("user"), item.getString("password"), item.optInt("connections", DEFAULT_CONNECTIONS), item.optBoolean("backup"), item.optBoolean("enabled", true), item.optInt("pipelineDepth", DEFAULT_PIPELINE_DEPTH).coerceIn(1, MAX_PIPELINE_DEPTH))
             }
-        } catch (_: Exception) { throw IllegalStateException("Saved news providers could not be read. Check Settings → Usenet.") }
+        } catch (_: Exception) { throw IllegalStateException(L10n.tr(R.string.t_saved_news_providers_could_not_be, "Saved news providers could not be read. Check Settings → Usenet.")) }
     }
 
     fun save(providers: List<NewsProvider>) {
@@ -86,7 +89,15 @@ class NewsProviders(private val get: (String) -> String, private val put: (Strin
 
 /** A Newznab indexer (or an aggregator such as NZBHydra2 or Prowlarr, which speak the same API). */
 data class NewznabIndexer(val id: String, val name: String, /** The API address, such as https://api.example.com/api. */ val url: String,
-                          val apiKey: String, val enabled: Boolean = true)
+                          val apiKey: String, val enabled: Boolean = true,
+                          /** Search order, NZBHydra2-style: 1 is searched first; a higher number only when the ones before found too little. */
+                          val priority: Int = 1,
+                          /** Free tiers and other low-limit indexers: searched only when every other indexer found nothing. */
+                          val backupOnly: Boolean = false,
+                          /** Searches a day this app may make, NZBHydra2-style (0 = no limit); then it is skipped until tomorrow (UTC). */
+                          val dailyLimit: Int = 0,
+                          /** NZB downloads (grabs) a day; free tiers often allow fewer grabs than searches (0 = no limit). */
+                          val dailyGrabLimit: Int = 0)
 
 /** The viewer's indexers. API keys stay in [SecureStore]. */
 class NewznabIndexers(private val get: (String) -> String, private val put: (String, String) -> Unit) {
@@ -101,25 +112,73 @@ class NewznabIndexers(private val get: (String) -> String, private val put: (Str
             val array = JSONArray(saved)
             (0 until array.length()).map { index ->
                 val item = array.getJSONObject(index)
-                NewznabIndexer(item.getString("id"), item.getString("name"), item.getString("url"), item.optString("apiKey"), item.optBoolean("enabled", true))
+                NewznabIndexer(item.getString("id"), item.getString("name"), item.getString("url"), item.optString("apiKey"), item.optBoolean("enabled", true),
+                    item.optInt("priority", 1).coerceIn(1, MAX_PRIORITY), item.optBoolean("backupOnly", false),
+                    item.optInt("dailyLimit", 0).coerceIn(0, MAX_DAILY_LIMIT), item.optInt("dailyGrabLimit", 0).coerceIn(0, MAX_DAILY_LIMIT))
             }
-        } catch (_: Exception) { throw IllegalStateException("Saved indexers could not be read. Check Settings → Usenet.") }
+        } catch (_: Exception) { throw IllegalStateException(L10n.tr(R.string.t_saved_indexers_could_not_be_read, "Saved indexers could not be read. Check Settings → Usenet.")) }
     }
 
     fun save(indexers: List<NewznabIndexer>) {
         indexers.forEach(::validate)
         require(indexers.map { it.id }.distinct().size == indexers.size) { "Invalid indexer identifiers." }
         val array = JSONArray()
-        indexers.forEach { array.put(JSONObject().put("id", it.id).put("name", it.name).put("url", it.url).put("apiKey", it.apiKey).put("enabled", it.enabled)) }
+        indexers.forEach { array.put(JSONObject().put("id", it.id).put("name", it.name).put("url", it.url).put("apiKey", it.apiKey).put("enabled", it.enabled)
+            .put("priority", it.priority.coerceIn(1, MAX_PRIORITY)).put("backupOnly", it.backupOnly)
+            .put("dailyLimit", it.dailyLimit.coerceIn(0, MAX_DAILY_LIMIT)).put("dailyGrabLimit", it.dailyGrabLimit.coerceIn(0, MAX_DAILY_LIMIT))) }
         put(KEY, array.toString())
     }
 
     /** What an indexer last said about today's allowance ("API 12/100 · grabs 1/50"), shown beside it in Settings. */
     fun usage(id: String): String = get("$USAGE$id")
-    fun noteUsage(id: String, usage: String) { if (usage.isNotBlank() && usage != get("$USAGE$id")) put("$USAGE$id", usage) }
+    fun noteUsage(id: String, usage: String) {
+        if (usage.isBlank()) return
+        if (usage != get("$USAGE$id")) put("$USAGE$id", usage)
+        if (get("$USAGE_DAY$id") != today()) put("$USAGE_DAY$id", today())
+    }
+
+    /** Searches this app made with the indexer today (UTC, as most indexers reset). */
+    fun searchesToday(id: String): Int = get("$COUNT$id").split(':').let { if (it.size == 2 && it[0] == today()) it[1].toIntOrNull() ?: 0 else 0 }
+    fun noteSearch(id: String) = synchronized(COUNT_LOCK) { put("$COUNT$id", "${today()}:${searchesToday(id) + 1}") }
+
+    /** NZB downloads (grabs) this app made from the indexer today; replays from the device's NZB cache don't count. */
+    fun grabsToday(id: String): Int = get("$GRABS$id").split(':').let { if (it.size == 2 && it[0] == today()) it[1].toIntOrNull() ?: 0 else 0 }
+    fun noteGrab(id: String) = synchronized(COUNT_LOCK) { put("$GRABS$id", "${today()}:${grabsToday(id) + 1}") }
+
+    /** Out of searches for today: the viewer's own daily limit is reached, or the indexer said today's API allowance is used up. */
+    fun exhausted(indexer: NewznabIndexer): Boolean {
+        if (indexer.dailyLimit > 0 && searchesToday(indexer.id) >= indexer.dailyLimit) return true
+        return reportedUsedUp(indexer.id, "API") || grabsExhausted(indexer)
+    }
+
+    /** Out of grabs for today: its links couldn't be played, so the indexer is skipped in searches too. */
+    fun grabsExhausted(indexer: NewznabIndexer): Boolean =
+        (indexer.dailyGrabLimit > 0 && grabsToday(indexer.id) >= indexer.dailyGrabLimit) || reportedUsedUp(indexer.id, "grabs")
+
+    /** The indexer's own count for today ("API 25/25", "grabs 10/10") says nothing is left. */
+    private fun reportedUsedUp(id: String, what: String): Boolean {
+        if (get("$USAGE_DAY$id") != today()) return false
+        val reported = Regex("$what (\\d+)/(\\d+)").find(usage(id)) ?: return false
+        val (used, max) = reported.destructured
+        return max.toInt() > 0 && used.toInt() >= max.toInt()
+    }
+
+    /** The saved indexer a link (an NZB download address) belongs to, by its host. */
+    fun forLink(address: String): NewznabIndexer? {
+        val host = runCatching { URI(address).host }.getOrNull()?.lowercase(Locale.ROOT) ?: return null
+        return runCatching { load() }.getOrDefault(emptyList()).firstOrNull { runCatching { URI(it.url).host }.getOrNull()?.lowercase(Locale.ROOT) == host }
+    }
+
+    private fun today() = java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString()
 
     companion object {
         const val KEY = "usenet.indexers"
+        const val MAX_PRIORITY = 20
+        const val MAX_DAILY_LIMIT = 1000
+        private const val COUNT = "usenet.searches."
+        private const val GRABS = "usenet.grabs."
+        private const val USAGE_DAY = "usenet.usageDay."
+        private val COUNT_LOCK = Any()
         private const val USAGE = "usenet.usage."
 
         /** Well-known indexers' API addresses; the two aggregators' addresses are examples to edit. */
@@ -139,7 +198,7 @@ class NewznabIndexers(private val get: (String) -> String, private val put: (Str
         /** An http(s) API address without query or login parts; a bare site address gets the usual /api path. */
         fun address(value: String): String {
             val typed = value.trim().trimEnd('/')
-            val uri = try { URI(if ("://" in typed) typed else "https://$typed") } catch (_: Exception) { throw IllegalArgumentException("Enter the indexer's address, such as https://api.example.com/api.") }
+            val uri = try { URI(if ("://" in typed) typed else "https://$typed") } catch (_: Exception) { throw IllegalArgumentException(L10n.tr(R.string.t_enter_the_indexer_s_address_such, "Enter the indexer's address, such as https://api.example.com/api.")) }
             require((uri.scheme.equals("https", true) || uri.scheme.equals("http", true)) && !uri.host.isNullOrBlank() && uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null) {
                 "Enter the indexer's address, such as https://api.example.com/api."
             }

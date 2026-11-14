@@ -40,7 +40,7 @@ internal class TrailerDataSourceFactory(private val source: NativeTrailerSource.
             if (remaining == 0L) return C.RESULT_END_OF_INPUT
             if (chunkRemaining == 0L) { upstream.close(); opened = false; openChunk() }
             val count = upstream.read(buffer,offset,minOf(length.toLong(),chunkRemaining).toInt())
-            if (count == C.RESULT_END_OF_INPUT) throw java.io.EOFException("Incomplete trailer chunk")
+            if (count == C.RESULT_END_OF_INPUT) throw java.io.EOFException(L10n.tr(R.string.t_incomplete_trailer_chunk, "Incomplete trailer chunk"))
             position += count; remaining -= count; chunkRemaining -= count
             return count
         }

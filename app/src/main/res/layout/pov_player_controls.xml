@@ -15,7 +15,7 @@
         <LinearLayout android:layout_width="match_parent" android:layout_height="28dp"
             android:orientation="horizontal" android:gravity="center_vertical">
             <TextView android:id="@+id/pov_playback_title" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:maxWidth="380dp" android:text="Now playing" android:textColor="#FFFFFF" android:textSize="16sp"
+                android:maxWidth="380dp" android:text="@string/t_now_playing" android:textColor="#FFFFFF" android:textSize="16sp"
                 android:fontFamily="sans-serif-medium" android:textStyle="bold" android:shadowColor="#99000000" android:shadowRadius="6" android:includeFontPadding="false" android:maxLines="1" android:ellipsize="end" />
             <dev.pov.tv.PlayerBadgeRow android:id="@+id/pov_media_badges" android:layout_width="0dp"
                 android:layout_height="28dp" android:layout_weight="1" android:layout_marginStart="16dp" />
@@ -35,7 +35,7 @@
                 android:text="0:00" android:textSize="12sp" android:textColor="#FFFFFF" android:fontFamily="sans-serif-medium" />
             <dev.pov.tv.PreviewTimeBar android:id="@id/exo_progress"
                 android:layout_width="0dp" android:layout_height="30dp" android:layout_weight="1"
-                android:focusable="true" android:contentDescription="Video timeline"
+                android:focusable="true" android:contentDescription="@string/t_cd_video_timeline"
                 android:nextFocusDown="@id/exo_play_pause"
                 app:bar_height="4dp" app:touch_target_height="28dp" app:scrubber_enabled_size="12dp"
                 app:scrubber_dragged_size="16dp" app:played_color="@color/brand_accent" app:scrubber_color="#FFFFFF"
@@ -48,43 +48,45 @@
             <!-- Stop, then Play, then Next episode (series). Back/Forward 10 s stay hidden (PlayerActivity): the seek bar
                  seeks with previews and the phone double-taps to skip. -->
             <ImageButton android:id="@+id/pov_stop" android:layout_width="40dp" android:layout_height="40dp"
-                android:contentDescription="Stop" android:padding="10dp" android:src="@drawable/pov_ic_stop"
+                android:contentDescription="@string/t_cd_stop" android:padding="10dp" android:src="@drawable/pov_ic_stop"
                 android:scaleType="fitCenter" android:background="@drawable/pov_player_button" android:focusable="true"
                 android:layout_marginEnd="4dp" android:nextFocusUp="@id/exo_progress" />
             <ImageButton android:id="@id/exo_rew" android:layout_width="40dp" android:layout_height="40dp"
-                android:contentDescription="Back 10 seconds" android:padding="10dp"
+                android:contentDescription="@string/t_cd_back_10_seconds" android:padding="10dp"
                 android:background="@drawable/pov_player_button" android:focusable="true" android:layout_marginEnd="4dp"
                 android:nextFocusUp="@id/exo_progress" />
             <ImageButton android:id="@id/exo_play_pause" android:layout_width="44dp" android:layout_height="44dp"
-                android:contentDescription="Play or pause" android:padding="12dp"
+                android:contentDescription="@string/t_cd_play_or_pause" android:padding="12dp"
                 android:background="@drawable/pov_player_button" android:focusable="true" android:layout_marginEnd="4dp"
                 android:nextFocusUp="@id/exo_progress" />
             <ImageButton android:id="@id/exo_ffwd" android:layout_width="40dp" android:layout_height="40dp"
-                android:contentDescription="Forward 10 seconds" android:padding="10dp"
+                android:contentDescription="@string/t_cd_forward_10_seconds" android:padding="10dp"
                 android:background="@drawable/pov_player_button" android:focusable="true" android:layout_marginEnd="4dp"
                 android:nextFocusUp="@id/exo_progress" />
             <ImageButton android:id="@+id/pov_next_episode" android:layout_width="40dp" android:layout_height="40dp"
-                android:contentDescription="Next episode" android:padding="10dp" android:src="@drawable/pov_ic_next"
+                android:contentDescription="@string/t_cd_next_episode" android:padding="10dp" android:src="@drawable/pov_ic_next"
                 android:scaleType="fitCenter" android:background="@drawable/pov_player_button" android:focusable="true"
                 android:visibility="gone" android:nextFocusUp="@id/exo_progress" />
             <Button android:id="@+id/pov_jump_30" style="@style/POVPlayerAction" android:text="30m" android:visibility="gone"
-                android:layout_marginStart="10dp" android:contentDescription="Jump to 30 minutes" android:nextFocusUp="@id/exo_progress" />
+                android:layout_marginStart="10dp" android:contentDescription="@string/t_cd_jump_30m" android:nextFocusUp="@id/exo_progress" />
             <Button android:id="@+id/pov_jump_60" style="@style/POVPlayerAction" android:text="1h" android:visibility="gone"
-                android:contentDescription="Jump to 1 hour" android:nextFocusUp="@id/exo_progress" />
+                android:contentDescription="@string/t_cd_jump_1h" android:nextFocusUp="@id/exo_progress" />
             <Button android:id="@+id/pov_jump_90" style="@style/POVPlayerAction" android:text="1h 30m" android:visibility="gone"
-                android:contentDescription="Jump to 1 hour 30 minutes" android:nextFocusUp="@id/exo_progress" />
+                android:contentDescription="@string/t_cd_jump_1h30" android:nextFocusUp="@id/exo_progress" />
             <Button android:id="@+id/pov_jump_120" style="@style/POVPlayerAction" android:text="2h" android:visibility="gone"
-                android:contentDescription="Jump to 2 hours" android:nextFocusUp="@id/exo_progress" />
+                android:contentDescription="@string/t_cd_jump_2h" android:nextFocusUp="@id/exo_progress" />
             <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
-            <Button android:id="@+id/pov_audio" style="@style/POVPlayerAction" android:text="Audio &amp; Subtitles"
+            <Button android:id="@+id/pov_audio" style="@style/POVPlayerAction" android:text="@string/t_audio_subtitles"
                 android:drawableStart="@drawable/pov_ic_subtitles" android:nextFocusUp="@id/exo_progress" />
-            <Button android:id="@+id/pov_speed" style="@style/POVPlayerAction" android:text="Speed · 1×"
+            <Button android:id="@+id/pov_speed" style="@style/POVPlayerAction" android:text="@string/t_speed_1x"
                 android:drawableStart="@drawable/pov_ic_speed" android:nextFocusUp="@id/exo_progress" />
-            <Button android:id="@+id/pov_browse" style="@style/POVPlayerAction" android:text="Browse"
+            <Button android:id="@+id/pov_screen_fit" style="@style/POVPlayerAction" android:text="@string/t_screen_fit_default"
+                android:drawableStart="@drawable/pov_ic_screen" android:nextFocusUp="@id/exo_progress" />
+            <Button android:id="@+id/pov_browse" style="@style/POVPlayerAction" android:text="@string/t_browse"
                 android:drawableStart="@drawable/pov_ic_browse" android:nextFocusUp="@id/exo_progress" />
-            <Button android:id="@+id/pov_info" style="@style/POVPlayerAction" android:text="Info"
+            <Button android:id="@+id/pov_info" style="@style/POVPlayerAction" android:text="@string/t_info"
                 android:drawableStart="@drawable/pov_ic_info" android:nextFocusUp="@id/exo_progress" android:visibility="gone" />
-            <Button android:id="@+id/pov_episodes" style="@style/POVPlayerAction" android:text="Episodes"
+            <Button android:id="@+id/pov_episodes" style="@style/POVPlayerAction" android:text="@string/t_episodes"
                 android:drawableStart="@drawable/pov_ic_episodes" android:nextFocusUp="@id/exo_progress" android:visibility="gone" />
         </LinearLayout>
     </LinearLayout>

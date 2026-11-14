@@ -454,7 +454,7 @@ object InAppPlaybackSession {
                 }
                 // The full reason, so a link that keeps failing can be diagnosed from the log.
                 android.util.Log.e("PovPlayer", "Playback failed: ${failure.errorCodeName} (${failure.cause?.javaClass?.simpleName}: ${failure.cause?.message})" +
-                    if (aioStreams) " · AIOStreams link" else "", failure)
+                    if (aioStreams) L10n.tr(R.string.t_aiostreams_link, " · AIOStreams link") else "", failure)
                 if (error !is VideoCompatibilityException) error = failure
                 saveLocal(); sync("pause")
                 exo.pause()

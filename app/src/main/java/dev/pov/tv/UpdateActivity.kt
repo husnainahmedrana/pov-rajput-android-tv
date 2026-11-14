@@ -59,6 +59,12 @@ class UpdateActivity : Activity() {
         setOnClickListener { if (isEnabled) click() }
     }
 
+    // The app's own language (Settings → Language); "Device language" leaves the context as it is.
+    override fun attachBaseContext(newBase: android.content.Context) {
+        L10n.attach(AppLanguage.wrap(newBase.applicationContext ?: newBase))
+        super.attachBaseContext(AppLanguage.wrap(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         updates = GitHubUpdates(this)
@@ -77,9 +83,9 @@ class UpdateActivity : Activity() {
         fun label(value: String, size: Float, color: Int = Color.WHITE, bold: Boolean = false) = TextView(this).apply {
             text = value; textSize = size; setTextColor(color); if (bold) typeface = Typeface.DEFAULT_BOLD
         }
-        content.addView(label("APP UPDATES", 13f, MUTED, true).apply { letterSpacing = 0.12f })
+        content.addView(label(getString(R.string.t_app_updates), 13f, MUTED, true).apply { letterSpacing = 0.12f })
         content.addView(label("${BuildConfig.APP_NAME}", if (phone) 28f else 34f, bold = true), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-        status = label("Checking for updates…", if (phone) 16f else 18f, Color.WHITE)
+        status = label(getString(R.string.t_checking_for_updates), if (phone) 16f else 18f, Color.WHITE)
         content.addView(status, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100; isIndeterminate = true
@@ -98,15 +104,15 @@ class UpdateActivity : Activity() {
         val scroll = ScrollView(this).apply { isFocusable = false; isVerticalScrollBarEnabled = false; addView(card, ViewGroup.LayoutParams(-1, -2)) }
         content.addView(scroll, LinearLayout.LayoutParams(if (phone) -1 else dp(820), 0, 1f).apply { topMargin = dp(if (phone) 18 else 24) })
         val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
-        action = button("Check again", true) { when { ready -> install(); release != null -> download(); else -> checkUpdates() } }.apply { isEnabled = false }
+        action = button(getString(R.string.t_check_again), true) { when { ready -> install(); release != null -> download(); else -> checkUpdates() } }.apply { isEnabled = false }
         if (phone) {
             // Full-width buttons stacked under the notes, main action first, within thumb reach.
             buttons.orientation = LinearLayout.VERTICAL
             buttons.addView(action, LinearLayout.LayoutParams(-1, dp(50)))
-            buttons.addView(button("Back", false) { finish() }, LinearLayout.LayoutParams(-1, dp(50)).apply { topMargin = dp(10) })
+            buttons.addView(button(getString(R.string.t_back), false) { finish() }, LinearLayout.LayoutParams(-1, dp(50)).apply { topMargin = dp(10) })
         } else {
             buttons.addView(action, LinearLayout.LayoutParams(-2, dp(48)).apply { rightMargin = dp(16) })
-            buttons.addView(button("Back", false) { finish() }, LinearLayout.LayoutParams(-2, dp(48)))
+            buttons.addView(button(getString(R.string.t_back), false) { finish() }, LinearLayout.LayoutParams(-2, dp(48)))
         }
         content.addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(if (phone) 16 else 24) })
         setContentView(content)
@@ -152,19 +158,19 @@ class UpdateActivity : Activity() {
 
     private fun checkUpdates() {
         if (busy) return
-        ready = false; release = null; notes.text = ""; status.text = "Checking for updates…"
+        ready = false; release = null; notes.text = ""; status.text = getString(R.string.t_checking_for_updates)
         work({ updates.latest() }) { latest ->
             release = latest
             if (latest == null) {
-                status.text = "You’re up to date"
-                notes.text = "Installed: ${installedVersion()}\nUpdates come from ${GitHubUpdates.REPOSITORY}."
-                action.text = "Check again"
+                status.text = getString(R.string.t_you_re_up_to_date)
+                notes.text = getString(R.string.t_installed_x_updates_come_from_x, installedVersion(), GitHubUpdates.REPOSITORY)
+                action.text = getString(R.string.t_check_again)
             } else {
                 val installed = installedVersion().removeSuffix("-rajput")
-                status.text = "Version ${latest.version.removeSuffix("-rajput")} is available" +
-                    if (phone) "\nYou have $installed" else "  ·  you have $installed"
-                notes.text = latest.candidate.notes.ifBlank { "A new version of ${BuildConfig.APP_NAME} is available." }.let(::formatNotes)
-                action.text = "Download and install"
+                status.text = getString(R.string.t_version_x_is_available, latest.version.removeSuffix("-rajput")) +
+                    if (phone) "\nYou have $installed" else getString(R.string.t_you_have_x, installed)
+                notes.text = latest.candidate.notes.ifBlank { getString(R.string.t_a_new_version_of_x_is, BuildConfig.APP_NAME) }.let(::formatNotes)
+                action.text = getString(R.string.t_download_and_install)
             }
             action.requestFocus()
         }
@@ -172,14 +178,14 @@ class UpdateActivity : Activity() {
 
     private fun download() {
         val selected = release ?: return
-        status.text = "Downloading ${selected.version}…"; progress.isIndeterminate = false; progress.progress = 0
+        status.text = getString(R.string.t_downloading_x, selected.version); progress.isIndeterminate = false; progress.progress = 0
         work({ updates.download(selected) { bytes, total -> runOnUiThread {
             if (!isDestroyed && !isFinishing) {
                 progress.progress = (bytes * 100 / total).toInt().coerceIn(0, 100)
-                status.text = "Downloading ${selected.version} · ${progress.progress}%"
+                status.text = getString(R.string.t_downloading_x_x, selected.version, progress.progress)
             }
         } } }) {
-            ready = true; action.text = "Install update"; status.text = "Download verified. Ready to install ${selected.version}."
+            ready = true; action.text = getString(R.string.t_install_update); status.text = getString(R.string.t_download_verified_ready_to_install_x, selected.version)
             install()
         }
     }
@@ -188,22 +194,22 @@ class UpdateActivity : Activity() {
         val selected = release ?: return
         if (busy) return
         if (!packageManager.canRequestPackageInstalls()) {
-            SpacedChoiceDialog.show(this, "Allow app updates",
-                "Allow ${BuildConfig.APP_NAME} to install apps on the next screen. Return here and select Install update. Android will ask you to confirm the installation.",
-                "Open settings", "Later") {
+            SpacedChoiceDialog.show(this, getString(R.string.t_allow_app_updates),
+                getString(R.string.t_allow_x_to_install_apps_on, BuildConfig.APP_NAME),
+                getString(R.string.t_open_settings_2), getString(R.string.t_later)) {
                 try { startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))) }
-                catch (_: android.content.ActivityNotFoundException) { status.text = "Open Android Settings → Security → Install unknown apps and allow ${BuildConfig.APP_NAME}, then return here." }
+                catch (_: android.content.ActivityNotFoundException) { status.text = getString(R.string.t_open_android_settings_security_install_unknown, BuildConfig.APP_NAME) }
             }
             return
         }
-        status.text = "Verifying update before installation…"
+        status.text = getString(R.string.t_verifying_update_before_installation)
         work({ updates.validate(updates.apkFile, selected) }) {
             val uri = FileProvider.getUriForFile(this, "$packageName.updates", updates.apkFile)
             val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             intent.clipData = ClipData.newRawUri("${BuildConfig.APP_NAME} update", uri)
-            try { startActivity(intent); status.text = "Choose Install on the next screen. If you cancelled, select Install update again." }
-            catch (_: android.content.ActivityNotFoundException) { status.text = "No APK installer is available on this device. Install the signed APK manually from GitHub Releases." }
+            try { startActivity(intent); status.text = getString(R.string.t_choose_install_on_the_next_screen) }
+            catch (_: android.content.ActivityNotFoundException) { status.text = getString(R.string.t_no_apk_installer_is_available_on) }
         }
     }
 
@@ -222,8 +228,8 @@ class UpdateActivity : Activity() {
                 runOnUiThread {
                     if (!isDestroyed && !isFinishing) {
                         busy = false; action.isEnabled = true; progress.visibility = View.GONE
-                        status.text = if (error is IllegalStateException) error.message else "Could not complete the update request. Check your connection and try again."
-                        action.text = if (ready) "Install update" else if (release != null) "Retry download" else "Check again"
+                        status.text = if (error is IllegalStateException) error.message else getString(R.string.t_could_not_complete_the_update_request)
+                        action.text = if (ready) getString(R.string.t_install_update) else if (release != null) getString(R.string.t_retry_download) else getString(R.string.t_check_again)
                         action.requestFocus()
                     }
                 }

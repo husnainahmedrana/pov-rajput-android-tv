@@ -1,5 +1,8 @@
 package dev.pov.tv.usenet
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import java.io.Closeable
 import java.io.IOException
 import java.net.Socket
@@ -105,8 +108,8 @@ class NntpPool(
 
     private fun enqueue(fetch: Fetch, urgent: Boolean) {
         synchronized(lock) {
-            if (closed) { fetch.fail(IOException("The news connection is closed.")); return }
-            if (limit == 0) { fetch.fail(refusal ?: IOException("The news server can't be reached.")); return }
+            if (closed) { fetch.fail(IOException(L10n.tr(R.string.t_the_news_connection_is_closed, "The news connection is closed."))); return }
+            if (limit == 0) { fetch.fail(refusal ?: IOException(L10n.tr(R.string.t_the_news_server_can_t_be, "The news server can't be reached."))); return }
             if (urgent) queue.addFirst(fetch) else queue.addLast(fetch)
             if (idle == 0 && workers < limit) {
                 workers++
@@ -157,7 +160,7 @@ class NntpPool(
                             fresh.received = count
                             sockets += fresh
                             if (warm == null) try { fresh.connect() } catch (error: IOException) { fresh.close(); sockets -= fresh; throw error }
-                            if (closed) { fresh.close(); sockets -= fresh; next.fail(IOException("The news connection is closed.")); return }
+                            if (closed) { fresh.close(); sockets -= fresh; next.fail(IOException(L10n.tr(R.string.t_the_news_connection_is_closed, "The news connection is closed."))); return }
                             connection = fresh
                             live.incrementAndGet(); failures = 0
                         } catch (error: IOException) {
@@ -198,7 +201,7 @@ class NntpPool(
                                 if (fetch.attempts++ < 1) {
                                     log("article failed its checksum; fetching again")
                                     enqueue(fetch, urgent = true)
-                                } else fetch.fail(IOException("The article failed its checksum after retrying."))
+                                } else fetch.fail(IOException(L10n.tr(R.string.t_the_article_failed_its_checksum_after, "The article failed its checksum after retrying.")))
                             } else { bytes.addAndGet(segment.size.toLong()); fetch.complete(segment) }
                         }
                         430, 423, 420 -> fetch.fail(MissingArticleException(fetch.messageId))
@@ -218,7 +221,7 @@ class NntpPool(
             }
         } finally {
             if (connection != null) { connection.close(); sockets -= connection; live.decrementAndGet() }
-            while (true) { val fetch = flying.pollFirst() ?: break; if (closed) fetch.fail(IOException("The news connection is closed.")) else enqueue(fetch, urgent = true) }
+            while (true) { val fetch = flying.pollFirst() ?: break; if (closed) fetch.fail(IOException(L10n.tr(R.string.t_the_news_connection_is_closed, "The news connection is closed."))) else enqueue(fetch, urgent = true) }
             synchronized(lock) {
                 workers--
                 if (closing > 0) closing--
@@ -243,7 +246,7 @@ class NntpPool(
     override fun close() {
         synchronized(lock) {
             closed = true
-            while (true) { val fetch = queue.pollFirst() ?: break; fetch.fail(IOException("The news connection is closed.")) }
+            while (true) { val fetch = queue.pollFirst() ?: break; fetch.fail(IOException(L10n.tr(R.string.t_the_news_connection_is_closed, "The news connection is closed."))) }
             lock.notifyAll()
         }
         // Workers blocked on a read notice only when their socket goes away.
@@ -280,7 +283,7 @@ class ProviderChain(private val pools: List<NntpPool>) : ArticleSource {
             when {
                 segment != null -> { current.remove(outer); if (index > 0) rescued.incrementAndGet(); outer.complete(segment) }
                 index + 1 < pools.size && !outer.cancelled -> ask(outer, index + 1, urgent = true)
-                else -> { current.remove(outer); outer.fail(ended.error ?: IOException("The article couldn't be fetched.")) }
+                else -> { current.remove(outer); outer.fail(ended.error ?: IOException(L10n.tr(R.string.t_the_article_couldn_t_be_fetched, "The article couldn't be fetched."))) }
             }
         }
     }

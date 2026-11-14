@@ -37,12 +37,12 @@ internal object ArtworkClient {
     }
 
     fun bytes(address: String): ByteArray {
-        val http = checkNotNull(client) { "Artwork client is not ready." }
+        val http = checkNotNull(client) { L10n.tr(R.string.t_artwork_client_is_not_ready, "Artwork client is not ready.") }
         require(address.startsWith("https://")) { "Artwork must use HTTPS." }
         val started = System.nanoTime()
         http.newCall(Request.Builder().url(address).build()).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("Artwork request failed (${response.code}).")
-            val bytes = response.body?.bytes() ?: throw IOException("Artwork response was empty.")
+            if (!response.isSuccessful) throw IOException(L10n.tr(R.string.t_artwork_request_failed_x, "Artwork request failed (%1\$s).", response.code))
+            val bytes = response.body?.bytes() ?: throw IOException(L10n.tr(R.string.t_artwork_response_was_empty, "Artwork response was empty."))
             if (logTimings) Log.d("PovArtwork", "${(System.nanoTime() - started) / 1_000_000}ms " +
                 "${response.protocol} ${if (response.cacheResponse != null && response.networkResponse == null) "disk" else "net"} ${bytes.size / 1024}KB " +
                 "${response.request.url.host} ${response.request.url.pathSegments.take(3).joinToString("/")}")

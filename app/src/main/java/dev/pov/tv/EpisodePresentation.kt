@@ -10,15 +10,15 @@ internal object EpisodePresentation {
         .sortedWith(compareBy<Int> { it == 0 }.thenBy { it })
     fun selectedSeason(episodes: List<EpisodeData>, preferred: Int?): Int? =
         preferred?.takeIf { it in seasons(episodes) } ?: seasons(episodes).firstOrNull()
-    private val longDate = java.time.format.DateTimeFormatter.ofPattern("d MMMM yyyy", java.util.Locale.ENGLISH)
-    private val shortDate = java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", java.util.Locale.ENGLISH)
+    private val longDate get() = java.time.format.DateTimeFormatter.ofPattern("d MMMM yyyy", java.util.Locale.getDefault())
+    private val shortDate get() = java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", java.util.Locale.getDefault())
 
     /** Cinemeta's date (a UTC timestamp, often a day late for evening US premieres): the fallback when IMDb has none. */
     fun releaseDate(released: String): LocalDate? = runCatching { LocalDate.parse(released.take(10)) }.getOrNull()
 
     /** "Aired 20 January 2008" or "Airs 25 June 2026", for the focused episode's header line. */
     fun airLine(date: LocalDate?, today: LocalDate = LocalDate.now()): String =
-        date?.let { (if (it.isAfter(today)) "Airs " else "Aired ") + it.format(longDate) }.orEmpty()
+        date?.let { (if (it.isAfter(today)) L10n.tr(R.string.t_airs, "Airs ") else L10n.tr(R.string.t_aired, "Aired ")) + it.format(longDate) }.orEmpty()
 
     fun shortAirDate(date: LocalDate?): String = date?.format(shortDate).orEmpty()
 

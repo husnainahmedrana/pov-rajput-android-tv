@@ -23,7 +23,7 @@ internal class SubtitlePreferences(private val context: Context) {
     var font: String
         get() = preferences.getString("font", DEFAULT_FONT).orEmpty().takeIf { value -> value.isEmpty() || FONTS.any { it.id == value } } ?: DEFAULT_FONT
         set(value) { require(value.isEmpty() || FONTS.any { it.id == value }); preferences.edit().putString("font", value).apply() }
-    val fontLabel: String get() = FONTS.firstOrNull { it.id == font }?.label ?: "Device default"
+    val fontLabel: String get() = FONTS.firstOrNull { it.id == font }?.label ?: L10n.tr(R.string.t_device_default, "Device default")
     /** Text and outline colors (white on a black edge until changed); null keeps the device's caption colors. */
     var textColor: Int?
         get() = preferences.getInt("text_color", Color.WHITE).takeIf { it != DEVICE_COLOR }
@@ -35,14 +35,14 @@ internal class SubtitlePreferences(private val context: Context) {
     var edgeType: Int
         get() = preferences.getInt("edge_type", CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW).takeIf { it == -1 || it in EDGE_TYPES.map { type -> type.first } } ?: -1
         set(value) { require(value == -1 || value in EDGE_TYPES.map { it.first }); preferences.edit().putInt("edge_type", value).apply() }
-    val edgeLabel: String get() = EDGE_TYPES.firstOrNull { it.first == edgeType }?.second ?: "Device default"
+    val edgeLabel: String get() = EDGE_TYPES.firstOrNull { it.first == edgeType }?.second ?: L10n.tr(R.string.t_device_default, "Device default")
     /** Background box opacity in percent (0 = none), or -1 for the device default. The older "Transparent background" is 0. */
     var backgroundOpacity: Int
         get() = if (preferences.contains("bg_opacity")) preferences.getInt("bg_opacity", 0).takeIf { it == -1 || it in OPACITIES } ?: 0
             else if (transparentBackground) 0 else -1
         set(value) { require(value == -1 || value in OPACITIES)
             preferences.edit().putInt("bg_opacity", value).putBoolean("transparent_background", value == 0).apply() }
-    val backgroundLabel: String get() = when (backgroundOpacity) { -1 -> "Device default"; 0 -> "None"; else -> "${colorName(backgroundColor)} · $backgroundOpacity%" }
+    val backgroundLabel: String get() = when (backgroundOpacity) { -1 -> L10n.tr(R.string.t_device_default, "Device default"); 0 -> L10n.tr(R.string.t_none, "None"); else -> "${colorName(backgroundColor)} · $backgroundOpacity%" }
     var backgroundColor: Int
         get() = preferences.getInt("bg_color", Color.BLACK)
         set(value) { preferences.edit().putInt("bg_color", value).apply() }
@@ -86,7 +86,7 @@ internal class SubtitlePreferences(private val context: Context) {
     var positionPercent: Int
         get() = preferences.getInt("position_percent", DEFAULT_POSITION).takeIf { it == -1 || it in 1..30 } ?: DEFAULT_POSITION
         set(value) { require(value == -1 || value in 1..30); preferences.edit().putInt("position_percent", value).apply() }
-    val positionLabel: String get() = if (positionPercent < 0) "Default" else "$positionPercent% from bottom"
+    val positionLabel: String get() = if (positionPercent < 0) L10n.tr(R.string.t_default, "Default") else L10n.tr(R.string.t_x_from_bottom, "%1\$s%% from bottom", positionPercent)
 
     fun positionedCues(cues: List<Cue>): List<Cue> {
         val selected = positionPercent
@@ -149,7 +149,7 @@ internal class SubtitlePreferences(private val context: Context) {
         subtitles.setApplyEmbeddedStyles(false)
         subtitles.setStyle(if (transparentBackground || boldText || custom) style(base) else base)
         subtitles.setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 22f * sizePercent / 100f)
-        subtitles.setCues(listOf(Cue.Builder().setText("This is how your subtitles will look.").setLine(0.82f, Cue.LINE_TYPE_FRACTION)
+        subtitles.setCues(listOf(Cue.Builder().setText(L10n.tr(R.string.t_this_is_how_your_subtitles_will, "This is how your subtitles will look.")).setLine(0.82f, Cue.LINE_TYPE_FRACTION)
             .setLineAnchor(Cue.ANCHOR_TYPE_END).build()))
         frame.addView(subtitles, android.widget.FrameLayout.LayoutParams(-1, -1))
         return frame
@@ -175,15 +175,26 @@ internal class SubtitlePreferences(private val context: Context) {
     }
 
     companion object {
-        val LANGUAGES: List<Pair<String, String>> = listOf("" to "Automatic (device preference)", "off" to "Off") +
-            Locale.getISOLanguages().map { it to Locale.forLanguageTag(it).getDisplayLanguage(Locale.ENGLISH) }
-                .distinctBy { it.first }.sortedBy { it.second }
+        @Volatile private var languages: Pair<Locale, List<Pair<String, String>>>? = null
+        /** Every language by code, named in the app's language (rebuilt when it changes). */
+        val LANGUAGES: List<Pair<String, String>> get() {
+            val locale = Locale.getDefault()
+            languages?.takeIf { it.first == locale }?.let { return it.second }
+            val names = Locale.getISOLanguages().map { code ->
+                code to Locale.forLanguageTag(code).getDisplayLanguage(locale).replaceFirstChar { it.titlecase(locale) }
+            }.distinctBy { it.first }.sortedBy { it.second }
+            val list = listOf("" to L10n.tr(R.string.t_automatic_device_preference, "Automatic (device preference)"), "off" to L10n.tr(R.string.t_off, "Off")) + names
+            languages = locale to list
+            return list
+        }
         val COMMON_LANGUAGES = listOf("", "off", "en", "ur", "hi", "ar", "es", "fr", "de", "pt", "zh", "ja", "ko")
         val SIZES = listOf(80, 100, 130)
         const val DEFAULT_FONT = "lato"
         /** Stored for "Device default" colors; nearly invisible, so it is never a real choice. */
         private const val DEVICE_COLOR = 0x00000001
-        data class Font(val id: String, val label: String, val description: String)
+        data class Font(val id: String, val label: String, private val about: String) {
+            val description: String get() = UiText.of(about)
+        }
         /** Free fonts only: Netflix Sans and Amazon Ember are private, so look-alikes stand in. Built-in ones ship with Android. */
         val FONTS = listOf(
             Font("roboto", "Roboto", "YouTube's captions on Android"),
@@ -208,19 +219,19 @@ internal class SubtitlePreferences(private val context: Context) {
                 runCatching { Typeface.createFromAsset(context.applicationContext.assets, file) }.getOrDefault(Typeface.DEFAULT)
             } }
         }
-        val EDGE_TYPES = listOf(CaptionStyleCompat.EDGE_TYPE_NONE to "None", CaptionStyleCompat.EDGE_TYPE_OUTLINE to "Outline",
-            CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW to "Drop shadow", CaptionStyleCompat.EDGE_TYPE_RAISED to "Raised",
-            CaptionStyleCompat.EDGE_TYPE_DEPRESSED to "Depressed")
+        val EDGE_TYPES get() = listOf(CaptionStyleCompat.EDGE_TYPE_NONE to L10n.tr(R.string.t_none, "None"), CaptionStyleCompat.EDGE_TYPE_OUTLINE to L10n.tr(R.string.t_outline, "Outline"),
+            CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW to L10n.tr(R.string.t_drop_shadow, "Drop shadow"), CaptionStyleCompat.EDGE_TYPE_RAISED to L10n.tr(R.string.t_raised, "Raised"),
+            CaptionStyleCompat.EDGE_TYPE_DEPRESSED to L10n.tr(R.string.t_depressed, "Depressed"))
         val OPACITIES = listOf(0, 25, 50, 75, 100)
-        val COLORS = listOf(Color.WHITE to "White", 0xFFFFE600.toInt() to "Yellow", 0xFF00E5FF.toInt() to "Cyan", 0xFF00E676.toInt() to "Green",
-            0xFFFF80AB.toInt() to "Pink", 0xFFFFAB40.toInt() to "Orange", 0xFFCCCCCC.toInt() to "Light grey", 0xFF555555.toInt() to "Dark grey",
-            0xFF1A1A1A.toInt() to "Near black", Color.BLACK to "Black")
-        fun colorName(color: Int?) = if (color == null) "Device default" else COLORS.firstOrNull { it.first == color }?.second ?: "Custom"
-        val PRESETS = listOf("netflix" to "Netflix-style · white Inter with a drop shadow", "prime" to "Prime-style · white Arimo with a soft outline",
-            "youtube" to "YouTube-style · white Roboto on a 75% black box", "classic" to "Classic yellow · yellow Open Sans with a black outline",
-            "default" to "App default · bold white Lato, medium, black drop shadow, no box")
+        val COLORS get() = listOf(Color.WHITE to L10n.tr(R.string.t_white, "White"), 0xFFFFE600.toInt() to L10n.tr(R.string.t_yellow, "Yellow"), 0xFF00E5FF.toInt() to L10n.tr(R.string.t_cyan, "Cyan"), 0xFF00E676.toInt() to L10n.tr(R.string.t_green, "Green"),
+            0xFFFF80AB.toInt() to L10n.tr(R.string.t_pink, "Pink"), 0xFFFFAB40.toInt() to L10n.tr(R.string.t_orange, "Orange"), 0xFFCCCCCC.toInt() to L10n.tr(R.string.t_light_grey, "Light grey"), 0xFF555555.toInt() to L10n.tr(R.string.t_dark_grey, "Dark grey"),
+            0xFF1A1A1A.toInt() to L10n.tr(R.string.t_near_black, "Near black"), Color.BLACK to L10n.tr(R.string.t_black, "Black"))
+        fun colorName(color: Int?) = if (color == null) L10n.tr(R.string.t_device_default, "Device default") else COLORS.firstOrNull { it.first == color }?.second ?: L10n.tr(R.string.t_custom, "Custom")
+        val PRESETS get() = listOf("netflix" to L10n.tr(R.string.t_netflix_style_white_inter_with_a, "Netflix-style · white Inter with a drop shadow"), "prime" to L10n.tr(R.string.t_prime_style_white_arimo_with_a, "Prime-style · white Arimo with a soft outline"),
+            "youtube" to L10n.tr(R.string.t_youtube_style_white_roboto_on_a, "YouTube-style · white Roboto on a 75% black box"), "classic" to L10n.tr(R.string.t_classic_yellow_yellow_open_sans_with, "Classic yellow · yellow Open Sans with a black outline"),
+            "default" to L10n.tr(R.string.t_app_default_bold_white_lato_medium, "App default · bold white Lato, medium, black drop shadow, no box"))
         /** New installs: bold white Lato, medium, black drop shadow, no box, 3% above the bottom, English. */
         const val DEFAULT_POSITION = 3
-        val SIZE_LABELS = listOf("Small", "Medium", "Large")
+        val SIZE_LABELS get() = listOf(L10n.tr(R.string.t_small, "Small"), L10n.tr(R.string.t_medium, "Medium"), L10n.tr(R.string.t_large, "Large"))
     }
 }

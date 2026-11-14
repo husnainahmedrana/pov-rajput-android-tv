@@ -48,7 +48,7 @@ internal object StreamsPanel {
         val left = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
         left.addView(text(title, 26f, Color.WHITE, true).apply { maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END },
             LinearLayout.LayoutParams(-1, -2))
-        left.addView(text("${sources.size} ${if (sources.size == 1) "add-on" else "add-ons"} · ${entries.size} streams", 15f, 0xFFB8C0CC.toInt()),
+        left.addView(text(if (sources.size == 1) L10n.tr(R.string.t_1_add_on_x_streams, "1 add-on · %1\$s streams", entries.size) else L10n.tr(R.string.t_x_add_ons_x_streams, "%1\$s add-ons · %2\$s streams", sources.size, entries.size), 15f, 0xFFB8C0CC.toInt()),
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10); bottomMargin = dp(18) })
         val sourceList = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
         left.addView(ScrollView(context).apply { isVerticalScrollBarEnabled = false; addView(sourceList) }, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -93,7 +93,7 @@ internal object StreamsPanel {
             }
             return row
         }
-        sourceRows += sourceRow("", "All", entries.size).also { sourceList.addView(it, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(4) }) }
+        sourceRows += sourceRow("", L10n.tr(R.string.t_all, "All"), entries.size).also { sourceList.addView(it, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(4) }) }
         sources.forEach { source ->
             sourceRows += sourceRow(source, source, entries.count { source in it.sources }).also { sourceList.addView(it, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(4) }) }
         }

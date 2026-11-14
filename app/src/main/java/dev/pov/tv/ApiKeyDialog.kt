@@ -28,7 +28,7 @@ internal class ApiKeyDialog(
     fun show() {
         if (dialog != null || activity.isFinishing || activity.isDestroyed) return
         val input = TvEditText(activity).apply {
-            hint = "Paste your $service API key"
+            hint = L10n.tr(R.string.t_paste_your_x_api_key, "Paste your %1\$s API key", service)
             setSingleLine()
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             isSaveEnabled = false
@@ -45,9 +45,9 @@ internal class ApiKeyDialog(
             addView(input, LinearLayout.LayoutParams(-1, -2))
             addView(status, LinearLayout.LayoutParams(-1, -2).apply { topMargin = inset / 2 })
         }
-        val window = AlertDialog.Builder(activity).setTitle("$service API key")
+        val window = AlertDialog.Builder(activity).setTitle(L10n.tr(R.string.t_x_api_key, "%1\$s API key", service))
             .setView(ScrollView(activity).apply { addView(content) })
-            .setPositiveButton("Save", null).setNegativeButton("Cancel", null).create()
+            .setPositiveButton(L10n.tr(R.string.t_save, "Save"), null).setNegativeButton(L10n.tr(R.string.t_cancel, "Cancel"), null).create()
         dialog = window
         var busy = false
         fun cancelled() = !active.get() || activity.isFinishing || activity.isDestroyed
@@ -71,7 +71,7 @@ internal class ApiKeyDialog(
             if (busy || cancelled()) return@setOnClickListener
             val key = input.text.toString().trim()
             if (key.isBlank()) {
-                input.error = "Enter your $service API key"
+                input.error = L10n.tr(R.string.t_enter_your_x_api_key, "Enter your %1\$s API key", service)
                 input.requestFocus()
                 return@setOnClickListener
             }
@@ -79,7 +79,7 @@ internal class ApiKeyDialog(
             busy = true
             input.isEnabled = false
             positive.isEnabled = false
-            status.text = "Checking your $service account…"
+            status.text = L10n.tr(R.string.t_checking_your_x_account, "Checking your %1\$s account…", service)
             status.visibility = View.VISIBLE
             try {
                 executor.execute {

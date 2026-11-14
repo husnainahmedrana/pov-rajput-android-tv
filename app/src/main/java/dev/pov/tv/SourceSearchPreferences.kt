@@ -15,13 +15,13 @@ internal class SourceSearchPreferences(context: Context) {
     var timeLimitSeconds: Int
         get() = prefs.getInt("time_limit", 8).takeIf { it in TIME_LIMIT_RANGE } ?: 8
         set(value) { require(value in TIME_LIMIT_RANGE); prefs.edit().putInt("time_limit", value).apply() }
-    val timeLimitLabel: String get() = if (timeLimitSeconds == 0) "No limit" else "$timeLimitSeconds seconds"
+    val timeLimitLabel: String get() = if (timeLimitSeconds == 0) L10n.tr(R.string.t_no_limit_2, "No limit") else L10n.tr(R.string.t_x_seconds, "%1\$s seconds", timeLimitSeconds)
 
     /** Stop waiting once this many good links (play at once, fit this device) are in (0 = off). */
     var stopAfter: Int
         get() = prefs.getInt("stop_after", 0).takeIf { it in STOP_AFTER_RANGE } ?: 0
         set(value) { require(value in STOP_AFTER_RANGE); prefs.edit().putInt("stop_after", value).apply() }
-    val stopAfterLabel: String get() = if (stopAfter == 0) "Off" else "After $stopAfter good ${if (stopAfter == 1) "link" else "links"}"
+    val stopAfterLabel: String get() = if (stopAfter == 0) L10n.tr(R.string.t_off, "Off") else if (stopAfter == 1) L10n.tr(R.string.t_after_1_good_link, "After 1 good link") else L10n.tr(R.string.t_after_x_good_links, "After %1\$s good links", stopAfter)
 
     /**
      * Search goal: [UNTIL_TIME] (only the time limit ends it), [UNTIL_LINKS] (once [goodLinksNeeded] good links are in),
@@ -35,10 +35,10 @@ internal class SourceSearchPreferences(context: Context) {
         get() = prefs.getInt("good_links_needed", stopAfter.takeIf { it > 0 } ?: 10).coerceIn(GOOD_LINKS_RANGE)
         set(value) { prefs.edit().putInt("good_links_needed", value.coerceIn(GOOD_LINKS_RANGE)).apply() }
     fun untilLabel(mode: String, perQuality: Int): String = when (mode) {
-        UNTIL_LINKS -> "$goodLinksNeeded good links"
-        UNTIL_BEST -> if (perQuality > 0) "Best per quality full" else "Best per quality full (set it first)"
-        UNTIL_EITHER -> "$goodLinksNeeded good links or best full"
-        else -> "Time limit ends"
+        UNTIL_LINKS -> L10n.tr(R.string.t_x_good_links, "%1\$s good links", goodLinksNeeded)
+        UNTIL_BEST -> if (perQuality > 0) L10n.tr(R.string.t_best_per_quality_full, "Best per quality full") else L10n.tr(R.string.t_best_per_quality_full_set_it, "Best per quality full (set it first)")
+        UNTIL_EITHER -> L10n.tr(R.string.t_x_good_links_or_best_full, "%1\$s good links or best full", goodLinksNeeded)
+        else -> L10n.tr(R.string.t_time_limit_ends, "Time limit ends")
     }
 
     /**
@@ -50,7 +50,7 @@ internal class SourceSearchPreferences(context: Context) {
     var waitSeconds: Int
         get() = prefs.getInt("autoplay_wait", 5).takeIf { it in WAIT_RANGE } ?: 5
         set(value) { require(value in WAIT_RANGE); prefs.edit().putInt("autoplay_wait", value).apply() }
-    fun modeLabel(mode: String) = when (mode) { FIRST -> "First good link"; WAIT -> "Best after $waitSeconds s"; END -> "Best when search ends"; else -> "Off" }
+    fun modeLabel(mode: String) = when (mode) { FIRST -> L10n.tr(R.string.t_first_good_link, "First good link"); WAIT -> L10n.tr(R.string.t_best_after_x_s, "Best after %1\$s s", waitSeconds); END -> L10n.tr(R.string.t_best_when_search_ends, "Best when search ends"); else -> L10n.tr(R.string.t_off, "Off") }
 
     /** An add-on's own time limit in seconds, replacing the max search time for it; 0 = follow the max search time. */
     fun ownLimit(providerId: String): Int = prefs.getInt("limit.$providerId", 0).coerceIn(OWN_LIMIT_RANGE)
@@ -69,8 +69,8 @@ internal class SourceSearchPreferences(context: Context) {
     /** "avg 3.2 s", "avg 7.4 s · late 2×", or "" before its first search. */
     fun speedLabel(providerId: String): String {
         val avg = speed.getLong("$providerId.avg", -1); val late = speed.getInt("$providerId.late", 0)
-        return listOfNotNull(avg.takeIf { it >= 0 }?.let { String.format(Locale.US, "avg %.1f s", it / 1000.0) },
-            "late ${late}× in a row".takeIf { late > 0 }).joinToString(" · ")
+        return listOfNotNull(avg.takeIf { it >= 0 }?.let { String.format(Locale.US, L10n.tr(R.string.t_avg_1f_s, "avg %.1f s"), it / 1000.0) },
+            L10n.tr(R.string.t_late_x_in_a_row, "late %1\$s× in a row", late).takeIf { late > 0 }).joinToString(" · ")
     }
 
     companion object {

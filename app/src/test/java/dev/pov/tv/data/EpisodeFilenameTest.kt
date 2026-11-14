@@ -29,6 +29,25 @@ class EpisodeFilenameTest {
         assertEquals(2L, EpisodeFilename.select(files, "Example.Show.S01E02.1080p.mkv", episode).id)
     }
 
+    @Test fun filmsOfferedForAnEpisodeAreSpotted() {
+        fun movie(name: String) = EpisodeFilename.namesAMovie(name)
+        // The report: a 2026 film named "Dark" listed first for Dark S1 E2 (Telugu first).
+        assertTrue(movie("www.5MovieRulz.company - Dark (2026) 1080p HQ HDRip - x264 - [Telugu + Hindi] - (DD+5.1 - 640Kbps & AAC 2.0) - 3GB - ESub.mkv"))
+        assertTrue(movie("Dark.2026.1080p.WEB-DL.x264.mkv"))
+        // Real episode links from the same list stay.
+        assertFalse(movie("Dark.2017.S01E02.MULTi.2160p.NF.WEB-DL.SDR.DDP5.1.H.265-HONE.mkv"))
+        assertFalse(movie("Dark (2017) S01E02 Lies (1080p NF WEB-DL H264 SDR DDP 5.1 DUAL-DarQ).mkv"))
+        assertFalse(movie("Dark S01E02 Lies 1080p NF WEB-DL DUAL DDP5 1 Atmos H 264-Kitsune.mkv"))
+        // Packs, other numbering, dated episodes and names without a year stay.
+        assertFalse(movie("Dark.2017.S01.COMPLETE.1080p.NF.WEB-DL.mkv"))
+        assertFalse(movie("Dark Season 1 (2017) 1080p"))
+        assertFalse(movie("Dark 2017 1x02 1080p"))
+        assertFalse(movie("[SubsPlease] Frieren - 02 (1080p) 2023.mkv"))
+        assertFalse(movie("The.Daily.Show.2026.11.14.1080p.WEB.h264.mkv"))
+        assertFalse(movie("Dark Staffel 1 Folge 2 2017 German"))
+        assertFalse(movie("Dark Lies 1080p WEB-DL"))
+    }
+
     @Test fun otherShowsMatchedLooselyOnAShortTitleAreSpotted() {
         fun other(name: String, show: String = "Dark") = EpisodeFilename.namesAnotherShow(name, show)
         // Real links for "Dark" (the screenshot from Torrentio).

@@ -1,5 +1,8 @@
 package dev.pov.tv.usenet
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import java.io.IOException
 import java.security.MessageDigest
 import javax.crypto.Cipher
@@ -16,7 +19,7 @@ internal object SevenZipAes {
     /** Decrypted at a time and kept for the reads that follow (a multiple of 16, AES's block size). */
     private const val WINDOW = 256 * 1024
     private fun field(owner: Any, name: String): Any = owner.javaClass.getDeclaredField(name).let {
-        it.isAccessible = true; it.get(owner) ?: throw ReflectiveOperationException("Missing archive field")
+        it.isAccessible = true; it.get(owner) ?: throw ReflectiveOperationException(L10n.tr(R.string.t_missing_archive_field, "Missing archive field"))
     }
     private data class Layout(val start: Long, val packed: Long, val skip: Long, val properties: ByteArray)
     private fun layout(reader: SevenZFile, entry: SevenZArchiveEntry): Layout? {
@@ -59,20 +62,20 @@ internal object SevenZipAes {
 
     fun open(source: ByteSource, reader: SevenZFile, entry: SevenZArchiveEntry, password: String?): ByteSource? {
         val layout = layout(reader, entry) ?: return null
-        if (password == null) throw IOException("This 7z release needs a password, but its NZB did not provide one.")
+        if (password == null) throw IOException(L10n.tr(R.string.t_this_7z_release_needs_a_password, "This 7z release needs a password, but its NZB did not provide one."))
         if (layout.start < 0 || layout.packed < 0 || layout.packed % 16 != 0L ||
             layout.start > source.size || layout.packed > source.size - layout.start ||
             layout.skip < 0 || entry.size > layout.packed - layout.skip)
-            throw IOException("Invalid encrypted 7z range.")
+            throw IOException(L10n.tr(R.string.t_invalid_encrypted_7z_range, "Invalid encrypted 7z range."))
         val props = layout.properties
-        if (props.size < 2) throw IOException("Invalid 7z encryption properties.")
+        if (props.size < 2) throw IOException(L10n.tr(R.string.t_invalid_7z_encryption_properties, "Invalid 7z encryption properties."))
         val flags = props[0].toInt() and 255
         val sizes = props[1].toInt() and 255
         val power = flags and 63
         val saltSize = ((flags shr 7) and 1) + (sizes shr 4)
         val ivSize = ((flags shr 6) and 1) + (sizes and 15)
-        if (2 + saltSize + ivSize > props.size) throw IOException("Invalid 7z salt or IV.")
-        if (power != 63 && power > 20) throw IOException("This 7z password requires too much processing for TV playback.")
+        if (2 + saltSize + ivSize > props.size) throw IOException(L10n.tr(R.string.t_invalid_7z_salt_or_iv, "Invalid 7z salt or IV."))
+        if (power != 63 && power > 20) throw IOException(L10n.tr(R.string.t_this_7z_password_requires_too_much, "This 7z password requires too much processing for TV playback."))
         val salt = props.copyOfRange(2, 2 + saltSize)
         val iv = ByteArray(16)
         props.copyInto(iv, 0, 2 + saltSize, 2 + saltSize + ivSize)
@@ -116,7 +119,7 @@ internal object SevenZipAes {
                 var done = 0
                 while (done < out.size) {
                     val got = source.read(position + done, out, done, out.size - done)
-                    if (got <= 0) throw IOException("The encrypted 7z video ended early.")
+                    if (got <= 0) throw IOException(L10n.tr(R.string.t_the_encrypted_7z_video_ended_early, "The encrypted 7z video ended early."))
                     done += got
                 }
             }
@@ -129,7 +132,7 @@ internal object SevenZipAes {
             private var window = ByteArray(0)
             private var windowLength = 0
             @Synchronized override fun read(position: Long, target: ByteArray, offset: Int, length: Int): Int {
-                if (closed) throw IOException("The 7z stream is closed.")
+                if (closed) throw IOException(L10n.tr(R.string.t_the_7z_stream_is_closed, "The 7z stream is closed."))
                 require(position >= 0 && offset >= 0 && length >= 0 && offset <= target.size - length)
                 if (length == 0) return 0
                 if (position >= size) return -1
@@ -145,7 +148,7 @@ internal object SevenZipAes {
                 // entry, weren't fetched ahead, and would make the end-of-file reads wait on downloads they don't need.
                 val videoEnd = (layout.skip + entry.size + 15) / 16 * 16
                 val length = minOf(WINDOW.toLong(), layout.packed - block, videoEnd - block).toInt()
-                if (length <= 0 || length % 16 != 0) throw IOException("Invalid encrypted 7z range.")
+                if (length <= 0 || length % 16 != 0) throw IOException(L10n.tr(R.string.t_invalid_encrypted_7z_range, "Invalid encrypted 7z range."))
                 val localIv = if (block == 0L) iv else ByteArray(16).also { exact(layout.start + block - 16, it) }
                 val encrypted = ByteArray(length)
                 exact(layout.start + block, encrypted)

@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import okhttp3.Credentials
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -22,17 +25,17 @@ internal class AltMountLibrary(private val propfind: (String, String, String) ->
     fun verify(origin: String, user: String, password: String) {
         val (code, _) = propfind("$origin$ROOT", Credentials.basic(user, password, Charsets.UTF_8), "0")
         when {
-            code == 401 || code == 403 -> throw ApiException(code, "AltMount did not accept that WebDAV username and password.")
-            code == 404 -> throw ApiException(code, "AltMount's WebDAV isn't at ${origin.removePrefix("https://")}$ROOT.")
-            code !in 200..299 -> throw ApiException(code, "AltMount's WebDAV answered with error $code.")
+            code == 401 || code == 403 -> throw ApiException(code, L10n.tr(R.string.t_altmount_did_not_accept_that_webdav, "AltMount did not accept that WebDAV username and password."))
+            code == 404 -> throw ApiException(code, L10n.tr(R.string.t_altmount_s_webdav_isn_t_at, "AltMount's WebDAV isn't at %1\$s%2\$s.", origin.removePrefix("https://"), ROOT))
+            code !in 200..299 -> throw ApiException(code, L10n.tr(R.string.t_altmount_s_webdav_answered_with_error, "AltMount's WebDAV answered with error %1\$s.", code))
         }
     }
 
     /** Every video file in the library, newest first. Its temporary folder is left out. */
     fun files(origin: String, user: String, password: String): List<File> {
         val (code, body) = propfind("$origin$ROOT", Credentials.basic(user, password, Charsets.UTF_8), "infinity")
-        if (code == 401 || code == 403) throw ApiException(code, "AltMount no longer accepts the saved WebDAV login.")
-        if (code !in 200..299) throw ApiException(code, "AltMount's WebDAV answered with error $code.")
+        if (code == 401 || code == 403) throw ApiException(code, L10n.tr(R.string.t_altmount_no_longer_accepts_the_saved_2, "AltMount no longer accepts the saved WebDAV login."))
+        if (code !in 200..299) throw ApiException(code, L10n.tr(R.string.t_altmount_s_webdav_answered_with_error, "AltMount's WebDAV answered with error %1\$s.", code))
         return parse(body)
     }
 

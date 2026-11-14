@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import android.content.Context
 import dev.pov.tv.BuildConfig
 import org.json.JSONObject
@@ -88,7 +91,7 @@ class CloudAccount(private val context: Context, private val store: Store) {
         val login = BackupCrypto.login(normal, password)
         val result = post("/v1/login", JSONObject().put("email", normal).put("auth", login.auth))
         val dataKey = try { BackupCrypto.open(login.passwordKey, result.getString("wrapped_pw"), BackupCrypto.DK_PASSWORD) }
-            catch (_: Exception) { throw IllegalStateException("Your backup could not be unlocked with this password.") }
+            catch (_: Exception) { throw IllegalStateException(L10n.tr(R.string.t_your_backup_could_not_be_unlocked, "Your backup could not be unlocked with this password.")) }
         val settingsKey = BackupCrypto.decode(result.getString("settings_key"))
         val restored = Restored(openLayer(settingsKey, result.optString("settings"), BackupCrypto.SETTINGS),
             openLayer(dataKey, result.optString("secrets"), BackupCrypto.SECRETS))
@@ -109,7 +112,7 @@ class CloudAccount(private val context: Context, private val store: Store) {
 
     /** Uploads this device's setup when it changed since the last backup (or always, with [force]). */
     fun backup(force: Boolean = false): Boolean {
-        check(signedIn) { "Sign in to your ${dev.pov.tv.BuildConfig.APP_SHORT} account first." }
+        check(signedIn) { L10n.tr(R.string.t_sign_in_to_your_x_account, "Sign in to your %1\$s account first.", dev.pov.tv.BuildConfig.APP_SHORT) }
         val layers = collect()
         val fingerprint = layers.fingerprint()
         if (!force && fingerprint == store.get(LAST_HASH)) return false
@@ -120,7 +123,7 @@ class CloudAccount(private val context: Context, private val store: Store) {
                 .put("secrets", sealLayer(dataKey, layers.secrets, BackupCrypto.SECRETS)))
         } catch (error: ApiException) {
             // The password was changed or reset on another device: this one has to sign in again.
-            if (error.code == 401) { forget(); throw ApiException(401, "Your ${dev.pov.tv.BuildConfig.APP_SHORT} account password was changed. Sign in again to keep backing up.") }
+            if (error.code == 401) { forget(); throw ApiException(401, L10n.tr(R.string.t_your_x_account_password_was_changed, "Your %1\$s account password was changed. Sign in again to keep backing up.", dev.pov.tv.BuildConfig.APP_SHORT)) }
             throw error
         }
         backedUp(fingerprint, result.optLong("updated"))
@@ -131,7 +134,7 @@ class CloudAccount(private val context: Context, private val store: Store) {
 
     fun changePassword(current: String, next: String) {
         val old = BackupCrypto.login(email, current)
-        if (old.auth != store.get(AUTH)) throw IllegalArgumentException("Your current password is not right.")
+        if (old.auth != store.get(AUTH)) throw IllegalArgumentException(L10n.tr(R.string.t_your_current_password_is_not_right, "Your current password is not right."))
         val fresh = BackupCrypto.login(email, next)
         val dataKey = BackupCrypto.decode(store.get(DATA_KEY))
         post("/v1/password", JSONObject().put("email", email).put("auth", old.auth).put("new_auth", fresh.auth)
@@ -155,7 +158,7 @@ class CloudAccount(private val context: Context, private val store: Store) {
     fun finishReset(session: ResetSession, password: String, recoveryKey: String?): ResetResult {
         val oldDataKey = recoveryKey?.takeIf { it.isNotBlank() }?.let {
             try { BackupCrypto.open(BackupCrypto.recoveryKeyBytes(it), session.wrappedRecovery, BackupCrypto.DK_RECOVERY) }
-            catch (_: Exception) { throw IllegalArgumentException("That recovery key is not right. Check it, or leave it empty.") }
+            catch (_: Exception) { throw IllegalArgumentException(L10n.tr(R.string.t_that_recovery_key_is_not_right, "That recovery key is not right. Check it, or leave it empty.")) }
         }
         val dataKey = oldDataKey ?: BackupCrypto.newKey()
         val newRecovery = if (oldDataKey == null) BackupCrypto.newRecoveryKey() else null
@@ -219,7 +222,7 @@ class CloudAccount(private val context: Context, private val store: Store) {
                     javax.crypto.spec.GCMParameterSpec(128, BackupCrypto.decode(parts[1])))
                 cipher.updateAAD(id.toByteArray(Charsets.UTF_8))
                 cipher.doFinal(BackupCrypto.decode(parts[2]))
-            } catch (_: Exception) { throw IllegalStateException("The phone sent something unreadable. Try again.") }
+            } catch (_: Exception) { throw IllegalStateException(L10n.tr(R.string.t_the_phone_sent_something_unreadable_try, "The phone sent something unreadable. Try again.")) }
             return JSONObject(String(plain, Charsets.UTF_8))
         }
 
@@ -246,7 +249,7 @@ class CloudAccount(private val context: Context, private val store: Store) {
 
     private fun openLayer(key: ByteArray, sealed: String, label: String): JSONObject? {
         if (sealed.isBlank()) return null
-        val bytes = try { BackupCrypto.open(key, sealed, label) } catch (_: Exception) { throw IllegalStateException("Your backup could not be opened.") }
+        val bytes = try { BackupCrypto.open(key, sealed, label) } catch (_: Exception) { throw IllegalStateException(L10n.tr(R.string.t_your_backup_could_not_be_opened, "Your backup could not be opened.")) }
         return JSONObject(String(inflate(bytes), Charsets.UTF_8))
     }
 
@@ -265,12 +268,12 @@ class CloudAccount(private val context: Context, private val store: Store) {
 
     private fun request(method: String, path: String, body: JSONObject?): JSONObject {
         val target = URL(server + path)
-        if (target.protocol != "https") throw ApiException(0, "The backup server must use HTTPS.")
+        if (target.protocol != "https") throw ApiException(0, L10n.tr(R.string.t_the_backup_server_must_use_https, "The backup server must use HTTPS."))
         val connection = target.openConnection() as HttpURLConnection
         try {
             connection.requestMethod = method; connection.connectTimeout = 15_000; connection.readTimeout = 25_000
             connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("User-Agent", "POV-Rajput/${BuildConfig.VERSION_NAME}")
+            connection.setRequestProperty("User-Agent", "${BuildConfig.APP_NAME}/${BuildConfig.VERSION_NAME}")
             if (body != null) {
                 connection.doOutput = true
                 connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
@@ -279,10 +282,10 @@ class CloudAccount(private val context: Context, private val store: Store) {
             val code = connection.responseCode
             val text = (if (code in 200..299) connection.inputStream else connection.errorStream)?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
             val json = try { if (text.isBlank()) JSONObject() else JSONObject(text) } catch (_: Exception) { JSONObject() }
-            if (code !in 200..299) throw ApiException(code, json.optString("error").ifBlank { "The backup server could not be reached (HTTP $code)." })
+            if (code !in 200..299) throw ApiException(code, json.optString("error").ifBlank { L10n.tr(R.string.t_the_backup_server_could_not_be, "The backup server could not be reached (HTTP %1\$s).", code) })
             return json
         } catch (error: ApiException) { throw error }
-        catch (error: java.io.IOException) { throw ApiException(0, "The backup server could not be reached. Check your connection and try again.") }
+        catch (error: java.io.IOException) { throw ApiException(0, L10n.tr(R.string.t_the_backup_server_could_not_be_2, "The backup server could not be reached. Check your connection and try again.")) }
         finally { connection.disconnect() }
     }
 

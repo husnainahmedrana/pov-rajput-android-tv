@@ -94,14 +94,14 @@ internal object UsenetPlayback {
         if (!UsenetLinks.isNzb(address)) return EasynewsNntp.session(address, store, cache, notify)
         val key = sha1(address)
         // Tried before this session: say why again, every time.
-        UsenetSessions.reason(key)?.let { why -> val reason = why.ifBlank { "This Usenet link couldn't be streamed." }; notify(reason); throw IOException(reason) }
+        UsenetSessions.reason(key)?.let { why -> val reason = why.ifBlank { L10n.tr(R.string.t_this_usenet_link_couldn_t_be, "This Usenet link couldn't be streamed.") }; notify(reason); throw IOException(reason) }
         val made = try {
             UsenetSessions.get(key) {
                 val providers = NewsProviders(store).active()
-                if (providers.isEmpty()) throw IOException("Add a news provider in Settings → Sources → Usenet to play Usenet links.")
+                if (providers.isEmpty()) throw IOException(L10n.tr(R.string.t_add_a_news_provider_in_settings, "Add a news provider in Settings → Sources → Usenet to play Usenet links."))
                 val text = nzbText(address, key, store, cache)
                 val nzb = Nzb.parse(text)
-                if (nzb.files.isEmpty()) throw IOException("The indexer sent an empty article list for this link.")
+                if (nzb.files.isEmpty()) throw IOException(L10n.tr(R.string.t_the_indexer_sent_an_empty_article, "The indexer sent an empty article list for this link."))
                 val healthKey = sha1(key + store.get(NewsProviders.KEY))
                 // The availability check runs beside the opening (each takes a few round trips; one after the other
                 // doubled the wait before the first picture). Its answer is waited for before playback starts.
@@ -137,7 +137,7 @@ internal object UsenetPlayback {
             notify(reason)
             throw IOException(reason, error)
         }
-        return made ?: throw IOException("This Usenet link couldn't be streamed.")
+        return made ?: throw IOException(L10n.tr(R.string.t_this_usenet_link_couldn_t_be, "This Usenet link couldn't be streamed."))
     }
 
     /**
@@ -158,7 +158,7 @@ internal object UsenetPlayback {
             { ids: List<String> -> Nntp.missing(NntpServer(provider.host, provider.port, provider.tls, provider.user, provider.password), ids) }
         })
         UsenetLog.i("health: ${result.missing.size} missing, ${result.unknown.size} unknown of ${sample.size} checked")
-        if (result.missing.isNotEmpty()) throw IOException("Your news providers are missing parts of this release (${result.missing.size} of ${sample.size} checked). Choose another link.")
+        if (result.missing.isNotEmpty()) throw IOException(L10n.tr(R.string.t_your_news_providers_are_missing_parts, "Your news providers are missing parts of this release (%1\$s of %2\$s checked). Choose another link.", result.missing.size, sample.size))
         // Unknown checks are inconclusive: actual BODY reads still enforce availability and checksums.
         return result.unknown.isEmpty()
     }
@@ -176,10 +176,15 @@ internal object UsenetPlayback {
                 return saved
             } catch (_: Exception) { file.delete() }
         }
+        val indexers = dev.pov.tv.data.NewznabIndexers(store)
+        val indexer = indexers.forLink(UsenetLinks.nzbAddress(address))
+        if (indexer != null && indexers.grabsExhausted(indexer)) throw IOException(
+            L10n.tr(R.string.t_x_used_today_s_grabs, "%1\$s has used today's grabs. Pick a link from another indexer.", indexer.name))
         val text = Newznab.fetch(UsenetLinks.nzbAddress(address), UsenetHeaders.grab({ store.get(it) }), 24 * 1024 * 1024)
         if ("<segment" !in text) throw IOException(
-            if ("<error" in text.take(600)) "The indexer refused this download. Its daily grab limit may be used up."
-            else "The indexer didn't send an article list for this link.")
+            if ("<error" in text.take(600)) L10n.tr(R.string.t_the_indexer_refused_this_download, "The indexer refused this download. Its daily grab limit may be used up.")
+            else L10n.tr(R.string.t_the_indexer_didn_t_send_an_article_list, "The indexer didn't send an article list for this link."))
+        if (indexer != null) indexers.noteGrab(indexer.id)
         if (file != null) try {
             java.util.zip.GZIPOutputStream(file.outputStream()).use { it.write(text.toByteArray(Charsets.UTF_8)) }
             file.parentFile?.listFiles()?.sortedByDescending { it.lastModified() }?.drop(KEEP_FILES)?.forEach { it.delete() }

@@ -76,11 +76,11 @@ internal class EasynewsHttpDataSource(
 
     override fun open(dataSpec: DataSpec): Long {
         transferInitializing(dataSpec)
-        if (dataSpec.httpMethod != DataSpec.HTTP_METHOD_GET) throw IOException("Only video GET requests are supported.")
+        if (dataSpec.httpMethod != DataSpec.HTTP_METHOD_GET) throw IOException(L10n.tr(R.string.t_only_video_get_requests_are_supported, "Only video GET requests are supported."))
         var next = dataSpec.uri.toString()
         try {
             for (redirect in 0..5) {
-                if (!Easynews.isHost(next)) throw IOException("Easynews redirected outside its own service.")
+                if (!Easynews.isHost(next)) throw IOException(L10n.tr(R.string.t_easynews_redirected_outside_its_own_service, "Easynews redirected outside its own service."))
                 val current = connect(URI(next))
                 connection = current
                 current.instanceFollowRedirects = false
@@ -96,10 +96,10 @@ internal class EasynewsHttpDataSource(
                 }
                 val code = current.responseCode
                 if (code in listOf(301, 302, 303, 307, 308)) {
-                    val location = current.getHeaderField("Location") ?: throw IOException("Easynews sent an invalid redirect.")
+                    val location = current.getHeaderField("Location") ?: throw IOException(L10n.tr(R.string.t_easynews_sent_an_invalid_redirect, "Easynews sent an invalid redirect."))
                     next = URI(next).resolve(location).toString()
                     current.disconnect(); connection = null
-                    if (redirect == 5) throw IOException("Easynews sent too many redirects.")
+                    if (redirect == 5) throw IOException(L10n.tr(R.string.t_easynews_sent_too_many_redirects, "Easynews sent too many redirects."))
                     continue
                 }
                 if (code !in 200..299) throw IOException(if (code == 401 || code == 403)
@@ -109,7 +109,7 @@ internal class EasynewsHttpDataSource(
                 val skip = if (code == 200) dataSpec.position else 0L
                 if (code == 206 && dataSpec.position > 0) {
                     val rangeStart = current.getHeaderField("Content-Range")?.substringAfter("bytes ")?.substringBefore('-')?.toLongOrNull()
-                    if (rangeStart != dataSpec.position) throw IOException("Easynews returned an unexpected byte range.")
+                    if (rangeStart != dataSpec.position) throw IOException(L10n.tr(R.string.t_easynews_returned_an_unexpected_byte_range, "Easynews returned an unexpected byte range."))
                 }
                 remaining = if (dataSpec.length != C.LENGTH_UNSET.toLong()) dataSpec.length
                     else current.getHeaderFieldLong("Content-Length", -1).let { if (it >= 0) (it - skip).coerceAtLeast(0) else C.LENGTH_UNSET.toLong() }
@@ -119,14 +119,14 @@ internal class EasynewsHttpDataSource(
                 val scratch = ByteArray(8192)
                 while (toSkip > 0) {
                     val read = input.read(scratch, 0, toSkip.coerceAtMost(scratch.size.toLong()).toInt())
-                    if (read < 0) throw IOException("Easynews didn't provide the requested video position.")
+                    if (read < 0) throw IOException(L10n.tr(R.string.t_easynews_didn_t_provide_the_requested, "Easynews didn't provide the requested video position."))
                     toSkip -= read; bytesTransferred(read)
                 }
                 return remaining
             }
-            throw IOException("Easynews couldn't open this video.")
+            throw IOException(L10n.tr(R.string.t_easynews_couldn_t_open_this_video, "Easynews couldn't open this video."))
         } catch (failure: IOException) { close(); throw failure }
-        catch (_: RuntimeException) { close(); throw IOException("The Easynews connection couldn't be opened.") }
+        catch (_: RuntimeException) { close(); throw IOException(L10n.tr(R.string.t_the_easynews_connection_couldn_t_be, "The Easynews connection couldn't be opened.")) }
     }
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {

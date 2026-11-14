@@ -170,6 +170,12 @@ class MainActivity : Activity() {
     private val rotationHandler = Handler(Looper.getMainLooper())
     private var heroRotation: Runnable? = null
 
+    // The app's own language (Settings → Language); "Device language" leaves the context as it is.
+    override fun attachBaseContext(newBase: android.content.Context) {
+        L10n.attach(AppLanguage.wrap(newBase.applicationContext ?: newBase))
+        super.attachBaseContext(AppLanguage.wrap(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         DeviceLayout.fit(resources)
         super.onCreate(savedInstanceState)
@@ -260,7 +266,7 @@ class MainActivity : Activity() {
         PlayerShowInfo.pickedEpisode?.let { picked ->
             PlayerShowInfo.pickedEpisode = null
             if (::shellRoot.isInitialized) {
-                toast("Playing S${picked.season} E${picked.episode}")
+                toast(getString(R.string.t_playing_s_x_e_x, picked.season, picked.episode))
                 navigate { showSources(picked, autoplayNext = true) }
             }
         }
@@ -282,8 +288,8 @@ class MainActivity : Activity() {
             val next = details.episodes.filter { it.season > 0 && (it.released.isBlank() || it.released.take(10) <= today) }
                 .sortedWith(compareBy({ it.season }, { it.episode }))
                 .firstOrNull { it.season > finished.season || (it.season == finished.season && it.episode > finished.episode) }
-            if (next == null) { toast("That was the latest episode available."); return@load }
-            toast("Playing S${next.season} E${next.episode}${if (next.title.isNotBlank()) " · ${next.title}" else ""}")
+            if (next == null) { toast(getString(R.string.t_that_was_the_latest_episode_available)); return@load }
+            toast(getString(R.string.t_playing_s_x_e_x_x, next.season, next.episode, if (next.title.isNotBlank()) " · ${next.title}" else ""))
             navigate { showSources(finished.copy(season = next.season, episode = next.episode), autoplayNext = true) }
         }
     }
@@ -335,9 +341,9 @@ class MainActivity : Activity() {
                 wantsContentFocus = true; focusAfterRender(generation)
             } else current()
             refreshNavigation()
-        } else AlertDialog.Builder(this).setTitle("Leave ${BuildConfig.APP_SHORT}?")
-            .setPositiveButton(if (InAppPlaybackSession.hasActive()) "Stop and leave" else "Leave") { _, _ -> InAppPlaybackSession.stop(); finish() }
-            .setNegativeButton("Stay", null).show()
+        } else AlertDialog.Builder(this).setTitle(getString(R.string.t_leave_x, BuildConfig.APP_SHORT))
+            .setPositiveButton(if (InAppPlaybackSession.hasActive()) getString(R.string.t_stop_and_leave) else getString(R.string.t_leave)) { _, _ -> InAppPlaybackSession.stop(); finish() }
+            .setNegativeButton(getString(R.string.t_stay), null).show()
     }
     private var splash: View? = null
     private var splashShownAt = 0L
@@ -436,7 +442,7 @@ class MainActivity : Activity() {
     }
     override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
         // A tap during the auto-play countdown stops it (the tapped link, if any, still opens).
-        if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN && autoplayCountdown != null && cancelAutoplayCountdown()) toast("Auto-play stopped · choose a link")
+        if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN && autoplayCountdown != null && cancelAutoplayCountdown()) toast(getString(R.string.t_auto_play_stopped_choose_a_link))
         return super.dispatchTouchEvent(event)
     }
 
@@ -445,7 +451,7 @@ class MainActivity : Activity() {
         if (swallowBackUp && back && event.action == KeyEvent.ACTION_UP) { swallowBackUp = false; return true }
         // Any key during the auto-play countdown stops it; Back stops it without leaving the link list.
         if (event.action == KeyEvent.ACTION_DOWN && autoplayCountdown != null && cancelAutoplayCountdown()) {
-            toast("Auto-play stopped · choose a link")
+            toast(getString(R.string.t_auto_play_stopped_choose_a_link))
             if (back) { swallowBackUp = true; return true }
         }
         if (back && event.action == KeyEvent.ACTION_DOWN && clearSourceFilter?.invoke() == true) { swallowBackUp = true; return true }
@@ -542,12 +548,12 @@ class MainActivity : Activity() {
     /** On TV, Now playing heads the menu so the video is one press away; the phone's tab bar keeps it last. */
     private fun destinations(): List<Destination> {
         val pages = listOf(
-            Destination("home", "Home") { home() }, Destination("movie", "Movies") { catalogPage("movie") },
-            Destination("series", "Shows") { catalogPage("series") }, Destination("anime", "Anime") { animePage() },
-            Destination("library", "Library") { selectedCloud() }, Destination("search", "Search") { search() },
-            Destination("wetrakr", wetrakr.name) { weTrakrPage() }, Destination("settings", "Settings") { settings() })
+            Destination("home", getString(R.string.t_home)) { home() }, Destination("movie", getString(R.string.t_movies)) { catalogPage("movie") },
+            Destination("series", getString(R.string.t_shows)) { catalogPage("series") }, Destination("anime", getString(R.string.t_anime)) { animePage() },
+            Destination("library", getString(R.string.t_library)) { selectedCloud() }, Destination("search", getString(R.string.t_search)) { search() },
+            Destination("wetrakr", wetrakr.name) { weTrakrPage() }, Destination("settings", getString(R.string.t_settings)) { settings() })
         if (publicPreview || !InAppPlaybackSession.hasActive()) return pages
-        val playing = Destination("nowplaying", "Now playing") { returnToVideo() }
+        val playing = Destination("nowplaying", getString(R.string.t_now_playing)) { returnToVideo() }
         return if (DeviceLayout.tv) listOf(playing) + pages else pages + playing
     }
 
@@ -671,7 +677,7 @@ class MainActivity : Activity() {
             if (!top && line.childCount > 0) line.removeViewAt(0)
             line.addView(ImageView(this).apply {
                 setImageResource(R.drawable.wetrakr_logo)
-                scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = "WeTrakr"
+                scaleType = ImageView.ScaleType.FIT_CENTER; contentDescription = getString(R.string.t_wetrakr)
             }, LinearLayout.LayoutParams(if (top) dp(85) else -1, dp(26)))
         } else line.addView(label, LinearLayout.LayoutParams(-2, -2))
         frame.addView(line, FrameLayout.LayoutParams(-1, -1))
@@ -718,7 +724,7 @@ class MainActivity : Activity() {
         }
         val icon = NavigationIconView(this, target.key, muted)
         cell.addView(icon, margin(21, 21))
-        val label = text(if (target.key == "nowplaying") "Playing" else target.label, 9, muted).apply { maxLines = 1; gravity = Gravity.CENTER }
+        val label = text(if (target.key == "nowplaying") getString(R.string.t_playing) else target.label, 9, muted).apply { maxLines = 1; gravity = Gravity.CENTER }
         cell.addView(label, margin(-2, -2, top = 3))
         fun paint() {
             val color = if (destination == target.key) ink else muted
@@ -842,20 +848,20 @@ class MainActivity : Activity() {
             (movies.firstOrNull() ?: shelves.firstOrNull { it.items.isNotEmpty() }?.items?.firstOrNull())?.let { if (flix) streamingHero(it, true, rotation, compact) else hero(it) }
             if (remoteHome) homeContinueWatching(id) else if (recent.isNotEmpty()) resumeRow(recent)
             if (flix && !compact) {
-                rankedRow("Top 10 Movies", movies)
-                rankedRow("Top 10 Shows", series)
+                rankedRow(getString(R.string.t_top_10_movies), movies)
+                rankedRow(getString(R.string.t_top_10_shows), series)
             }
             var topTenPending = flix && compact
             shelves.filter { it.title != TOP10_MOVIES && it.title != TOP10_SHOWS }.forEach { shelf ->
                 if (shelf.items.isNotEmpty()) {
-                    mediaRow(shelf.title, shelf.items, seeAll = if (rowPageable(shelf.id)) ({ navigate { rowGrid(shelf) } }) else null)
+                    mediaRow(shelfTitle(shelf.title), shelf.items, seeAll = if (rowPageable(shelf.id)) ({ navigate { rowGrid(shelf) } }) else null)
                     // With Continue Watching on the first screen, the tall Top 10 shelves follow the first regular row.
-                    if (topTenPending) { topTenPending = false; rankedRow("Top 10 Movies", movies); rankedRow("Top 10 Shows", series) }
+                    if (topTenPending) { topTenPending = false; rankedRow(getString(R.string.t_top_10_movies), movies); rankedRow(getString(R.string.t_top_10_shows), series) }
                 } else {
-                    body.addView(button("${shelf.title}  ›") { navigate { shelfGrid(shelf.title, shelf.items) } }
+                    body.addView(button("${shelfTitle(shelf.title)}  ›") { navigate { shelfGrid(shelfTitle(shelf.title), shelf.items) } }
                         .apply { tag = "shelf:${shelf.title}" }, margin(-1, 40, top = 10, bottom = 7))
-                    body.addView(text(if (shelf.unavailable) "This catalog is temporarily unavailable." else "No titles returned for this catalog.", 13, muted))
-                    if (shelf.unavailable) body.addView(button("Retry ${shelf.title}") { home() }, margin(240, 38, bottom = 10))
+                    body.addView(text(if (shelf.unavailable) getString(R.string.t_this_catalog_is_temporarily_unavailable) else getString(R.string.t_no_titles_returned_for_this_catalog), 13, muted))
+                    if (shelf.unavailable) body.addView(button(getString(R.string.t_retry_x, shelfTitle(shelf.title))) { home() }, margin(240, 38, bottom = 10))
                 }
             }
             if (!publicPreview && wetrakr.connected() && store.get("wetrakr.home_liked_opt_in") == "true") homeLikedLists(id)
@@ -940,7 +946,7 @@ class MainActivity : Activity() {
                         row(ROW_LATEST_SHOWS, LATEST_SHOWS, "series", newest("series")), shelf("Popular Movies").named(ROW_POPULAR_MOVIES),
                         shelf("Popular Shows").named(ROW_POPULAR_SHOWS)) + addonRows())
                 }
-                runOnUiThread { toast("TMDB is unavailable. Showing Cinemeta catalogs instead.") }
+                runOnUiThread { toast(getString(R.string.t_tmdb_is_unavailable_showing_cinemeta_catalogs)) }
             }
             val shelves = catalog.homeShelves()
             fun shelf(title: String) = shelves.firstOrNull { it.title == title }
@@ -963,11 +969,11 @@ class MainActivity : Activity() {
     /** Every row the viewer can place on Home right now, in default order: built-in rows for this setup, then add-on rows. */
     private fun editableHomeRows(): List<HomeRow> {
         val builtIn = if (store.get(TMDB_KEY).isNotBlank()) listOf(
-            HomeRow(ROW_LATEST_MOVIES, LATEST_MOVIES), HomeRow(ROW_CINEMAS, "Now Playing in Cinemas"), HomeRow(ROW_LATEST_SHOWS, LATEST_SHOWS),
-            HomeRow(ROW_POPULAR_MOVIES, "Popular Movies"), HomeRow(ROW_POPULAR_SHOWS, "Popular Shows"))
+            HomeRow(ROW_LATEST_MOVIES, LATEST_MOVIES), HomeRow(ROW_CINEMAS, getString(R.string.t_now_playing_in_cinemas)), HomeRow(ROW_LATEST_SHOWS, LATEST_SHOWS),
+            HomeRow(ROW_POPULAR_MOVIES, getString(R.string.t_popular_movies)), HomeRow(ROW_POPULAR_SHOWS, getString(R.string.t_popular_shows)))
         else listOf(HomeRow(ROW_LATEST_MOVIES, LATEST_MOVIES), HomeRow(ROW_LATEST_SHOWS, LATEST_SHOWS),
-            HomeRow(ROW_FEATURED_MOVIES, "Featured Movies"), HomeRow(ROW_FEATURED_SHOWS, "Featured Shows"),
-            HomeRow(ROW_POPULAR_MOVIES, "Popular Movies"), HomeRow(ROW_POPULAR_SHOWS, "Popular Shows"))
+            HomeRow(ROW_FEATURED_MOVIES, getString(R.string.t_featured_movies)), HomeRow(ROW_FEATURED_SHOWS, getString(R.string.t_featured_shows)),
+            HomeRow(ROW_POPULAR_MOVIES, getString(R.string.t_popular_movies)), HomeRow(ROW_POPULAR_SHOWS, getString(R.string.t_popular_shows)))
         val addons = catalogAddons.load().flatMap { addon -> addon.catalogs.map { HomeRow(CatalogAddons.rowId(addon, it), "${it.name} (${addon.name})") } }
         return builtIn + addons
     }
@@ -990,8 +996,8 @@ class MainActivity : Activity() {
             id.startsWith("featured:") -> catalog.discover(type, "", CatalogApi.SORT_FEATURED, skip)
             id.startsWith("addon:") -> {
                 val parts = id.split(":", limit = 4)
-                val addon = catalogAddons.load().firstOrNull { it.id == parts.getOrNull(1) } ?: throw IllegalStateException("This catalog add-on was removed.")
-                val chosen = addon.catalogs.firstOrNull { it.type == parts.getOrNull(2) && it.id == parts.getOrNull(3) } ?: throw IllegalStateException("This catalog was removed.")
+                val addon = catalogAddons.load().firstOrNull { it.id == parts.getOrNull(1) } ?: throw IllegalStateException(getString(R.string.t_this_catalog_add_on_was_removed))
+                val chosen = addon.catalogs.firstOrNull { it.type == parts.getOrNull(2) && it.id == parts.getOrNull(3) } ?: throw IllegalStateException(getString(R.string.t_this_catalog_was_removed))
                 catalogAddons.items(addon, chosen, skip)
             }
             else -> emptyList()
@@ -1000,7 +1006,7 @@ class MainActivity : Activity() {
 
     /** "See all" for a Home row: its whole catalog, a page at a time; "More titles" adds the next page below. */
     private fun rowGrid(shelf: CatalogApi.HomeShelf) {
-        current = { rowGrid(shelf) }; val id = page(shelf.title)
+        current = { rowGrid(shelf) }; val id = page(shelfTitle(shelf.title))
         val host = column(); body.addView(host)
         val seen = mutableSetOf<String>()
         fun more(page: Int, skip: Int) {
@@ -1011,7 +1017,7 @@ class MainActivity : Activity() {
                 if (fresh.isNotEmpty()) mediaGrid(fresh, host = host)
                 if (page == 1) focusAfterRender(id)
                 else (host.getChildAt(before) as? ViewGroup)?.getChildAt(0)?.takeIf { DeviceLayout.tv }?.requestFocus()
-                if (fresh.isNotEmpty()) host.addView(button("More titles  ›") {}.apply {
+                if (fresh.isNotEmpty()) host.addView(button(getString(R.string.t_more_titles)) {}.apply {
                     tag = "row-more"
                     setOnClickListener { host.removeView(this); more(page + 1, skip + items.size) }
                 }, margin(180, 42, top = 20))
@@ -1025,16 +1031,16 @@ class MainActivity : Activity() {
         val keepScroll = scroller.scrollY
         current = { homeRowsPage() }
         destination = "settings"; refreshNavigation()
-        page("Home rows", "Continue Watching and Top 10 stay at the top. Arrange the rows that follow them.")
+        page(getString(R.string.t_home_rows), getString(R.string.t_continue_watching_and_top_10_stay))
         val rows = homeRows.arrange(editableHomeRows()) { it.id }
         val ids = rows.map { it.id }
         val hidden = homeRows.hidden
-        val list = settingsGroup("Rows after Top 10", "home")
+        val list = settingsGroup(getString(R.string.t_rows_after_top_10), "home")
         rows.forEachIndexed { index, row ->
             settingsDivider(list)
             val on = row.id !in hidden
             val line = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(8), dp(8)) }
-            line.addView(text(row.title, 14, if (on) ink else muted, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END },
+            line.addView(text(shelfTitle(row.title), 14, if (on) ink else muted, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END },
                 LinearLayout.LayoutParams(0, -2, 1f))
             fun control(label: String, tagName: String, description: String, enabled: Boolean, action: () -> Unit) {
                 line.addView(button(label) { if (enabled) action() }.apply {
@@ -1042,29 +1048,29 @@ class MainActivity : Activity() {
                     alpha = if (enabled) 1f else 0.3f; isFocusable = enabled
                 }, margin(if (label.length > 2) 64 else 46, 38).apply { leftMargin = dp(6) })
             }
-            control("▲", "row-up", "Move ${row.title} up", index > 0) { homeRows.move(ids, row.id, true); homeRowsPage("row-up:${row.id}") }
-            control("▼", "row-down", "Move ${row.title} down", index < rows.lastIndex) { homeRows.move(ids, row.id, false); homeRowsPage("row-down:${row.id}") }
-            control(if (on) "On" else "Off", "row-on", "${row.title} · ${if (on) "On" else "Off"}", true) { homeRows.setVisible(row.id, !on); homeRowsPage("row-on:${row.id}") }
+            control("▲", "row-up", getString(R.string.t_move_x_up, shelfTitle(row.title)), index > 0) { homeRows.move(ids, row.id, true); homeRowsPage("row-up:${row.id}") }
+            control("▼", "row-down", getString(R.string.t_move_x_down, shelfTitle(row.title)), index < rows.lastIndex) { homeRows.move(ids, row.id, false); homeRowsPage("row-down:${row.id}") }
+            control(if (on) getString(R.string.t_on) else getString(R.string.t_off), "row-on", "${shelfTitle(row.title)} · ${if (on) getString(R.string.t_on) else getString(R.string.t_off)}", true) { homeRows.setVisible(row.id, !on); homeRowsPage("row-on:${row.id}") }
             list.addView(line, margin(-1, -2))
         }
-        settingsRow(list, "Reset to default order", "", "Default order, every row on.") {
-            confirm("Reset Home rows to the default order, with every row on?") { homeRows.reset(); homeRowsPage() }
+        settingsRow(list, getString(R.string.t_reset_to_default_order), "", getString(R.string.t_default_order_every_row_on)) {
+            confirm(getString(R.string.t_reset_home_rows_to_the_default)) { homeRows.reset(); homeRowsPage() }
         }
 
-        val addons = settingsGroup("Catalog add-ons", "library")
+        val addons = settingsGroup(getString(R.string.t_catalog_add_ons), "library")
         catalogAddons.load().forEach { addon ->
-            settingsRow(addons, addon.name, "${addon.catalogs.size} ${if (addon.catalogs.size == 1) "row" else "rows"}", "Select to choose its rows or remove it.") { catalogAddonActions(addon) }
+            settingsRow(addons, addon.name, "${addon.catalogs.size} ${if (addon.catalogs.size == 1) "row" else "rows"}", getString(R.string.t_select_to_choose_its_rows_or)) { catalogAddonActions(addon) }
         }
-        settingsRow(addons, "Add catalog add-on", "", "Paste a Stremio catalog add-on URL, such as your AIOMetadata manifest, then pick the catalogs to show on Home.") { addCatalogAddon() }
+        settingsRow(addons, getString(R.string.t_add_catalog_add_on), "", getString(R.string.t_paste_a_stremio_catalog_add_on)) { addCatalogAddon() }
         body.addView(View(this), margin(-1, 24))
         if (focusTag != null) keepPlace(generation, focusTag, keepScroll) else focusAfterRender(generation)
     }
 
     private fun addCatalogAddon() {
-        inputSetting("Add catalog add-on", "HTTPS add-on or manifest.json URL", "") { address ->
+        inputSetting(getString(R.string.t_add_catalog_add_on), getString(R.string.t_https_add_on_or_manifest_json), "") { address ->
             load(generation, { address to catalogAddons.inspect(address) }) { (url, found) ->
                 val (name, catalogs) = found
-                if (catalogs.isEmpty()) toast("$name has no movie or TV catalogs that can be Home rows.")
+                if (catalogs.isEmpty()) toast(getString(R.string.t_x_has_no_movie_or_tv, name))
                 else pickAddonCatalogs(null, url, name, catalogs)
             }
         }
@@ -1074,39 +1080,39 @@ class MainActivity : Activity() {
         val picked = BooleanArray(catalogs.size) { index ->
             existing?.catalogs?.any { it.type == catalogs[index].type && it.id == catalogs[index].id } ?: (index < 4)
         }
-        AlertDialog.Builder(this).setTitle("$name · rows for Home")
+        AlertDialog.Builder(this).setTitle(getString(R.string.t_x_rows_for_home, name))
             .setMultiChoiceItems(catalogs.map { it.name }.toTypedArray(), picked) { _, index, checked -> picked[index] = checked }
-            .setPositiveButton("Save") { _, _ ->
+            .setPositiveButton(getString(R.string.t_save)) { _, _ ->
                 val chosen = catalogs.filterIndexed { index, _ -> picked[index] }
-                if (chosen.isEmpty()) { toast("Pick at least one catalog"); return@setPositiveButton }
+                if (chosen.isEmpty()) { toast(getString(R.string.t_pick_at_least_one_catalog)); return@setPositiveButton }
                 try {
                     val all = catalogAddons.load()
                     if (existing == null) {
-                        require(all.none { it.address == SourceProviders.endpoint(address) }) { "This add-on is already added." }
+                        require(all.none { it.address == SourceProviders.endpoint(address) }) { getString(R.string.t_this_add_on_is_already_added) }
                         catalogAddons.save(all + catalogAddons.create(address, name, chosen))
                     } else {
                         catalogAddons.save(all.map { if (it.id == existing.id) it.copy(catalogs = chosen) else it })
                         existing.catalogs.filterNot { old -> chosen.any { it.type == old.type && it.id == old.id } }
                             .forEach { homeRows.forget(CatalogAddons.rowId(existing, it)) }
                     }
-                    toast("${chosen.size} ${if (chosen.size == 1) "row" else "rows"} from $name added to Home")
+                    toast(getString(R.string.t_x_x_from_x_added_to, chosen.size, if (chosen.size == 1) "row" else "rows", name))
                     homeRowsPage()
                 } catch (error: Exception) { toast(uiErrorMessage(error)) }
-            }.setNegativeButton("Cancel", null).show()
+            }.setNegativeButton(getString(R.string.t_cancel), null).show()
     }
 
     private fun catalogAddonActions(addon: CatalogAddon) {
         AlertDialog.Builder(this).setTitle(addon.name)
-            .setItems(arrayOf("Choose rows", "Remove")) { _, index ->
+            .setItems(arrayOf(getString(R.string.t_choose_rows), getString(R.string.t_remove))) { _, index ->
                 if (index == 0) load(generation, { catalogAddons.inspect(addon.address) }) { (_, catalogs) ->
-                    if (catalogs.isEmpty()) toast("${addon.name} has no movie or TV catalogs right now.")
+                    if (catalogs.isEmpty()) toast(getString(R.string.t_x_has_no_movie_or_tv_2, addon.name))
                     else pickAddonCatalogs(addon, addon.address, addon.name, catalogs)
                 }
-                else confirm("Remove ${addon.name} and its rows from Home?") {
+                else confirm(getString(R.string.t_remove_x_and_its_rows_from, addon.name)) {
                     catalogAddons.save(catalogAddons.load().filterNot { it.id == addon.id })
                     homeRows.forget("addon:${addon.id}:"); homeRowsPage()
                 }
-            }.setNegativeButton("Back", null).show()
+            }.setNegativeButton(getString(R.string.t_back), null).show()
     }
 
     /** Top 10 shelves first; titles already in a Top 10 leave the other rows, and a row emptied that way is dropped. */
@@ -1125,7 +1131,7 @@ class MainActivity : Activity() {
     private fun homeContinueWatching(id: Int) {
         val host = column().apply { tag = "wetrakr-home-continue" }
         body.addView(host, margin(-1, -2, top = 10))
-        host.addView(text("Continue Watching · ${wetrakr.name}", if (flix) theme.layout.sectionTitleSizeSp else 20, ink, true), margin(-1, -2, bottom = if (flix) 6 else 8))
+        host.addView(text(getString(R.string.t_continue_watching_x, wetrakr.name), if (flix) theme.layout.sectionTitleSizeSp else 20, ink, true), margin(-1, -2, bottom = if (flix) 6 else 8))
         val row = if (flix) horizontalRow(host) else LinearLayout(this).apply { setPadding(dp(3), dp(4), dp(10), dp(4)); clipChildren = false }
         if (!flix) {
             val scroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; isFocusable = false }
@@ -1134,14 +1140,14 @@ class MainActivity : Activity() {
         fun fill(progress: List<Pair<PlaybackIdentity, Double>>) {
             row.removeAllViews(); host.findViewWithTag<View>("wetrakr-empty")?.let(host::removeView)
             // WeTrakr is authoritative here, including progress made on other devices.
-            if (progress.isEmpty()) host.addView(text("Nothing in progress on ${wetrakr.name}.", 13, muted).apply { tag = "wetrakr-empty" })
+            if (progress.isEmpty()) host.addView(text(getString(R.string.t_nothing_in_progress_on_x, wetrakr.name), 13, muted).apply { tag = "wetrakr-empty" })
             progress.forEach { (identity, percent) -> remoteProgress[identityKey(identity)] = percent }
             // A tracker can hold hundreds of paused titles; Home shows the most recent ones.
             progress.take(CONTINUE_LIMIT).forEach { (identity, percent) ->
                 val caption = listOf(if (identity.type == "series") "S${identity.season} E${identity.episode}" else "", "${percent.toInt()}%").filter { it.isNotBlank() }.joinToString(" · ")
                 val item = MediaItemData(identity.imdbId, identity.type, identity.title)
                 val open: () -> Unit = { continuePlayback(identity) }
-                row.addView((if (resumeCards()) resumeCard(item, percent / 100, episodeLine(identity), "${percent.toInt()}% watched", open) else tile(item, percent / 100, caption, open))
+                row.addView((if (resumeCards()) resumeCard(item, percent / 100, episodeLine(identity), getString(R.string.t_x_watched, percent.toInt()), open) else tile(item, percent / 100, caption, open))
                     .apply { continueOptions(this, "", identity, identity.title) }, continueSlot())
             }
         }
@@ -1177,12 +1183,12 @@ class MainActivity : Activity() {
         body.addView(host, margin(-1, -2, top = 10))
         if (flix) { flixLikedLists(id, host); return }
         read(id, { wetrakr.likedLists() }) { lists ->
-            if (lists.isEmpty() && !home) host.addView(text("No liked lists on ${wetrakr.name} yet.", 13, muted))
+            if (lists.isEmpty() && !home) host.addView(text(getString(R.string.t_no_liked_lists_on_x_yet, wetrakr.name), 13, muted))
             if (lists.isNotEmpty()) {
-                host.addView(text("Liked lists · ${wetrakr.name}", 20, ink, true), margin(-1, -2, bottom = 8))
+                host.addView(text(getString(R.string.t_liked_lists_x, wetrakr.name), 20, ink, true), margin(-1, -2, bottom = 8))
                 lists.forEach { (listId, title) ->
                     host.addView(button("$title  ›") {
-                        navigate { val pageId = page(title, "Liked list · WeTrakr"); read(pageId, { wetrakr.likedListItems(listId) }) { mediaGrid(it) } }
+                        navigate { val pageId = page(title, getString(R.string.t_liked_list_wetrakr)); read(pageId, { wetrakr.likedListItems(listId) }) { mediaGrid(it) } }
                     }, margin(-1, 40, bottom = 4))
                     val row = LinearLayout(this).apply { setPadding(dp(3), dp(4), dp(10), dp(4)); clipChildren = false }
                     host.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; isFocusable = false; clipChildren = false; addView(row) })
@@ -1209,7 +1215,7 @@ class MainActivity : Activity() {
                 read(id, { try { wetrakr.likedListPreview(listId) } catch (_: Exception) { null } }) { items ->
                     if (items == null) { body.removeView(slot); return@read }
                     mediaRow(title, items, slot) {
-                        navigate { val pageId = page(title, "Liked list · WeTrakr"); read(pageId, { wetrakr.likedListItems(listId) }) { mediaGrid(it) } }
+                        navigate { val pageId = page(title, getString(R.string.t_liked_list_wetrakr)); read(pageId, { wetrakr.likedListItems(listId) }) { mediaGrid(it) } }
                     }
                 }
             }
@@ -1249,7 +1255,7 @@ class MainActivity : Activity() {
         }
         if (split && showAction) copy.addView(text(greeting(), 16, ink), margin(-1, -2, bottom = 6))
         copy.addView(title, margin(-1, -2))
-        copy.addView(text(listOf(item.year, item.genres.firstOrNull().orEmpty(), item.runtime).filter(String::isNotBlank).joinToString("  ·  "), 13, muted), margin(-1, -2, top = 5))
+        copy.addView(text(listOf(item.year, UiText.of(item.genres.firstOrNull().orEmpty()), item.runtime).filter(String::isNotBlank).joinToString("  ·  "), 13, muted), margin(-1, -2, top = 5))
         val description = text(item.description, 13, muted).apply {
             maxLines = 3
             ellipsize = TextUtils.TruncateAt.END; setLineSpacing(dp(2).toFloat(), 1f)
@@ -1270,13 +1276,13 @@ class MainActivity : Activity() {
         if (showAction) {
             val actions = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
             val saved = if (publicPreview) null else history.continueWatching().firstOrNull { it.identity?.imdbId == item.imdbId }
-            actions.addView(primaryButton(if (saved != null) "▶  Play" else "▶  Explore") {
+            actions.addView(primaryButton(if (saved != null) getString(R.string.t_play) else getString(R.string.t_explore)) {
                 if (saved?.identity != null) navigate { showSources(saved.identity) } else navigate { details(item) }
             }, margin(160, 38, right = 17))
-            if (!split) actions.addView(button("＋  Add to Library") {
+            if (!split) actions.addView(button(getString(R.string.t_add_to_library)) {
                 val tracker = weTrakrClient()
-                if (tracker.connected()) load(generation, { tracker.setWatchlist(PlaybackIdentity(item.imdbId, item.type, item.title), true) }) { toast("Added to your ${tracker.name} watchlist") }
-                else { toast("Connect a tracker to save titles to your library"); navigate { weTrakrPage() } }
+                if (tracker.connected()) load(generation, { tracker.setWatchlist(PlaybackIdentity(item.imdbId, item.type, item.title), true) }) { toast(getString(R.string.t_added_to_your_x_watchlist, tracker.name)) }
+                else { toast(getString(R.string.t_connect_a_tracker_to_save_titles)); navigate { weTrakrPage() } }
             }.apply { background = rounded(withAlpha(panel, 90), 24) }, margin(159, 38))
             frame.addView(actions, FrameLayout.LayoutParams(dp(copyWidth), dp(38), Gravity.BOTTOM or Gravity.START).apply {
                 leftMargin = dp(left); bottomMargin = dp(actionBottom)
@@ -1388,7 +1394,7 @@ class MainActivity : Activity() {
             setShadowLayer(dp(4).toFloat(), 0f, 0f, 0xB0000000.toInt())
         }, margin(-1, -2, top = 8))
         // A shortened synopsis keeps the rest one press away.
-        if (!showAction && synopsisLines > 0 && item.description.length > SYNOPSIS_MORE_CHARS) copy.addView(button("More") {
+        if (!showAction && synopsisLines > 0 && item.description.length > SYNOPSIS_MORE_CHARS) copy.addView(button(getString(R.string.t_more)) {
             // Whatever the header shows now: the show's synopsis, or the focused episode's.
             synopsisDialog(item.title, copy.findViewWithTag<TextView>("feature-description")?.text?.toString()?.ifBlank { null } ?: item.description)
         }.apply { gravity = Gravity.CENTER; tag = TvFocusController.SKIP_FIRST }, margin(90, 34, top = 10))
@@ -1408,13 +1414,13 @@ class MainActivity : Activity() {
                     else -> navigate { details(current) }
                 }
             }, margin(if (DeviceLayout.phone) 108 else 122, 38, right = if (DeviceLayout.phone) 8 else 12))
-            actions.addView(button("ⓘ  More Info") { val current = shown(); navigate { details(current) } }.apply { gravity = Gravity.CENTER },
-                margin(if (DeviceLayout.phone) 124 else 136, 38, right = if (DeviceLayout.phone) 8 else 12))
-            actions.addView(button("＋  My List") {
+            actions.addView(button(getString(R.string.t_more_info)) { val current = shown(); navigate { details(current) } }.apply { gravity = Gravity.CENTER; maxLines = 1; minWidth = dp(if (DeviceLayout.phone) 124 else 136) },
+                margin(-2, 38, right = if (DeviceLayout.phone) 8 else 12))
+            actions.addView(button(getString(R.string.t_my_list)) {
                 val item = shown()
                 val tracker = weTrakrClient()
-                if (tracker.connected()) load(generation, { tracker.setWatchlist(PlaybackIdentity(item.imdbId, item.type, item.title), true) }) { toast("Added to your ${tracker.name} watchlist") }
-                else { toast("Connect a tracker to save titles to your library"); navigate { weTrakrPage() } }
+                if (tracker.connected()) load(generation, { tracker.setWatchlist(PlaybackIdentity(item.imdbId, item.type, item.title), true) }) { toast(getString(R.string.t_added_to_your_x_watchlist, tracker.name)) }
+                else { toast(getString(R.string.t_connect_a_tracker_to_save_titles)); navigate { weTrakrPage() } }
             }.apply { gravity = Gravity.CENTER }, margin(if (DeviceLayout.phone) 108 else 122, 38))
             if (DeviceLayout.phone) copy.addView(actions, margin(-1, 38, top = 14))
             else frame.addView(actions, FrameLayout.LayoutParams(-2, dp(38), Gravity.BOTTOM or Gravity.START).apply { bottomMargin = dp(26) })
@@ -1434,7 +1440,7 @@ class MainActivity : Activity() {
 
     private fun savedFor(item: MediaItemData) = if (publicPreview) null else history.continueWatching().firstOrNull { it.identity?.imdbId == item.imdbId }
     /** Outside Continue Watching the action is always Play: a fresh link search that still resumes the saved position. */
-    private fun playLabel(@Suppress("UNUSED_PARAMETER") item: MediaItemData) = "▶  Play"
+    private fun playLabel(@Suppress("UNUSED_PARAMETER") item: MediaItemData) = getString(R.string.t_play)
 
     /** Cycles the billboard through the Top 10 titles every five seconds while no shelf is in use. */
     private fun rotateFeature(frame: FrameLayout, rotation: List<MediaItemData>) {
@@ -1475,10 +1481,10 @@ class MainActivity : Activity() {
         item.rating.takeIf { it.isNotBlank() && it != "0" }?.let { setImdbBase(imdb, it, "") }
         // A show's live score arrives with its season's episode scores (seasonPicker).
         if (item.type == "movie") loadTitleImdb(item)
-        listOf(item.year, item.runtime, if (item.type == "series") "Series" else "Movie").filter(String::isNotBlank).forEach {
+        listOf(item.year, item.runtime, if (item.type == "series") getString(R.string.t_series) else getString(R.string.t_movie)).filter(String::isNotBlank).forEach {
             row.addView(chip(it, Color.TRANSPARENT, ink, withAlpha(Color.WHITE, 90)), margin(-2, -2, right = 8))
         }
-        item.genres.take(if (DeviceLayout.phone) 1 else 3).forEach { row.addView(chip(it, withAlpha(Color.WHITE, 30), ink), margin(-2, -2, right = 8)) }
+        item.genres.take(if (DeviceLayout.phone) 1 else 3).forEach { row.addView(chip(UiText.of(it), withAlpha(Color.WHITE, 30), ink), margin(-2, -2, right = 8)) }
         return row
     }
 
@@ -1817,6 +1823,18 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Built-in Home rows are named in English by their catalogs (the names are lookup keys); shown in the app's language. */
+    private fun shelfTitle(title: String): String = when (title) {
+        TOP10_MOVIES -> getString(R.string.t_top_10_movies); TOP10_SHOWS -> getString(R.string.t_top_10_shows)
+        LATEST_MOVIES -> getString(R.string.t_latest_releases_movies); LATEST_SHOWS -> getString(R.string.t_latest_releases_shows)
+        "New Movies" -> getString(R.string.t_new_movies); "New Shows" -> getString(R.string.t_new_shows)
+        "Featured Movies" -> getString(R.string.t_featured_movies); "Featured Shows" -> getString(R.string.t_featured_shows)
+        "Popular Movies" -> getString(R.string.t_popular_movies); "Popular Shows" -> getString(R.string.t_popular_shows)
+        "Trending Movies Today" -> getString(R.string.t_trending_movies_today); "Trending Shows Today" -> getString(R.string.t_trending_shows_today)
+        "Now Playing in Cinemas" -> getString(R.string.t_now_playing_in_cinemas)
+        else -> title
+    }
+
     private fun rankedRow(title: String, items: List<MediaItemData>) {
         if (items.isEmpty()) return
         body.addView(text(title, theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 14, bottom = 6))
@@ -1828,7 +1846,7 @@ class MainActivity : Activity() {
     private fun rankTile(item: MediaItemData, rank: Int): View {
         val frame = FrameLayout(this).apply {
             isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true; clipChildren = false
-            tag = "top10:${item.type}:${item.imdbId}"; contentDescription = "Number $rank, ${item.title}"
+            tag = "top10:${item.type}:${item.imdbId}"; contentDescription = getString(R.string.t_number_x_x, rank, item.title)
         }
         val posterWidth = dp(if (DeviceLayout.phone) 72 else 96)
         frame.addView(RankNumberView(this, rank.toString(), bg, 0xFF8C8C8C.toInt()).apply { posterInset = posterWidth - dp(16).toFloat() }, FrameLayout.LayoutParams(-1, -1))
@@ -1855,7 +1873,7 @@ class MainActivity : Activity() {
     }
 
     private fun greeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
-        in 5..11 -> "Good morning."; in 12..17 -> "Good afternoon."; else -> "Good evening."
+        in 5..11 -> getString(R.string.t_good_morning); in 12..17 -> getString(R.string.t_good_afternoon); else -> getString(R.string.t_good_evening)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -1868,7 +1886,7 @@ class MainActivity : Activity() {
     private fun openAddonLink(launch: Intent) {
         if (publicPreview || !::store.isInitialized) return
         val link = AddonLinks.from(launch.action, launch.data?.toString(), launch.getStringExtra(Intent.EXTRA_TEXT)) ?: run {
-            if (launch.action == Intent.ACTION_SEND) toast("That isn't an add-on link (it should start with https:// or stremio://).")
+            if (launch.action == Intent.ACTION_SEND) toast(getString(R.string.t_that_isn_t_an_add_on))
             return
         }
         // Consume once so rotating or resuming can't open it again.
@@ -1924,21 +1942,21 @@ class MainActivity : Activity() {
         view.setTag(R.id.pov_continue_identity, identity?.let(::identityKey) ?: key)
         view.setOnLongClickListener {
             val account = wetrakr.accountRevision()
-            val options = mutableListOf<Pair<String, () -> Unit>>("Open Media" to {
+            val options = mutableListOf<Pair<String, () -> Unit>>(getString(R.string.t_open_media) to {
                 if (identity != null) {
                     if (identity.type == "series") selectedSeasons[identity.imdbId] = identity.season
                     navigate { detailsFor(MediaItemData(identity.imdbId, identity.type, identity.title), identity.takeIf { it.type == "series" }) }
                 } else navigate { selectedCloud() }
             })
-            if (identity != null) options += "☰  Streams" to { navigate { showSources(identity, manual = true) } }
-            options += "Remove from Continue Watching" to {
+            if (identity != null) options += getString(R.string.t_streams) to { navigate { showSources(identity, manual = true) } }
+            options += getString(R.string.t_remove_from_continue_watching) to {
                 if (identity != null && wetrakr.connected()) {
                     load(generation, {
                         wetrakr.removeContinueWatching(identity, account)
                         wetrakrOutbox.discard(identity)
                         history.hide(key, identity)
-                    }) { remoteProgress.remove(identityKey(identity)); toast("Removed from ${wetrakr.name} Continue Watching"); removeContinueViews(view) }
-                } else { history.hide(key, identity); toast("Removed from Continue Watching on this TV"); removeContinueViews(view) }
+                    }) { remoteProgress.remove(identityKey(identity)); toast(getString(R.string.t_removed_from_x_continue_watching, wetrakr.name)); removeContinueViews(view) }
+                } else { history.hide(key, identity); toast(getString(R.string.t_removed_from_continue_watching_on_this)); removeContinueViews(view) }
             }
             holdMenu(title, options)
             true
@@ -1951,8 +1969,8 @@ class MainActivity : Activity() {
             val latest = try { GitHubUpdates(this).latest() } catch (_: Exception) { null }
             if (latest != null) runOnUiThread {
                 if (resumed && !isDestroyed && !isFinishing && !InAppPlaybackSession.hasActive()) {
-                    SpacedChoiceDialog.show(this, "Update available · ${latest.version.removeSuffix("-rajput")}",
-                        "A new published release of ${BuildConfig.APP_NAME} is available.", "View update", "Later") {
+                    SpacedChoiceDialog.show(this, getString(R.string.t_update_available_x, latest.version.removeSuffix("-rajput")),
+                        getString(R.string.t_a_new_published_release_of_x, BuildConfig.APP_NAME), getString(R.string.t_view_update), getString(R.string.t_later)) {
                         startActivity(Intent(this, UpdateActivity::class.java))
                     }
                 }
@@ -1961,7 +1979,7 @@ class MainActivity : Activity() {
     }
 
     private fun resumeRow(recent: List<PlaybackStore.Recent>) {
-        section("Continue Watching")
+        section(getString(R.string.t_continue_watching))
         val row = horizontalRow(); localContinueRow = row
         refreshContinue = { if (row.isAttachedToWindow && !row.hasFocus()) { row.removeAllViews(); fillResumeRow(row, history.continueWatching()) } }
         fillResumeRow(row, recent)
@@ -1973,13 +1991,13 @@ class MainActivity : Activity() {
             val item = MediaItemData(identity?.imdbId.orEmpty(), identity?.type ?: "movie", saved.title,
                 background = identity?.imdbId?.let { "https://images.metahub.space/background/medium/$it/img" }.orEmpty())
             val remaining = listOf(identity?.takeIf { it.type == "series" }?.let { "S${it.season} E${it.episode}" }.orEmpty(),
-                "${((saved.duration - saved.position).coerceAtLeast(0) / 60000)}m left").filter(String::isNotBlank).joinToString(" · ")
+                getString(R.string.t_x_m_left, ((saved.duration - saved.position).coerceAtLeast(0) / 60000))).filter(String::isNotBlank).joinToString(" · ")
             val action: () -> Unit = {
                 resumeSaved(saved)
             }
             val progress = saved.position.toDouble() / saved.duration.coerceAtLeast(1)
-            val timeLeft = "${((saved.duration - saved.position).coerceAtLeast(0) / 60000)}m left"
-            row.addView((if (resumeCards()) resumeCard(item, progress, identity?.let(::episodeLine) ?: "Cloud video", timeLeft, action) else tile(item, progress, remaining, action))
+            val timeLeft = getString(R.string.t_x_m_left, ((saved.duration - saved.position).coerceAtLeast(0) / 60000))
+            row.addView((if (resumeCards()) resumeCard(item, progress, identity?.let(::episodeLine) ?: getString(R.string.t_cloud_video), timeLeft, action) else tile(item, progress, remaining, action))
                 .apply { tag = "resume:${saved.key}"; continueOptions(this, saved.key, saved.identity, saved.title) }, continueSlot())
         }
     }
@@ -2005,10 +2023,10 @@ class MainActivity : Activity() {
 
     private fun playbackOptions() {
         if (!InAppPlaybackSession.hasActive() || currentPlaybackOptionsDialog?.isShowing == true) return
-        val dialog = AlertDialog.Builder(this).setTitle("Now playing · ${InAppPlaybackSession.title}")
-            .setItems(arrayOf("Return to video", "Stop playback")) { _, choice ->
+        val dialog = AlertDialog.Builder(this).setTitle(getString(R.string.t_now_playing_x, InAppPlaybackSession.title))
+            .setItems(arrayOf(getString(R.string.t_return_to_video), getString(R.string.t_stop_playback))) { _, choice ->
                 if (choice == 0) returnToVideo() else { InAppPlaybackSession.stop(); scheduleContinueRefresh() }
-            }.setNegativeButton("Keep browsing", null).create()
+            }.setNegativeButton(getString(R.string.t_keep_browsing), null).create()
         dialog.setOnShowListener { dialog.window?.decorView?.tag = "pov_mini_playback_options" }
         currentPlaybackOptionsDialog = dialog
         dialog.setOnDismissListener { if (currentPlaybackOptionsDialog === dialog) currentPlaybackOptionsDialog = null }
@@ -2032,7 +2050,7 @@ class MainActivity : Activity() {
         if (miniFrame == null) {
             val frame = FrameLayout(this).apply {
                 background = rounded(Color.BLACK, 8); clipToOutline = true; isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true
-                tag = "return-to-video"; contentDescription = "Now playing. Select to return to video. Hold Select or press Menu for playback options."
+                tag = "return-to-video"; contentDescription = getString(R.string.t_now_playing_select_to_return_to)
             }
             val video = PlayerView(this).apply {
                 useController = false; setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
@@ -2045,7 +2063,7 @@ class MainActivity : Activity() {
             }
             val label = text("", 11, Color.WHITE, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
             caption.addView(label)
-            caption.addView(text(if (DeviceLayout.phone) "Tap to return · Hold for options" else "Select to return · Hold Select for options", 9, 0xFFD3DFED.toInt()).apply { maxLines = 1 })
+            caption.addView(text(if (DeviceLayout.phone) getString(R.string.t_tap_to_return_hold_for_options) else getString(R.string.t_select_to_return_hold_select_for), 9, 0xFFD3DFED.toInt()).apply { maxLines = 1 })
             frame.addView(caption, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
             frame.setOnFocusChangeListener { view, focused ->
                 if (focused) { pendingFocus = null; wantsContentFocus = false }
@@ -2074,11 +2092,11 @@ class MainActivity : Activity() {
             }
         }
         val status = when {
-            exo?.playerError != null -> "Playback stopped"
-            exo?.playbackState == androidx.media3.common.Player.STATE_ENDED -> "Finished"
-            exo?.isPlaying == true -> "Playing"
-            exo?.playWhenReady == true && exo.playbackState == androidx.media3.common.Player.STATE_BUFFERING -> "Loading"
-            else -> "Paused"
+            exo?.playerError != null -> getString(R.string.t_playback_stopped)
+            exo?.playbackState == androidx.media3.common.Player.STATE_ENDED -> getString(R.string.t_finished)
+            exo?.isPlaying == true -> getString(R.string.t_playing)
+            exo?.playWhenReady == true && exo.playbackState == androidx.media3.common.Player.STATE_BUFFERING -> getString(R.string.t_loading)
+            else -> getString(R.string.t_paused)
         }
         miniLabel?.text = "$status · ${InAppPlaybackSession.title}"
         miniPlayer?.let(InAppPlaybackSession::attachPlayerView)
@@ -2099,7 +2117,7 @@ class MainActivity : Activity() {
         if (navigationIndexes.isEmpty()) return
         val top = theme.layout.navigation == NavigationPlacement.TOP_BAR
         val bottom = theme.layout.navigation == NavigationPlacement.BOTTOM_BAR
-        val target = Destination("nowplaying", "Now playing") { returnToVideo() }
+        val target = Destination("nowplaying", getString(R.string.t_now_playing)) { returnToVideo() }
         val cell = if (bottom) bottomNavigation(target) else navigation(target, top)
         val params = if (bottom) LinearLayout.LayoutParams(0, -1, 1f) else if (top) LinearLayout.LayoutParams(0, dp(38), 1f) else margin(-1, 35, bottom = 4)
         // TV: above Home; phone: the last tab.
@@ -2112,23 +2130,23 @@ class MainActivity : Activity() {
     private fun animePage(type: String = "series", query: String = "", skip: Int = 0) {
         current = { animePage(type, query, skip) }
         destination = "anime"; refreshNavigation()
-        val id = page(if (query.isBlank()) "Anime" else "Anime · $query", "Discover anime series, films, and new worlds.")
+        val id = page(if (query.isBlank()) getString(R.string.t_anime) else getString(R.string.t_anime_x, query), getString(R.string.t_discover_anime_series_films_and_new))
         if (DeviceLayout.phone) {
             // Phone: search first, then three short tabs that fit the width, so nothing hides off-screen.
-            body.addView(button("⌕   Search anime") { searchAnime(type) }, margin(-1, 42, bottom = 10))
-            phoneTabs(listOf("series" to "Series", "movie" to "Movies", "special" to "Specials").map { (key, title) ->
+            body.addView(button(getString(R.string.t_search_anime)) { searchAnime(type) }, margin(-1, 42, bottom = 10))
+            phoneTabs(listOf("series" to getString(R.string.t_series), "movie" to getString(R.string.t_movies), "special" to getString(R.string.t_specials)).map { (key, title) ->
                 (if (type == key) "●  $title" else title) to { animePage(key) }
             })
         } else {
             val tabs = horizontalRow()
             // Search leads the row, wider than the category tabs.
-            tabs.addView(button("⌕   Search anime") { searchAnime(type) }, margin(230, 40, right = 16))
-            listOf("series" to "Series & seasons", "movie" to "Anime movies", "special" to "Specials & OVAs").forEach { (key, title) ->
+            tabs.addView(button(getString(R.string.t_search_anime)) { searchAnime(type) }, margin(230, 40, right = 16))
+            listOf("series" to getString(R.string.t_series_seasons), "movie" to getString(R.string.t_anime_movies), "special" to getString(R.string.t_specials_ovas)).forEach { (key, title) ->
                 tabs.addView(button(if (type == key) "●  $title" else title) { animePage(key) }, margin(153, 40, right = 8))
             }
         }
         read(id, { if (query.isBlank()) anime.popular(type, skip) else anime.search(query, type, skip) }) { result ->
-            if (result.items.isEmpty()) body.addView(text("No anime found. Try a different title or category.", 14, muted), margin(-1, -2, top = 20))
+            if (result.items.isEmpty()) body.addView(text(getString(R.string.t_no_anime_found_try_a_different), 14, muted), margin(-1, -2, top = 20))
             val width = DeviceLayout.canvasWidth - theme.layout.railWidthDp - theme.layout.contentInsetDp * 2
             val count = if (DeviceLayout.phone) DeviceLayout.phoneColumns(width) else (width / (cardWidth() + theme.layout.cardGapDp)).coerceAtLeast(1)
             // Flix columns stretch to the full content width, as the Movies and Shows grids do.
@@ -2142,23 +2160,23 @@ class MainActivity : Activity() {
                 }
             }
             val paging = horizontalRow()
-            if (skip > 0) paging.addView(button("Previous page") { animePage(type, query, (skip - 20).coerceAtLeast(0)) }, margin(150, 40, top = 16, right = 10))
-            if (result.hasMore) paging.addView(button("More anime  ›") { animePage(type, query, result.nextOffset) }, margin(150, 40, top = 16))
-            body.addView(text("Anime catalog: Kitsu. Episode lists and titles are confirmed before playback.", 10, muted), margin(-1, -2, top = 20))
+            if (skip > 0) paging.addView(button(getString(R.string.t_previous_page)) { animePage(type, query, (skip - 20).coerceAtLeast(0)) }, margin(150, 40, top = 16, right = 10))
+            if (result.hasMore) paging.addView(button(getString(R.string.t_more_anime)) { animePage(type, query, result.nextOffset) }, margin(150, 40, top = 16))
+            body.addView(text(getString(R.string.t_anime_catalog_kitsu_episode_lists_and), 10, muted), margin(-1, -2, top = 20))
         }
     }
 
     private fun searchAnime(type: String = "series") {
-        val input = TvEditText(this).apply { hint = "Anime title"; setSingleLine() }
-        AlertDialog.Builder(this).setTitle("Search anime").setView(input)
-            .setPositiveButton("Search") { _, _ -> input.text.toString().trim().takeIf(String::isNotBlank)?.let { query -> navigate { animePage(type, query) } } }
-            .setNegativeButton("Cancel", null).show().submitOnEnter(input)
+        val input = TvEditText(this).apply { hint = getString(R.string.t_anime_title); setSingleLine() }
+        AlertDialog.Builder(this).setTitle(getString(R.string.t_search_anime_2)).setView(input)
+            .setPositiveButton(getString(R.string.t_search)) { _, _ -> input.text.toString().trim().takeIf(String::isNotBlank)?.let { query -> navigate { animePage(type, query) } } }
+            .setNegativeButton(getString(R.string.t_cancel), null).show().submitOnEnter(input)
     }
 
     private fun animeFormat(title: AnimeTitle): String = when (title.category) {
-        "movie" -> "Anime movie"
-        "special" -> if (title.subtype.equals("OVA", true)) "OVA / extra" else "Special / story chapter"
-        else -> "Series / season"
+        "movie" -> getString(R.string.t_anime_movie)
+        "special" -> if (title.subtype.equals("OVA", true)) getString(R.string.t_ova_extra) else getString(R.string.t_special_story_chapter)
+        else -> getString(R.string.t_series_season)
     }
 
     private fun animeDetails(title: AnimeTitle) {
@@ -2171,7 +2189,7 @@ class MainActivity : Activity() {
             placeBackdrop(home = false); heroBackdrop.visibility = View.VISIBLE
             backdropStandIn(card); image(backdropArt, backdropFor(card), feature = true)
         }
-        body.addView(button("Choose a matching title manually") { matchAnime(title) }, margin(280, 40, bottom = 10))
+        body.addView(button(getString(R.string.t_choose_a_matching_title_manually)) { matchAnime(title) }, margin(280, 40, bottom = 10))
         fun render(result: AnimeEpisodeCatalog) {
             // The player asks AniSkip for skip times by this anime's own episode numbers.
             AnimeEpisodeRefs.remember(this, result)
@@ -2180,10 +2198,10 @@ class MainActivity : Activity() {
             mediaActions(result.media)
             if (!flix) body.addView(text(animeFormat(title) + " · " + result.notice, 12, muted), margin(-1, -2, top = 9, bottom = 12))
             val relatedHost = column(); body.addView(relatedHost, margin(-1, -2, top = 10))
-            relatedHost.addView(text("Finding related seasons and films…", 12, muted))
+            relatedHost.addView(text(getString(R.string.t_finding_related_seasons_and_films), 12, muted))
             loadRelatedAnime(title, relatedHost, id)
             if (title.type == "series") animeEpisodePicker(result)
-            body.addView(button("Choose a matching title manually") { matchAnime(title) }, margin(280, 40, top = 15))
+            body.addView(button(getString(R.string.t_choose_a_matching_title_manually)) { matchAnime(title) }, margin(280, 40, top = 15))
         }
         val cached = anime.cachedDetails(title)
         if (cached != null) { render(cached); focusAfterRender(id) } else read(id, { anime.details(title) }) { render(it) }
@@ -2200,23 +2218,23 @@ class MainActivity : Activity() {
                         val row = horizontalRow(host)
                         fun add(short: String, label: String, choices: List<AnimeTitle>, key: String) {
                             row.addView(button("$short (${choices.size})") {
-                                if (choices.isEmpty()) toast("No catalog-linked $label are available")
+                                if (choices.isEmpty()) toast(getString(R.string.t_no_catalog_linked_x_are_available, label))
                                 else AlertDialog.Builder(this).setTitle(label).setItems(choices.map { it.title }.toTypedArray()) { _, index ->
                                     navigate { animeDetails(choices[index]) }
-                                }.setNegativeButton("Cancel", null).show()
+                                }.setNegativeButton(getString(R.string.t_cancel), null).show()
                             }.apply { tag = "related:$key"; gravity = Gravity.CENTER }, margin(150, 38, right = 8))
                         }
-                        add("Seasons", "Seasons & story parts", related.seasons, "seasons")
-                        add("Movies", "Anime movies", related.movies, "movies")
-                        add("Specials", "Specials & OVAs", related.specials, "specials")
-                        if (related.otherSeries.isNotEmpty()) add("Spin-offs", "Spin-off series", related.otherSeries, "spinoffs")
-                        if (related.truncated) host.addView(text("More related entries may be available through Anime search.", 11, muted), margin(-1, -2, top = 6))
+                        add(getString(R.string.t_seasons), getString(R.string.t_seasons_story_parts), related.seasons, "seasons")
+                        add(getString(R.string.t_movies), getString(R.string.t_anime_movies), related.movies, "movies")
+                        add(getString(R.string.t_specials), getString(R.string.t_specials_ovas), related.specials, "specials")
+                        if (related.otherSeries.isNotEmpty()) add(getString(R.string.t_spin_offs), getString(R.string.t_spin_off_series), related.otherSeries, "spinoffs")
+                        if (related.truncated) host.addView(text(getString(R.string.t_more_related_entries_may_be_available), 11, muted), margin(-1, -2, top = 6))
                         focusAfterRender(id)
                     }
                 }
             } catch (_: Exception) { runOnUiThread {
                 if (id == generation && !isDestroyed) {
-                    host.removeAllViews(); host.addView(button("Retry related seasons and movies") { loadRelatedAnime(title, host, id) }, margin(310, 40))
+                    host.removeAllViews(); host.addView(button(getString(R.string.t_retry_related_seasons_and_movies)) { loadRelatedAnime(title, host, id) }, margin(310, 40))
                     focusAfterRender(id)
                 }
             } }
@@ -2225,7 +2243,7 @@ class MainActivity : Activity() {
 
     private fun animeEpisodePicker(result: AnimeEpisodeCatalog) {
         if (result.groups.isEmpty()) {
-            body.addView(text("No verified episodes are available for this selected entry. A film has its own movie action; episode numbers are never substituted.", 14, muted), margin(-1, -2, top = 14)); return
+            body.addView(text(getString(R.string.t_no_verified_episodes_are_available_for), 14, muted), margin(-1, -2, top = 14)); return
         }
         val key = "anime:${result.anime.kitsuId}"
         val groupIndex = selectedSeasons[key]?.coerceIn(0, result.groups.lastIndex) ?: 0
@@ -2234,50 +2252,50 @@ class MainActivity : Activity() {
         fun render(index: Int) {
             selectedSeasons[key] = index
             val group = result.groups[index]
-            selector.text = "${group.title} · ${group.episodes.size} episodes  ▾"
+            selector.text = getString(R.string.t_x_x_episodes, group.title, group.episodes.size)
             selector.contentDescription = selector.text; selector.tag = "anime-group:$key"
             host.removeAllViews()
             host.addView(text("${result.anime.title} · ${group.title}", 17, ink, true), margin(-1, -2, top = 15, bottom = 9))
             // Flix: the same sideways row of wide episode cards as shows, with the header following the focused episode.
             if (flix && DeviceLayout.tv) host.addView(episodeStrip(result.media, group.episodes.map { choice ->
                 Triple(choice.identity, EpisodeData(choice.identity.season, choice.identity.episode, choice.title, choice.released, choice.thumbnail),
-                    "Episode ${choice.catalogEpisode}")
+                    getString(R.string.t_episode_x, choice.catalogEpisode))
             }, null), margin(-1, -2))
             else group.episodes.forEach { choice ->
                 val identity = choice.identity
                 val extra = buildList {
-                    if (choice.catalogEpisode != identity.episode) add("Part episode ${choice.catalogEpisode}")
-                    choice.absoluteEpisode?.let { add("Overall episode $it") }
+                    if (choice.catalogEpisode != identity.episode) add(getString(R.string.t_part_episode_x, choice.catalogEpisode))
+                    choice.absoluteEpisode?.let { add(getString(R.string.t_overall_episode_x, it)) }
                     if (choice.released.isNotBlank()) add(choice.released.take(10))
                 }.joinToString(" · ")
                 if (flix) host.addView(episodeRow(identity, EpisodeData(identity.season, identity.episode, choice.title, choice.released, choice.thumbnail),
-                    result.media, "Episode ${choice.catalogEpisode}", extra), margin(-1, -2, bottom = 8))
+                    result.media, getString(R.string.t_episode_x, choice.catalogEpisode), extra), margin(-1, -2, bottom = 8))
                 else host.addView(episodeButton(identity, choice.title, choice.released, extra), margin(-1, 62, bottom = 7))
             }
             focusAfterRender(generation)
         }
         selector.setOnClickListener {
-            AlertDialog.Builder(this).setTitle("Episodes in this entry").setSingleChoiceItems(
-                result.groups.map { "${it.title} · ${it.episodes.size} episodes" }.toTypedArray(), selectedSeasons[key] ?: 0
-            ) { dialog, index -> dialog.dismiss(); render(index); selector.requestFocus() }.setNegativeButton("Cancel", null).show()
+            AlertDialog.Builder(this).setTitle(getString(R.string.t_episodes_in_this_entry)).setSingleChoiceItems(
+                result.groups.map { getString(R.string.t_x_x_episodes_2, it.title, it.episodes.size) }.toTypedArray(), selectedSeasons[key] ?: 0
+            ) { dialog, index -> dialog.dismiss(); render(index); selector.requestFocus() }.setNegativeButton(getString(R.string.t_cancel), null).show()
         }
         body.addView(selector, margin(if (DeviceLayout.phone) -1 else 380, 42, top = 10)); body.addView(host)
         render(groupIndex)
     }
 
     private fun matchAnime(title: AnimeTitle) {
-        val input = TvEditText(this).apply { setText(title.title); hint = "Title to search"; setSingleLine() }
-        AlertDialog.Builder(this).setTitle("Find the correct ${if (title.type == "movie") "film" else "show"}")
-            .setMessage("Choose the matching catalog title. For sequels and split seasons, check the show's season and episode list before playing.")
-            .setView(input).setPositiveButton("Search") { _, _ ->
+        val input = TvEditText(this).apply { setText(title.title); hint = getString(R.string.t_title_to_search); setSingleLine() }
+        AlertDialog.Builder(this).setTitle(getString(R.string.t_find_the_correct_x, if (title.type == "movie") "film" else "show"))
+            .setMessage(getString(R.string.t_choose_the_matching_catalog_title_for))
+            .setView(input).setPositiveButton(getString(R.string.t_search)) { _, _ ->
                 val query = input.text.toString().trim()
                 if (query.isNotBlank()) load(generation, { catalog.search(query, title.type) }) { matches ->
-                    if (matches.isEmpty()) toast("No match found. Try the English or original title.")
-                    else AlertDialog.Builder(this).setTitle("Confirm the correct title")
+                    if (matches.isEmpty()) toast(getString(R.string.t_no_match_found_try_the_english))
+                    else AlertDialog.Builder(this).setTitle(getString(R.string.t_confirm_the_correct_title))
                         .setItems(matches.map { "${it.title} · ${it.year}" }.toTypedArray()) { _, index -> navigate { details(matches[index]) } }
-                        .setNegativeButton("Cancel", null).show()
+                        .setNegativeButton(getString(R.string.t_cancel), null).show()
                 }
-            }.setNegativeButton("Cancel", null).show().submitOnEnter(input)
+            }.setNegativeButton(getString(R.string.t_cancel), null).show().submitOnEnter(input)
     }
 
     /**
@@ -2290,8 +2308,8 @@ class MainActivity : Activity() {
         val tmdbKey = if (publicPreview) "" else store.get(TMDB_KEY)
         val tmdb = tmdbKey.isNotBlank()
         // Newest leads and opens by default; without a TMDB key it comes from Queued Up's latest-release lists.
-        val sorts = if (tmdb) listOf(TmdbCatalog.SORT_NEWEST to "Newest", TmdbCatalog.SORT_POPULAR to "Popular", TmdbCatalog.SORT_TOP_RATED to "Top rated")
-            else listOf(SORT_NEWEST to "Newest", CatalogApi.SORT_POPULAR to "Popular", CatalogApi.SORT_FEATURED to "Featured")
+        val sorts = if (tmdb) listOf(TmdbCatalog.SORT_NEWEST to getString(R.string.t_newest), TmdbCatalog.SORT_POPULAR to getString(R.string.t_popular), TmdbCatalog.SORT_TOP_RATED to getString(R.string.t_top_rated))
+            else listOf(SORT_NEWEST to getString(R.string.t_newest), CatalogApi.SORT_POPULAR to getString(R.string.t_popular), CatalogApi.SORT_FEATURED to getString(R.string.t_featured))
         val order = sort.takeIf { wanted -> sorts.any { it.first == wanted } } ?: sorts.first().first
         val genres = when {
             tmdb -> TmdbCatalog.discoverGenres(type).keys.toList()
@@ -2301,25 +2319,25 @@ class MainActivity : Activity() {
         val chosen = genre.takeIf { it in genres }.orEmpty()
         val offsets = "$type|$chosen|$order"
         if (skip == 0 && query.isBlank()) catalogOffsets[offsets]?.clear()
-        val id = page(if (query.isBlank()) if (type == "movie") "Movies" else "TV shows" else "Results for “$query”", "Find something worth your evening.")
+        val id = page(if (query.isBlank()) if (type == "movie") getString(R.string.t_movies) else getString(R.string.t_tv_shows) else getString(R.string.t_results_for_x, query), getString(R.string.t_find_something_worth_your_evening))
         fun open(nextGenre: String = chosen, nextSort: String = order) = catalogPage(type, genre = nextGenre, sort = nextSort)
         fun chip(label: String, selected: Boolean, action: () -> Unit) = button(if (selected) "●  $label" else label, action)
         if (query.isBlank()) {
             if (DeviceLayout.phone) {
-                body.addView(button("⌕   Search movies & TV") { search() }, margin(-1, 42, bottom = 10))
+                body.addView(button(getString(R.string.t_search_movies_tv)) { search() }, margin(-1, 42, bottom = 10))
                 phoneTabs(sorts.map { (key, label) -> (if (key == order) "●  $label" else label) to { open(nextSort = key) } })
             } else {
                 val actions = horizontalRow()
-                actions.addView(button("Search movies & TV") { search() }, margin(190, 38, right = 16))
+                actions.addView(button(getString(R.string.t_search_movies_tv_2)) { search() }, margin(190, 38, right = 16))
                 sorts.forEach { (key, label) -> actions.addView(chip(label, key == order) { open(nextSort = key) }, margin(-2, 38, right = 8)) }
             }
             val genreRow = horizontalRow()
-            genreRow.addView(chip("All genres", chosen.isEmpty()) { open(nextGenre = "") }.apply { tag = "genre:" }, margin(-2, 36, right = 8))
-            genres.forEach { name -> genreRow.addView(chip(name, name == chosen) { open(nextGenre = name) }.apply { tag = "genre:$name" }, margin(-2, 36, right = 8)) }
-            if (skip > 0) body.addView(button("Previous page") {
+            genreRow.addView(chip(getString(R.string.t_all_genres), chosen.isEmpty()) { open(nextGenre = "") }.apply { tag = "genre:" }, margin(-2, 36, right = 8))
+            genres.forEach { name -> genreRow.addView(chip(UiText.of(name), name == chosen) { open(nextGenre = name) }.apply { tag = "genre:$name" }, margin(-2, 36, right = 8)) }
+            if (skip > 0) body.addView(button(getString(R.string.t_previous_page)) {
                 catalogPage(type, skip = catalogOffsets[offsets]?.removeLastOrNull() ?: 0, genre = chosen, sort = order)
             }, margin(140, 38, top = 6))
-        } else horizontalRow().addView(button("Search movies & TV") { search() }, margin(190, 38, right = 8))
+        } else horizontalRow().addView(button(getString(R.string.t_search_movies_tv_2)) { search() }, margin(190, 38, right = 8))
         read(id, {
             when {
                 query.isNotBlank() -> catalog.search(query, type)
@@ -2331,9 +2349,9 @@ class MainActivity : Activity() {
                 else -> catalog.discover(type, chosen, order, skip)
             }
         }) { items ->
-            if (items.isEmpty()) body.addView(text("Nothing here yet. Try another genre or sort.", 14, muted), margin(-1, -2, top = 20))
+            if (items.isEmpty()) body.addView(text(getString(R.string.t_nothing_here_yet_try_another_genre), 14, muted), margin(-1, -2, top = 20))
             mediaGrid(items)
-            if (query.isBlank() && items.isNotEmpty()) body.addView(button("More titles  ›") {
+            if (query.isBlank() && items.isNotEmpty()) body.addView(button(getString(R.string.t_more_titles)) {
                 catalogOffsets.getOrPut(offsets) { ArrayDeque() }.addLast(skip)
                 catalogPage(type, skip = if (tmdb) skip + 1 else skip + items.size, genre = chosen, sort = order)
             }, margin(180, 42, top = 20))
@@ -2344,7 +2362,7 @@ class MainActivity : Activity() {
         // A full-screen search overlay: one large field, then Search, Voice search and Cancel.
         val dialog = android.app.Dialog(this, android.R.style.Theme_Translucent_NoTitleBar_Fullscreen)
         val input = TvEditText(this).apply {
-            hint = "Movie or TV show"; setText(initialQuery); setSelection(text.length); setSingleLine(); inputType = InputType.TYPE_CLASS_TEXT
+            hint = getString(R.string.t_movie_or_tv_show); setText(initialQuery); setSelection(text.length); setSingleLine(); inputType = InputType.TYPE_CLASS_TEXT
             imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
             setTextSize(TypedValue.COMPLEX_UNIT_PX, dp(18).toFloat()); setTextColor(ink); setHintTextColor(muted)
             background = null; setPadding(dp(10), 0, dp(10), 0); includeFontPadding = false
@@ -2357,8 +2375,8 @@ class MainActivity : Activity() {
         }
         val root = FrameLayout(this).apply { setBackgroundColor(withAlpha(bg, 242)) }
         val card = column().apply { gravity = Gravity.CENTER_HORIZONTAL }
-        card.addView(text("Search", 30, ink, true), margin(-2, -2))
-        card.addView(text("Find movies and TV shows by title", 13, muted), margin(-2, -2, top = 6, bottom = 22))
+        card.addView(text(getString(R.string.t_search), 30, ink, true), margin(-2, -2))
+        card.addView(text(getString(R.string.t_find_movies_and_tv_shows_by), 13, muted), margin(-2, -2, top = 6, bottom = 22))
         val field = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(12), 0)
             background = rounded(withAlpha(Color.WHITE, 26), 28, withAlpha(Color.WHITE, 40))
@@ -2370,14 +2388,14 @@ class MainActivity : Activity() {
         }
         card.addView(field, margin(-1, 56))
         val actions = LinearLayout(this).apply { gravity = Gravity.CENTER; clipChildren = false }
-        val searchAction = primaryButton("⌕  Search") { submit() }.apply { contentDescription = "Search" }
+        val searchAction = primaryButton(getString(R.string.t_search_2)) { submit() }.apply { contentDescription = getString(R.string.t_search) }
         actions.addView(searchAction, margin(if (DeviceLayout.phone) 110 else 150, 40, right = if (DeviceLayout.phone) 8 else 12))
         input.onBack = { hideKeyboard(input); searchAction.requestFocus() }
-        actions.addView(button(if (DeviceLayout.phone) "🎤  Voice" else "🎤  Voice search") { dialog.dismiss(); voiceSearch() }.apply { gravity = Gravity.CENTER; tag = "search-voice" },
+        actions.addView(button(if (DeviceLayout.phone) getString(R.string.t_voice) else getString(R.string.t_voice_search)) { dialog.dismiss(); voiceSearch() }.apply { gravity = Gravity.CENTER; tag = "search-voice" },
             margin(if (DeviceLayout.phone) 110 else 170, 40, right = if (DeviceLayout.phone) 8 else 12))
-        actions.addView(button("Cancel") { dialog.dismiss() }.apply { gravity = Gravity.CENTER }, margin(if (DeviceLayout.phone) 90 else 110, 40))
+        actions.addView(button(getString(R.string.t_cancel)) { dialog.dismiss() }.apply { gravity = Gravity.CENTER }, margin(if (DeviceLayout.phone) 90 else 110, 40))
         card.addView(actions, margin(-2, -2, top = 22))
-        if (DeviceLayout.tv) card.addView(text("Press OK to type · the keyboard's Search key searches straight away", 11, muted), margin(-2, -2, top = 18))
+        if (DeviceLayout.tv) card.addView(text(getString(R.string.t_press_ok_to_type_the_keyboard), 11, muted), margin(-2, -2, top = 18))
         // The phone keeps the field near the top, clear of the on-screen keyboard.
         if (DeviceLayout.phone) root.addView(card, FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply { topMargin = dp(70); leftMargin = dp(16); rightMargin = dp(16) })
         else root.addView(card, FrameLayout.LayoutParams(dp(560), -2, Gravity.CENTER).apply { bottomMargin = dp(60) })
@@ -2422,7 +2440,7 @@ class MainActivity : Activity() {
         @Suppress("DEPRECATION") super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != MIC_REQUEST) return
         if (grantResults.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED) listen()
-        else { toast("Microphone access is off. Using the TV's voice search instead."); systemVoiceSearch() }
+        else { toast(getString(R.string.t_microphone_access_is_off_using_the)); systemVoiceSearch() }
     }
 
     private fun listen() {
@@ -2438,11 +2456,11 @@ class MainActivity : Activity() {
         micFrame.addView(pulse, FrameLayout.LayoutParams(micSize, micSize, Gravity.CENTER))
         micFrame.addView(mic, FrameLayout.LayoutParams(micSize, micSize, Gravity.CENTER))
         column.addView(micFrame, margin(110, 110))
-        val status = text("Listening…", 15, muted, true)
-        val heard = text("Say a movie or show", 30, ink, true).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
+        val status = text(getString(R.string.t_listening), 15, muted, true)
+        val heard = text(getString(R.string.t_say_a_movie_or_show), 30, ink, true).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
         column.addView(status, margin(-2, -2, top = 16))
         column.addView(heard, margin(560, -2, top = 12))
-        val retry = primaryButton("🎤  Try again") { }.apply { visibility = View.GONE }
+        val retry = primaryButton(getString(R.string.t_try_again)) { }.apply { visibility = View.GONE }
         column.addView(retry, margin(170, 40, top = 22))
         root.addView(column, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         dialog.setContentView(root)
@@ -2452,7 +2470,7 @@ class MainActivity : Activity() {
             addUpdateListener { pulse.scaleX = it.animatedValue as Float; pulse.scaleY = pulse.scaleX }
         }
         fun start() {
-            status.text = "Listening…"; heard.text = "Say a movie or show"; retry.visibility = View.GONE; idle.start()
+            status.text = getString(R.string.t_listening); heard.text = getString(R.string.t_say_a_movie_or_show); retry.visibility = View.GONE; idle.start()
             recognizer.startListening(Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                 .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 .putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
@@ -2461,17 +2479,17 @@ class MainActivity : Activity() {
         retry.setOnClickListener { start() }
         recognizer.setRecognitionListener(object : android.speech.RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) = Unit
-            override fun onBeginningOfSpeech() { status.text = "Listening…" }
+            override fun onBeginningOfSpeech() { status.text = getString(R.string.t_listening) }
             override fun onRmsChanged(rmsdB: Float) {
                 val level = 1f + (rmsdB.coerceIn(0f, 10f) / 10f) * 0.45f
                 idle.pause(); pulse.scaleX = level; pulse.scaleY = level
             }
             override fun onBufferReceived(buffer: ByteArray?) = Unit
-            override fun onEndOfSpeech() { status.text = "Searching…"; idle.resume() }
+            override fun onEndOfSpeech() { status.text = getString(R.string.t_searching); idle.resume() }
             override fun onError(error: Int) {
                 idle.cancel(); pulse.scaleX = 1f; pulse.scaleY = 1f
-                status.text = if (error == android.speech.SpeechRecognizer.ERROR_NO_MATCH || error == android.speech.SpeechRecognizer.ERROR_SPEECH_TIMEOUT) "Didn't catch that" else "Voice search is unavailable right now"
-                heard.text = "Press OK to try again"; retry.visibility = View.VISIBLE; retry.requestFocus()
+                status.text = if (error == android.speech.SpeechRecognizer.ERROR_NO_MATCH || error == android.speech.SpeechRecognizer.ERROR_SPEECH_TIMEOUT) getString(R.string.t_didn_t_catch_that) else getString(R.string.t_voice_search_is_unavailable_right_now)
+                heard.text = getString(R.string.t_press_ok_to_try_again); retry.visibility = View.VISIBLE; retry.requestFocus()
             }
             override fun onResults(results: Bundle?) {
                 val query = results?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim().orEmpty().take(200)
@@ -2490,9 +2508,9 @@ class MainActivity : Activity() {
     private fun systemVoiceSearch() {
         val intent = Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
             .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            .putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, "Search movies & TV shows")
+            .putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, getString(R.string.t_search_movies_tv_shows))
         try { @Suppress("DEPRECATION") startActivityForResult(intent, VOICE_REQUEST) }
-        catch (_: android.content.ActivityNotFoundException) { toast("Voice search is unavailable on this TV. Use the keyboard."); search() }
+        catch (_: android.content.ActivityNotFoundException) { toast(getString(R.string.t_voice_search_is_unavailable_on_this)); search() }
     }
     @Deprecated("Activity result compatibility for Android TV")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -2507,12 +2525,12 @@ class MainActivity : Activity() {
             cachedPlayback = null; launchingPlayer = false
             StreamChoices.pendingSwitch?.let { (switchIdentity, source, at) ->
                 StreamChoices.pendingSwitch = null
-                toast("Switching to ${source.title.lineSequence().first().take(60)}…")
+                toast(getString(R.string.t_switching_to_x, source.title.lineSequence().first().take(60)))
                 switchStream(switchIdentity, source, at)
                 return
             }
             if (resultCode == RESULT_FIRST_USER && identity != null) {
-                LastPlayedLinks(store).remove(identity); toast("Last stream unavailable. Finding fresh sources…"); navigate { showSources(identity) }
+                LastPlayedLinks(store).remove(identity); toast(getString(R.string.t_last_stream_unavailable_finding_fresh_sources)); navigate { showSources(identity) }
             }
         }
     }
@@ -2574,12 +2592,12 @@ class MainActivity : Activity() {
     private fun searchResults(query: String, filter: String = "all", cached: CatalogApi.SearchResults? = null) {
         current = { searchResults(query, filter, cached) }
         destination = "search"; refreshNavigation()
-        val id = page("Results for “$query”", "Movies and TV shows in one search.")
+        val id = page(getString(R.string.t_results_for_x, query), getString(R.string.t_movies_and_tv_shows_in_one))
         val actions = horizontalRow()
-        for ((value, label) in listOf("all" to "All", "movie" to "Movies", "series" to "TV shows")) {
+        for ((value, label) in listOf("all" to getString(R.string.t_all), "movie" to getString(R.string.t_movies), "series" to getString(R.string.t_tv_shows))) {
             actions.addView(button(if (value == filter) "✓ $label" else label) { searchResults(query, value, cached) }, margin(130, 38, right = 8))
         }
-        actions.addView(button("New search") { search(query) }, margin(150, 38))
+        actions.addView(button(getString(R.string.t_new_search)) { search(query) }, margin(150, 38))
         fun render(result: CatalogApi.SearchResults) {
             // Rebind filters to these results so switching categories does not repeat network requests.
             current = { searchResults(query, filter, result) }
@@ -2587,9 +2605,9 @@ class MainActivity : Activity() {
                 searchResults(query, listOf("all", "movie", "series")[index], result)
             }
             if (result.unavailableTypes.isNotEmpty()) {
-                val missing = result.unavailableTypes.joinToString(" and ") { if (it == "movie") "Movie" else "TV show" }
-                body.addView(text("$missing results are temporarily unavailable.", 13, muted), margin(-1, -2, top = 12))
-                body.addView(button("Retry search") { searchResults(query, filter) }, margin(150, 38))
+                val missing = result.unavailableTypes.joinToString(" and ") { if (it == "movie") getString(R.string.t_movie) else getString(R.string.t_tv_show) }
+                body.addView(text(getString(R.string.t_x_results_are_temporarily_unavailable, missing), 13, muted), margin(-1, -2, top = 12))
+                body.addView(button(getString(R.string.t_retry_search)) { searchResults(query, filter) }, margin(150, 38))
             }
             mediaGrid(result.items.filter { filter == "all" || it.type == filter }, showType = true)
         }
@@ -2704,35 +2722,35 @@ class MainActivity : Activity() {
         fun play(label: String, width: Int, action: () -> Unit) = actions.addView(
             if (flix) primaryButton(label, action) else button(label, action).apply { gravity = Gravity.CENTER }, margin(width, 44, right = 12))
         // Streams sits beside Play: the full link list for picking by hand, never auto-played even with Auto-play on.
-        fun streams(target: PlaybackIdentity) = actions.addView(button("☰  Streams") { navigate { showSources(target, manual = true) } }
+        fun streams(target: PlaybackIdentity) = actions.addView(button(getString(R.string.t_streams)) { navigate { showSources(target, manual = true) } }
             .apply { gravity = Gravity.CENTER; tag = "details-streams" }, margin(140, 44, right = 12))
         if (result.type == "movie") {
             val target = savedFor(result)?.identity ?: identity
-            play("▶  Play", 130) { navigate { showSources(target) } }
+            play(getString(R.string.t_play), 130) { navigate { showSources(target) } }
             streams(target)
         }
-        if (episode != null) { play("▶  Play S${episode.season} E${episode.episode}", 180) { navigate { showSources(episode) } }; streams(episode) }
+        if (episode != null) { play(getString(R.string.t_play_s_x_e_x, episode.season, episode.episode), 180) { navigate { showSources(episode) } }; streams(episode) }
         else if (flix) playTarget(result)?.let { (target, _) ->
             // On a show page both follow the episode focused in the row below (see episodeFocused).
             episodeTarget = target; episodeActions = actions
-            play("▶  Play S${target.season} E${target.episode}", 200) {
+            play(getString(R.string.t_play_s_x_e_x, target.season, target.episode), 200) {
                 navigate { showSources(episodeTarget ?: target) }
             }
             detailsPlayButton = actions.getChildAt(actions.childCount - 1) as? TextView
-            actions.addView(button("☰  Streams") { navigate { showSources(episodeTarget ?: target, manual = true) } }
+            actions.addView(button(getString(R.string.t_streams)) { navigate { showSources(episodeTarget ?: target, manual = true) } }
                 .apply { gravity = Gravity.CENTER; tag = "details-streams" }, margin(140, 44, right = 12))
         }
         // The flix details page already shows the full synopsis.
-        if (result.description.isNotBlank() && !flix) actions.addView(button("Synopsis") {
+        if (result.description.isNotBlank() && !flix) actions.addView(button(getString(R.string.t_synopsis)) {
             synopsisDialog(result.title, result.description)
         }, margin(110, 44, right = 8))
         val tracker = weTrakrClient()
         if (tracker.connected()) {
-            actions.addView(button("Manage  ▾") { mediaManagement(result, episode) }.apply {
+            actions.addView(button(getString(R.string.t_manage)) { mediaManagement(result, episode) }.apply {
                 gravity = Gravity.CENTER; tag = "details-manage"
             }, margin(150, 44, right = 8))
         }
-        if (!publicPreview && store.get(TMDB_KEY).isNotBlank()) actions.addView(button("Similar titles  ›") {
+        if (!publicPreview && store.get(TMDB_KEY).isNotBlank()) actions.addView(button(getString(R.string.t_similar_titles)) {
             navigate { similarTitlesPage(result) }
         }.apply { gravity = Gravity.CENTER; tag = "details-similar" }, margin(170, 44, right = 8))
         if (DeviceLayout.phone) fitActionsToPhone(actions)
@@ -2744,28 +2762,28 @@ class MainActivity : Activity() {
         val tracker = weTrakrClient()
         if (!tracker.connected()) return
         val options = mutableListOf<Pair<String, () -> Unit>>(
-            "Add to watchlist" to { load(generation, { tracker.setWatchlist(identity, true) }) { toast("Added to your ${tracker.name} watchlist") } },
-            "Remove from watchlist" to { confirm("Remove ${result.title} from your ${tracker.name} watchlist?") {
+            getString(R.string.t_add_to_watchlist) to { load(generation, { tracker.setWatchlist(identity, true) }) { toast(getString(R.string.t_added_to_your_x_watchlist, tracker.name)) } },
+            getString(R.string.t_remove_from_watchlist) to { confirm(getString(R.string.t_remove_x_from_your_x_watchlist, result.title, tracker.name)) {
                 load(generation, { tracker.setWatchlist(identity, false) }) {
-                    removeFromListViews("watchlist:${identity.type}", identity); toast("Removed from your ${tracker.name} watchlist")
+                    removeFromListViews("watchlist:${identity.type}", identity); toast(getString(R.string.t_removed_from_your_x_watchlist, tracker.name))
                 }
             } }
         )
-        if (result.type == "movie" || episode != null) options += "Mark watched" to {
-            confirm("Mark ${result.title}${episode?.let { " S${it.season} E${it.episode}" }.orEmpty()} as watched?") {
+        if (result.type == "movie" || episode != null) options += getString(R.string.t_mark_watched) to {
+            confirm(getString(R.string.t_mark_x_x_as_watched, result.title, episode?.let { " S${it.season} E${it.episode}" }.orEmpty())) {
                 load(generation, { tracker.markWatched(episode ?: identity) }) {
-                    hideContinue(identityKey(episode ?: identity)); markedWatched(episode ?: identity); toast("${tracker.name} history updated")
+                    hideContinue(identityKey(episode ?: identity)); markedWatched(episode ?: identity); toast(getString(R.string.t_x_history_updated, tracker.name))
                 }
             }
         }
-        if (tracker.supportsLists) options += "Remove from playlist" to {
+        if (tracker.supportsLists) options += getString(R.string.t_remove_from_playlist) to {
                 read(generation, { tracker.lists() }) { lists ->
-                    if (lists.isEmpty()) toast("No personal playlists on ${tracker.name}") else AlertDialog.Builder(this).setTitle("Choose your playlist")
+                    if (lists.isEmpty()) toast(getString(R.string.t_no_personal_playlists_on_x, tracker.name)) else AlertDialog.Builder(this).setTitle(getString(R.string.t_choose_your_playlist))
                         .setItems(lists.map { it.second }.toTypedArray()) { _, index ->
-                            confirm("Remove ${result.title} from ${lists[index].second}?") {
-                                load(generation, { tracker.removeListItem(lists[index].first, identity) }) { removeFromListViews("playlist:${lists[index].first}", identity); toast("Removed from ${lists[index].second}") }
+                            confirm(getString(R.string.t_remove_x_from_x, result.title, lists[index].second)) {
+                                load(generation, { tracker.removeListItem(lists[index].first, identity) }) { removeFromListViews("playlist:${lists[index].first}", identity); toast(getString(R.string.t_removed_from_x, lists[index].second)) }
                             }
-                        }.setNegativeButton("Cancel", null).show()
+                        }.setNegativeButton(getString(R.string.t_cancel), null).show()
                 }
         }
         holdMenu(result.title, options)
@@ -2781,7 +2799,7 @@ class MainActivity : Activity() {
         val index = host.indexOfChild(scroll)
         val buttons = (0 until actions.childCount).map(actions::getChildAt)
         actions.removeAllViews()
-        val (main, rest) = buttons.partition { view -> (view as? TextView)?.text?.let { it.startsWith("▶") || it.contains("Streams") } == true }
+        val (main, rest) = buttons.partition { view -> (view as? TextView)?.text?.let { it.startsWith("▶") || it.contains(getString(R.string.t_streams_2)) } == true }
         val box = column()
         fun line(views: List<View>) {
             if (views.isEmpty()) return
@@ -2815,7 +2833,7 @@ class MainActivity : Activity() {
         fun show(cast: List<TmdbCatalog.CastMember>) {
             if (id != generation || !slot.isAttachedToWindow) return
             if (cast.isEmpty()) { slot.visibility = View.GONE; return }
-            slot.addView(text("Cast", theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 10, bottom = 4))
+            slot.addView(text(getString(R.string.t_cast), theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 10, bottom = 4))
             val row = horizontalRow(slot)
             // The phone shows smaller cards, four and a half at a time, so the row clearly scrolls for more.
             val width = if (round) (if (DeviceLayout.phone) ROUND_CAST_WIDTH_PHONE else ROUND_CAST_WIDTH)
@@ -2903,7 +2921,7 @@ class MainActivity : Activity() {
             genre to { navigate { catalogPage(item.type, genre = filter, sort = if (key.isNotBlank()) TmdbCatalog.SORT_POPULAR else CatalogApi.SORT_POPULAR) } }
         }
         if (genres.isNotEmpty()) {
-            host.addView(text("Genres", theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 14, bottom = 8))
+            host.addView(text(getString(R.string.t_genres), theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 14, bottom = 8))
             topicChips(host, genres, "genre")
         }
         val topics = column()
@@ -2911,11 +2929,11 @@ class MainActivity : Activity() {
         fun renderExtra(extra: TmdbCatalog.DetailExtras) {
             topics.removeAllViews()
             if (extra.keywords.isNotEmpty()) {
-                topics.addView(text("Keywords", theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 14, bottom = 8))
+                topics.addView(text(getString(R.string.t_keywords), theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 14, bottom = 8))
                 topicChips(topics, extra.keywords.map { topic -> topic.name to { navigate { keywordPage(item.type, topic) } } }, "keyword")
             }
             if (extra.crew.isNotEmpty()) {
-                topics.addView(text("Crew", theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 18, bottom = 6))
+                topics.addView(text(getString(R.string.t_crew), theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 18, bottom = 6))
                 val row = horizontalRow(topics).apply { tag = "details-crew" }
                 // Crew portraits wait until the row nears the screen, so they never slow the cast photos above.
                 val loads = mutableListOf<() -> Unit>()
@@ -2968,7 +2986,7 @@ class MainActivity : Activity() {
     private fun paintImdb(chip: View, score: String, votes: String) {
         chip.findViewWithTag<TextView>("imdb-score")?.text = score
         chip.findViewWithTag<TextView>("imdb-votes")?.apply { text = votes; visibility = if (votes.isBlank()) View.GONE else View.VISIBLE }
-        chip.contentDescription = "IMDb $score" + if (votes.isBlank()) "" else ", $votes votes"
+        chip.contentDescription = "IMDb $score" + if (votes.isBlank()) "" else getString(R.string.t_x_votes, votes)
         chip.visibility = if (score.isBlank()) View.GONE else View.VISIBLE
     }
 
@@ -3069,7 +3087,7 @@ class MainActivity : Activity() {
      * keywords scrolls it into view.
      */
     private fun aboutSection(host: LinearLayout, facts: List<Pair<String, String>>) {
-        host.addView(text("About", theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 18, bottom = 6))
+        host.addView(text(getString(R.string.t_about), theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 18, bottom = 6))
         val panel = column().apply {
             tag = "details-about"; setPadding(dp(12), dp(10), dp(12), dp(4))
             if (DeviceLayout.tv) {
@@ -3098,9 +3116,9 @@ class MainActivity : Activity() {
 
     private fun similarTitlesPage(item: MediaItemData, loaded: List<MediaItemData>? = null, nextPage: Int? = 1, tmdbId: Long = 0) {
         current = { similarTitlesPage(item, loaded, nextPage, tmdbId) }
-        val id = page("Similar titles", "Related to ${item.title}")
+        val id = page(getString(R.string.t_similar_titles_2), getString(R.string.t_related_to_x, item.title))
         val key = store.get(TMDB_KEY); val region = tmdbRegion()
-        if (key.isBlank()) { body.addView(text("Connect TMDB in Settings to find similar titles.", 14, muted)); return }
+        if (key.isBlank()) { body.addView(text(getString(R.string.t_connect_tmdb_in_settings_to_find), 14, muted)); return }
         val cacheKey = "${key.hashCode()}:$region:${detailsKey(item)}"
         val grid = column(); val controls = column()
         body.addView(grid); body.addView(controls)
@@ -3112,14 +3130,14 @@ class MainActivity : Activity() {
         fun moreButton() {
             controls.removeAllViews()
             if (cursor == null) {
-                controls.addView(text("All available similar titles loaded.", 13, muted), margin(-1, -2, top = 12)); return
+                controls.addView(text(getString(R.string.t_all_available_similar_titles_loaded), 13, muted), margin(-1, -2, top = 12)); return
             }
-            val more = button("More titles  ›") {}.apply { tag = "similar-more" }
+            val more = button(getString(R.string.t_more_titles)) {}.apply { tag = "similar-more" }
             controls.addView(more, margin(if (DeviceLayout.phone) -1 else 180, 44, top = 16))
             more.setOnClickListener {
                 val start = cursor ?: return@setOnClickListener
                 if (!more.isEnabled) return@setOnClickListener
-                more.isEnabled = false; more.text = "Loading…"
+                more.isEnabled = false; more.text = getString(R.string.t_loading_2)
                 val excluded = items.map { it.imdbId }.toSet() + item.imdbId
                 val scroll = scroller.scrollY
                 worker.execute {
@@ -3136,7 +3154,7 @@ class MainActivity : Activity() {
                     }
                     runOnUiThread {
                         if (isDestroyed) return@runOnUiThread
-                        more.isEnabled = true; more.text = "More titles  ›"
+                        more.isEnabled = true; more.text = getString(R.string.t_more_titles)
                         if (id != generation || !grid.isAttachedToWindow) return@runOnUiThread
                         result.fold(onSuccess = { batch ->
                             val additions = batch.items.filterNot { it.imdbId in excluded }.distinctBy { it.imdbId }
@@ -3151,7 +3169,7 @@ class MainActivity : Activity() {
                                     focusController.revealCurrent()
                                 } else scroller.scrollTo(0, scroll)
                             }
-                        }, onFailure = { toast("Could not load more titles. Please try again.") })
+                        }, onFailure = { toast(getString(R.string.t_could_not_load_more_titles_please)) })
                     }
                 }
             }
@@ -3159,7 +3177,7 @@ class MainActivity : Activity() {
         fun render(extra: TmdbCatalog.DetailExtras) {
             items.clear(); items += extra.similar.distinctBy { it.imdbId }
             knownId = extra.relatedTmdbId; cursor = if (extra.hasMoreRelated && knownId > 0) 1 else null
-            if (items.isEmpty()) grid.addView(text("No related titles are available for this title yet.", 14, muted), margin(-1, -2, top = 16))
+            if (items.isEmpty()) grid.addView(text(getString(R.string.t_no_related_titles_are_available_for), 14, muted), margin(-1, -2, top = 16))
             else mediaGrid(items, host = grid)
             remember(); moreButton()
         }
@@ -3177,7 +3195,7 @@ class MainActivity : Activity() {
         var row = LinearLayout(this); var used = 0
         host.addView(row, margin(-1, -2, bottom = 6))
         topics.forEach { (label, action) ->
-            val chip = button(label, action).apply {
+            val chip = button(if (kind == "genre") UiText.of(label) else label, action).apply {
                 tag = "topic:$kind:$label"; maxLines = 1; ellipsize = TextUtils.TruncateAt.END
                 background = rounded(withAlpha(Color.WHITE, 18), 18, withAlpha(Color.WHITE, 70))
                 setOnFocusChangeListener { _, focused ->
@@ -3197,15 +3215,15 @@ class MainActivity : Activity() {
 
     private fun keywordPage(type: String, topic: TmdbCatalog.Topic, number: Int = 1) {
         current = { keywordPage(type, topic, number) }
-        val id = page(topic.name, "${if (type == "movie") "Movies" else "TV shows"} with this keyword · TMDB")
+        val id = page(topic.name, getString(R.string.t_x_with_this_keyword_tmdb, if (type == "movie") L10n.tr(R.string.t_movies, "Movies") else L10n.tr(R.string.t_tv_shows, "TV shows")))
         val key = store.get(TMDB_KEY)
-        if (key.isBlank()) { body.addView(text("Connect TMDB in Settings to browse keywords.", 14, muted)); return }
+        if (key.isBlank()) { body.addView(text(getString(R.string.t_connect_tmdb_in_settings_to_browse), 14, muted)); return }
         val region = tmdbRegion()
         read(id, { TmdbCatalog(this, key, region).keywordTitles(type, topic.id, number) }) { items ->
-            if (items.isEmpty()) body.addView(text(if (number == 1) "No titles found for this keyword." else "No more titles found for this keyword.", 14, muted), margin(-1, -2, top = 16))
+            if (items.isEmpty()) body.addView(text(if (number == 1) getString(R.string.t_no_titles_found_for_this_keyword) else getString(R.string.t_no_more_titles_found_for_this), 14, muted), margin(-1, -2, top = 16))
             mediaGrid(items)
-            if (number > 1) body.addView(button("Previous page") { keywordPage(type, topic, number - 1) }, margin(180, 44, top = 12))
-            if (items.isNotEmpty() && number < 500) body.addView(button("More titles  ›") { keywordPage(type, topic, number + 1) }, margin(180, 44, top = 12))
+            if (number > 1) body.addView(button(getString(R.string.t_previous_page)) { keywordPage(type, topic, number - 1) }, margin(180, 44, top = 12))
+            if (items.isNotEmpty() && number < 500) body.addView(button(getString(R.string.t_more_titles)) { keywordPage(type, topic, number + 1) }, margin(180, 44, top = 12))
         }
     }
 
@@ -3223,17 +3241,17 @@ class MainActivity : Activity() {
         if (member.photo.isNotBlank()) image(photo, member.photo)
         val names = column()
         names.addView(text(member.name, if (DeviceLayout.phone) 22 else 28, ink, true))
-        names.addView(text(if (member.crew) member.character else "Movies and shows", 13, muted), margin(-1, -2, top = 6))
+        names.addView(text(if (member.crew) member.character else getString(R.string.t_movies_and_shows), 13, muted), margin(-1, -2, top = 6))
         header.addView(names, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(18) })
         body.addView(header, margin(-1, -2, bottom = 8))
         val key = if (publicPreview) "" else store.get(TMDB_KEY)
         load(id, { filmography(key, member.personId, PERSON_ROW_TITLES, crew = member.crew) }) { result ->
-            if (result.movies.isEmpty() && result.shows.isEmpty()) body.addView(text("TMDB lists no films or shows for ${member.name}.", 14, muted), margin(-1, -2, top = 12))
+            if (result.movies.isEmpty() && result.shows.isEmpty()) body.addView(text(getString(R.string.t_tmdb_lists_no_films_or_shows, member.name), 14, muted), margin(-1, -2, top = 12))
             // The rows show the most popular; See all loads the actor's whole list.
             if (flix && DeviceLayout.phone) personColumns(member, result.movies, result.shows)
             else {
-                mediaRow("Movies", result.movies) { navigate { personGrid(member, "movie") } }
-                mediaRow("Shows", result.shows) { navigate { personGrid(member, "series") } }
+                mediaRow(getString(R.string.t_movies), result.movies) { navigate { personGrid(member, "movie") } }
+                mediaRow(getString(R.string.t_shows), result.shows) { navigate { personGrid(member, "series") } }
             }
             focusAfterRender(id)
         }
@@ -3252,19 +3270,19 @@ class MainActivity : Activity() {
         fun addColumn(title: String, type: String, items: List<MediaItemData>, last: Boolean) {
             val host = column()
             host.addView(text(title, theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 14, bottom = 6))
-            if (items.isEmpty()) host.addView(text("None listed", 13, muted), margin(-1, -2, top = 4))
+            if (items.isEmpty()) host.addView(text(getString(R.string.t_none_listed), 13, muted), margin(-1, -2, top = 4))
             items.take(PERSON_COLUMN_TITLES).forEach { item ->
                 host.addView(card(item).apply { tag = "person:$type:${item.imdbId}" }, margin(-1, cardHeight, bottom = gap))
             }
-            if (items.isNotEmpty()) host.addView(text("See all  ›", 13, ink, true).apply {
-                gravity = Gravity.CENTER; tag = "person-see-all:$type"; contentDescription = "See all $title"
+            if (items.isNotEmpty()) host.addView(text(getString(R.string.t_see_all), 13, ink, true).apply {
+                gravity = Gravity.CENTER; tag = "person-see-all:$type"; contentDescription = getString(R.string.t_see_all_x, title)
                 isFocusable = true; isClickable = true; background = rounded(withAlpha(Color.WHITE, 22), theme.layout.cornerRadiusDp)
                 setOnClickListener { navigate { personGrid(member, type) } }
             }.pressable(theme.layout.cornerRadiusDp), margin(-1, 44, top = 2))
             columns.addView(host, LinearLayout.LayoutParams(0, -2, 1f).apply { if (!last) rightMargin = dp(gap) })
         }
-        addColumn("Movies", "movie", movies, last = false)
-        addColumn("Shows", "series", shows, last = true)
+        addColumn(getString(R.string.t_movies), "movie", movies, last = false)
+        addColumn(getString(R.string.t_shows), "series", shows, last = true)
         body.addView(columns, margin(-1, -2))
     }
 
@@ -3289,7 +3307,7 @@ class MainActivity : Activity() {
 
     private fun seasonPicker(result: MediaItemData) {
         val seasons = EpisodePresentation.seasons(result.episodes)
-        if (seasons.isEmpty()) { body.addView(text("Episode information is currently unavailable.", 14, muted), margin(-1, -2, top = 18)); return }
+        if (seasons.isEmpty()) { body.addView(text(getString(R.string.t_episode_information_is_currently_unavailable), 14, muted), margin(-1, -2, top = 18)); return }
         val selector = button("") { }
         val host = column()
         val tabs = mutableListOf<Pair<Int, TextView>>()
@@ -3297,9 +3315,9 @@ class MainActivity : Activity() {
         fun render(season: Int) {
             val previous = shown; shown = season
             selectedSeasons[result.imdbId] = season
-            val label = if (season == 0) "Specials & extras" else "Season $season"
+            val label = if (season == 0) getString(R.string.t_specials_extras) else getString(R.string.t_season_x, season)
             val episodes = result.episodes.filter { it.season == season }.sortedBy { it.episode }
-            selector.text = "$label · ${episodes.size} episodes  ▾"; selector.contentDescription = selector.text; selector.tag = "season:${result.imdbId}"
+            selector.text = getString(R.string.t_x_x_episodes, label, episodes.size); selector.contentDescription = selector.text; selector.tag = "season:${result.imdbId}"
             host.removeAllViews()
             if (flix) tabs.forEach { (value, tab) -> paintSeasonTab(tab, value == season, tab.hasFocus()) }
             else host.addView(text(label, 18, ink, true), margin(-1, -2, top = 16, bottom = 10))
@@ -3324,11 +3342,11 @@ class MainActivity : Activity() {
         }
         selector.setOnClickListener {
             val selected = selectedSeasons[result.imdbId]
-            AlertDialog.Builder(this).setTitle("Choose a season").setSingleChoiceItems(seasons.map { season ->
-                if (season == 0) "Specials & extras" else "Season $season"
+            AlertDialog.Builder(this).setTitle(getString(R.string.t_choose_a_season)).setSingleChoiceItems(seasons.map { season ->
+                if (season == 0) getString(R.string.t_specials_extras) else getString(R.string.t_season_x, season)
             }.toTypedArray(), seasons.indexOf(selected).coerceAtLeast(0)) { dialog, index ->
                 dialog.dismiss(); render(seasons[index]); selector.requestFocus()
-            }.setNegativeButton("Cancel", null).show()
+            }.setNegativeButton(getString(R.string.t_cancel), null).show()
         }
         selector.setOnLongClickListener {
             selectedSeasons[result.imdbId]?.let { seasonWatchMenu(result, it) }; true
@@ -3340,7 +3358,7 @@ class MainActivity : Activity() {
             val row = horizontalRow()
             episodeTabs = row.parent as? View ?: row
             seasons.forEach { season ->
-                val tab = text(if (season == 0) "Specials" else "Season $season", 13, ink, true).apply {
+                val tab = text(if (season == 0) getString(R.string.t_specials) else getString(R.string.t_season_x, season), 13, ink, true).apply {
                     gravity = Gravity.CENTER; setPadding(dp(18), 0, dp(18), 0); isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true
                     tag = "season:${result.imdbId}:$season"; contentDescription = text
                 }
@@ -3359,12 +3377,12 @@ class MainActivity : Activity() {
 
     private fun seasonWatchMenu(show: MediaItemData, season: Int) {
         val tracker = weTrakrClient()
-        if (!tracker.connected()) { toast("Connect your tracking service in Settings to mark a season watched."); return }
-        val label = if (season == 0) "Specials" else "Season $season"
-        holdMenu("${show.title} · $label", listOf("Mark season watched" to {
+        if (!tracker.connected()) { toast(getString(R.string.t_connect_your_tracking_service_in_settings)); return }
+        val label = if (season == 0) getString(R.string.t_specials) else getString(R.string.t_season_x, season)
+        holdMenu("${show.title} · $label", listOf(getString(R.string.t_mark_season_watched) to {
             val pending = SeasonWatchedSelection.pending(show, season, watched)
-            if (pending.isEmpty()) toast("No unwatched available episodes in $label")
-            else confirm("Mark ${pending.size} ${if (pending.size == 1) "episode" else "episodes"} of ${show.title} · $label watched on ${tracker.name}? Future and already watched episodes are skipped.") {
+            if (pending.isEmpty()) toast(getString(R.string.t_no_unwatched_available_episodes_in_x, label))
+            else confirm(getString(R.string.t_mark_x_x_of_x_x, pending.size, if (pending.size == 1) "episode" else "episodes", show.title, label, tracker.name)) {
                 val identity = PlaybackIdentity(show.imdbId, "series", show.title)
                 load(generation, { tracker.markSeasonWatched(identity, season, pending.map { it.episode }) }) {
                     watched = pending.fold(watched) { state, episode -> state.with(episode) }
@@ -3376,7 +3394,7 @@ class MainActivity : Activity() {
                     retainedRoots().forEach(::hide)
                     markers.forEach { remoteProgress.remove(it) }
                     refreshBadges(); scheduleContinueRefresh()
-                    toast("$label marked watched on ${tracker.name}")
+                    toast(getString(R.string.t_x_marked_watched_on_x, label, tracker.name))
                 }
             }
         }))
@@ -3460,7 +3478,7 @@ class MainActivity : Activity() {
         val frame = FrameLayout(this).apply {
             isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true; clipChildren = false
             tag = "episode:${identity.imdbId}:${identity.season}:${identity.episode}"
-            contentDescription = "$label. ${episode.title}" + if (future) ". Not yet released" else ""
+            contentDescription = "$label. ${episode.title}" + if (future) getString(R.string.t_not_yet_released) else ""
         }
         val artFrame = FrameLayout(this).apply { background = rounded(panel, 8); clipToOutline = true }
         val art = FixedSizeImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
@@ -3471,7 +3489,7 @@ class MainActivity : Activity() {
         val copy = column().apply { setPadding(dp(10), 0, dp(10), dp(8)) }
         copy.addView(text(episode.title.ifBlank { label }, 13, Color.WHITE, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2))
         val labelLine = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        labelLine.addView(text(if (future) "$label · Not yet released" else label, 11, 0xFFD0D0D0.toInt()))
+        labelLine.addView(text(if (future) getString(R.string.t_x_not_yet_released, label) else label, 11, 0xFFD0D0D0.toInt()))
         if (!future) labelLine.addView(episodeScoreView(identity), LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
         copy.addView(labelLine, margin(-1, -2, top = 2))
         artFrame.addView(copy, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
@@ -3487,7 +3505,7 @@ class MainActivity : Activity() {
             view.animate().scaleX(if (focused) 1.05f else 1f).scaleY(if (focused) 1.05f else 1f).setDuration(130).start()
             if (focused) { episodeFocused(identity, episode, show); revealEpisodeTabs(); keepCardInRow(view) }
         }
-        frame.setOnClickListener { if (future) toast("This episode has not been released yet") else navigate { showSources(identity) } }
+        frame.setOnClickListener { if (future) toast(getString(R.string.t_this_episode_has_not_been_released)) else navigate { showSources(identity) } }
         if (!future) frame.setOnLongClickListener { episodeMenu(identity, "S${identity.season} E${identity.episode}"); true }
         return frame.pressable(8)
     }
@@ -3508,7 +3526,7 @@ class MainActivity : Activity() {
         if (animate) listOfNotNull<View>(line, description).forEach { view ->
             view.animate().cancel(); view.alpha = 0.35f; view.animate().alpha(1f).setDuration(140).start()
         }
-        detailsPlayButton?.takeIf { it.isAttachedToWindow }?.text = "▶  Play S${identity.season} E${identity.episode}"
+        detailsPlayButton?.takeIf { it.isAttachedToWindow }?.text = getString(R.string.t_play_s_x_e_x, identity.season, identity.episode)
         paintFocusedImdb(identity)
     }
 
@@ -3522,8 +3540,8 @@ class MainActivity : Activity() {
     private fun episodeRow(identity: PlaybackIdentity, episode: EpisodeData, show: MediaItemData, label: String = "", note: String = ""): View {
         val tracker = weTrakrClient()
         val future = EpisodePresentation.future(episode.released)
-        val number = label.ifBlank { if (identity.season == 0) "Special ${identity.episode}" else "Episode ${identity.episode}" }
-        val detail = if (future) "Not yet released" else note.ifBlank { EpisodePresentation.shortAirDate(airDate(identity, episode)) }
+        val number = label.ifBlank { if (identity.season == 0) getString(R.string.t_special_x, identity.episode) else getString(R.string.t_episode_x, identity.episode) }
+        val detail = if (future) getString(R.string.t_not_yet_released_2) else note.ifBlank { EpisodePresentation.shortAirDate(airDate(identity, episode)) }
         val row = LinearLayout(this).apply {
             gravity = Gravity.TOP; minimumHeight = dp(if (DeviceLayout.phone) 80 else 107); setPadding(dp(6), dp(6), dp(12), dp(6)); background = rounded(withAlpha(Color.WHITE, 14), 6)
             isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true
@@ -3559,7 +3577,7 @@ class MainActivity : Activity() {
             listGlide(view)?.focusChanged(view, focused)
             FadeDrawable.foreground(still, if (focused) FocusRingDrawable(Color.WHITE, dp(4).toFloat(), true, dp(1).toFloat()) else null)
         }
-        row.setOnClickListener { if (future) toast("This episode has not been released yet") else navigate { showSources(identity) } }
+        row.setOnClickListener { if (future) toast(getString(R.string.t_this_episode_has_not_been_released)) else navigate { showSources(identity) } }
         row.pressable(6)
         if (!future) row.setOnLongClickListener { episodeMenu(identity, "S${identity.season} E${identity.episode}"); true }
         return row
@@ -3568,10 +3586,10 @@ class MainActivity : Activity() {
     private fun episodeButton(identity: PlaybackIdentity, title: String, released: String, detail: String): View {
         val tracker = weTrakrClient()
         val future = EpisodePresentation.future(released)
-        val number = if (identity.season == 0) "Special ${identity.episode}" else "S${identity.season} · E${identity.episode}"
+        val number = if (identity.season == 0) getString(R.string.t_special_x, identity.episode) else "S${identity.season} · E${identity.episode}"
         val base = "$number   $title\n${if (future) "Not yet released" else detail}"
         return button(base) {
-            if (future) toast("This episode has not been released yet") else navigate { showSources(identity) }
+            if (future) toast(getString(R.string.t_this_episode_has_not_been_released)) else navigate { showSources(identity) }
         }.apply {
             tag = "episode:${identity.imdbId}:${identity.season}:${identity.episode}"
             if (!future) {
@@ -3594,7 +3612,7 @@ class MainActivity : Activity() {
         val order = connected.joinToString(" → ") { DebridServices.name(it) }
         // Without a debrid service, addons can still supply direct links; torrents are left out.
         val artShown = flix && heroBackdrop.visibility == View.VISIBLE
-        val id = page(identity.title + suffix, if (connected.isEmpty()) "Direct links only. Torrent sources need a debrid service." else "Cached source priority: $order.")
+        val id = page(identity.title + suffix, if (connected.isEmpty()) getString(R.string.t_direct_links_only_torrent_sources_need) else getString(R.string.t_cached_source_priority_x, order))
         sourcesBackdrop(identity, keep = artShown)
         // The title's runtime (for each link's estimated bitrate) loads alongside the source search, which takes far
         // longer, so it is ready when the list appears however the sources were opened.
@@ -3608,7 +3626,7 @@ class MainActivity : Activity() {
             countdownSeconds = if (autoplayNext) 0 else SourceSearchPreferences.COUNTDOWN_SECONDS
         }
         activeSearch = search
-        val status = text("Searching for links…", 13, muted); body.addView(status, margin(-1, -2, top = 12, bottom = 12))
+        val status = text(getString(R.string.t_searching_for_links), 13, muted); body.addView(status, margin(-1, -2, top = 12, bottom = 12))
         if (search.autoplay == SourceSearchPreferences.WAIT) countdownHandler.postDelayed({
             search.waitOver = true; if (search.rendered && generation == search.generation && !isDestroyed) renderSearch(search)
         }, preferences.waitSeconds * 1000L)
@@ -3703,8 +3721,8 @@ class MainActivity : Activity() {
         if (keep != null && (keep.key == null || !DeviceLayout.tv)) body.post { if (generation == search.generation) scroller.scrollTo(0, keep.scrollY) }
     }
 
-    private fun searchLine(search: LinkSearch): String = if (search.answered == 0) "Searching ${search.total.takeIf { it > 0 } ?: ""} add-ons…".replace("  ", " ")
-        else "Searching ${search.answered}/${search.total} · waiting for ${search.waiting.take(3).joinToString(", ")}${if (search.waiting.size > 3) " +${search.waiting.size - 3}" else ""}"
+    private fun searchLine(search: LinkSearch): String = if (search.answered == 0) L10n.tr(R.string.t_searching_x_add_ons, "Searching %1\$s add-ons…", search.total.takeIf { it > 0 } ?: "").replace("  ", " ")
+        else L10n.tr(R.string.t_searching_x_x_waiting_for_x, "Searching %1\$s/%2\$s · waiting for %3\$s%4\$s", search.answered, search.total, search.waiting.take(3).joinToString(", "), if (search.waiting.size > 3) " +${search.waiting.size - 3}" else "")
 
     /** Good links (play at once, fit this device) among [items]; run on a worker to decide an early stop. */
     private fun goodLinkCount(items: List<SourceItem>, identity: PlaybackIdentity): Int {
@@ -3754,7 +3772,7 @@ class MainActivity : Activity() {
      */
     private fun hiddenByRules(source: SourceItem, rules: LinkRules.Rules, caps: DeviceVideoSupport.Caps, identity: PlaybackIdentity? = null, year: Int? = null): Boolean =
         rules.hides(source.title) || rules.hidesQuality(source.qualityHeight) ||
-        (LinkRules.HIDE_DV_ONLY in rules.hidePresets && DeviceVideoSupport.problem(source, caps)?.startsWith("DOLBY VISION ONLY") == true) ||
+        (LinkRules.HIDE_DV_ONLY in rules.hidePresets && DeviceVideoSupport.problem(source, caps) == DeviceVideoSupport.dolbyVisionOnlyNote()) ||
         (rules.hideOtherYears && identity != null && year != null && LinkRules.otherYear(source.title, identity.title, year))
 
     private fun maybeAutoplay(search: LinkSearch, checkOnPlay: Boolean) {
@@ -3771,7 +3789,7 @@ class MainActivity : Activity() {
         } else if (search.finished && autoplayCountdown == null) {
             // Nothing found fits: say so once and leave the choice to the viewer.
             search.autoplayDone = true
-            toast(if (store.get(AUTOPLAY_LIMIT_ON) == "true") "No link under your auto-play limit · pick one" else "No link can auto-play · pick one")
+            toast(if (store.get(AUTOPLAY_LIMIT_ON) == "true") getString(R.string.t_no_link_under_your_auto_play) else getString(R.string.t_no_link_can_auto_play_pick))
         }
     }
 
@@ -3793,7 +3811,7 @@ class MainActivity : Activity() {
                 if (left > 0) { updateCountdownLine(search); countdownHandler.postDelayed(this, minOf(left, 1_000L)); return }
                 autoplayCountdown = null; search.autoplayDone = true; search.banner?.visibility = View.GONE
                 val pick = autoplayPick(search) ?: return
-                toast("Playing the top result · ${pick.title.take(60)}"); resolve(pick, search.identity)
+                toast(getString(R.string.t_playing_the_top_result_x, pick.title.take(60))); resolve(pick, search.identity)
             }
         }
         autoplayCountdown = tick
@@ -3809,7 +3827,7 @@ class MainActivity : Activity() {
         val left = ((search.countdownEndsAt - android.os.SystemClock.elapsedRealtime() + 999) / 1000).coerceAtLeast(1)
         search.banner?.apply {
             visibility = View.VISIBLE
-            text = "▶  Playing ${SourceBadges.name(pick).lineSequence().firstOrNull().orEmpty().take(70)} in $left · ${if (DeviceLayout.tv) "press any key" else "tap anywhere"} to choose yourself"
+            text = getString(R.string.t_playing_x_in_x_x_to, SourceBadges.name(pick).lineSequence().firstOrNull().orEmpty().take(70), left, if (DeviceLayout.tv) L10n.tr(R.string.t_press_any_key, "press any key") else L10n.tr(R.string.t_tap_anywhere, "tap anywhere"))
         }
     }
 
@@ -3868,12 +3886,12 @@ class MainActivity : Activity() {
         if (ownLine) body.addView(counts, margin(-1, -2, bottom = 6))
         // Compact list: the service logos up top already say where links are cached, so the priority line goes.
         val compactList = LinkListPreferences.compact(this)
-        if (directOnly || !compactList) body.addView(text(if (directOnly) "Direct links only. Torrent sources need a debrid service."
-            else "Cached source priority: ${connected.joinToString(" → ") { DebridServices.name(it) }}.", 12, muted), margin(-1, -2, bottom = 18))
+        if (directOnly || !compactList) body.addView(text(if (directOnly) getString(R.string.t_direct_links_only_torrent_sources_need)
+            else getString(R.string.t_cached_source_priority_x, connected.joinToString(" → ") { DebridServices.name(it) }), 12, muted), margin(-1, -2, bottom = 18))
         else body.addView(View(this), margin(-1, 6))
         sourcesBackdrop(identity, keep = artShown)
         val sorting = SourceSortPreferences(this)
-        val sortButton: View = button("Sort · ${sorting.label}  ›") {
+        val sortButton: View = button(getString(R.string.t_sort_x, sorting.label)) {
             SourceSortPreferences.show(this, { if (search != null) renderSearch(search) else sourceResults(identity, sources, unavailable) }) {
                 navigate { playbackPage("preferred") }
             }
@@ -3881,28 +3899,28 @@ class MainActivity : Activity() {
         // The list opens on its first link, not on Sort above it.
         sortButton.tag = "${TvFocusController.SKIP_FIRST}:sort"
         body.addView(sortButton, margin(-1, if (compactList) 36 else 42, bottom = if (compactList) 6 else 8))
-        if (unavailable.isNotEmpty()) body.addView(text("Unavailable providers: ${unavailable.joinToString(", ")}. Other providers were searched.", 14, muted), margin(-1, -2, bottom = 8))
+        if (unavailable.isNotEmpty()) body.addView(text(getString(R.string.t_unavailable_providers_x_other_providers_were, unavailable.joinToString(", ")), 14, muted), margin(-1, -2, bottom = 8))
         if (search != null && !search.finished) body.addView(text(searchLine(search), 13, 0xFF46D369.toInt(), true), margin(-1, -2, bottom = 8))
         // Stop early is the viewer's choice, so it gets one short line; only a real time-out names the slow add-ons.
-        if (search != null && search.stoppedEarly && search.bestFull) body.addView(text("Stopped: best per quality found · " +
-            "${search.late.size} ${if (search.late.size == 1) "add-on" else "add-ons"} not waited for", 13, muted), margin(-1, -2, bottom = 8))
-        else if (search != null && search.stoppedEarly) body.addView(text("Stopped: ${SourceSearchPreferences(this).goodLinksNeeded} good links found · " +
-            "${search.late.size} ${if (search.late.size == 1) "add-on" else "add-ons"} not waited for", 13, muted), margin(-1, -2, bottom = 8))
-        else if (search != null && search.late.isNotEmpty()) body.addView(text("No answer in time: ${search.late.joinToString(", ")}. " +
-            "Give them longer in Settings → Playback → Links & sorting → Max search time.", 13, muted), margin(-1, -2, bottom = 8))
+        if (search != null && search.stoppedEarly && search.bestFull) body.addView(text(getString(R.string.t_stopped_best_per_quality_found) +
+            getString(R.string.t_x_x_not_waited_for, search.late.size, if (search.late.size == 1) "add-on" else "add-ons"), 13, muted), margin(-1, -2, bottom = 8))
+        else if (search != null && search.stoppedEarly) body.addView(text(getString(R.string.t_stopped_x_good_links_found, SourceSearchPreferences(this).goodLinksNeeded) +
+            getString(R.string.t_x_x_not_waited_for, search.late.size, if (search.late.size == 1) "add-on" else "add-ons"), 13, muted), margin(-1, -2, bottom = 8))
+        else if (search != null && search.late.isNotEmpty()) body.addView(text(getString(R.string.t_no_answer_in_time_x, search.late.joinToString(", ")) +
+            getString(R.string.t_give_them_longer_in_settings_playback), 13, muted), margin(-1, -2, bottom = 8))
         if (search != null) {
             val banner = text("", 14, ink, true).apply { visibility = View.GONE; background = rounded(withAlpha(accent, 60), 8); setPadding(dp(12), dp(8), dp(12), dp(8)) }
             body.addView(banner, margin(-1, -2, bottom = 8)); search.banner = banner
         }
-        if (!settled) { if (sources.isEmpty()) body.addView(text("Waiting for the first add-on to answer…", 15, muted)) }
-        else if (sources.isEmpty()) body.addView(text("No sources were returned. Try again later or check the source provider in Settings.", 15, muted))
+        if (!settled) { if (sources.isEmpty()) body.addView(text(getString(R.string.t_waiting_for_the_first_add_on), 15, muted)) }
+        else if (sources.isEmpty()) body.addView(text(getString(R.string.t_no_sources_were_returned_try_again), 15, muted))
         else if (lowOnly) {
-            body.addView(text("Only cam or other low-quality releases were found. Turn off Hide cam & low-quality releases in Settings → Playback to see them.", 15, muted))
+            body.addView(text(getString(R.string.t_only_cam_or_other_low_quality), 15, muted))
         } else if (playable.isEmpty() && hideUncached) {
-            body.addView(text("Only uncached links were found. Turn off Hide uncached links in Settings → Playback to see them.", 15, muted))
+            body.addView(text(getString(R.string.t_only_uncached_links_were_found_turn), 15, muted))
         } else if (playable.isEmpty()) {
-            body.addView(text("Only torrent sources were found. Connect a debrid service to play them.", 15, muted))
-            body.addView(button("Connect a debrid service in Settings") { navigate { debridServicesPage() } }, margin(-1, 44, top = 8))
+            body.addView(text(getString(R.string.t_only_torrent_sources_were_found_connect), 15, muted))
+            body.addView(button(getString(R.string.t_connect_a_debrid_service_in_settings)) { navigate { debridServicesPage() } }, margin(-1, 44, top = 8))
         }
         val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
         // The title's runtime (from details already loaded) turns each file size into an estimated bitrate.
@@ -3949,7 +3967,7 @@ class MainActivity : Activity() {
                 val visible = matchesSource(source, key); row.visibility = if (visible) View.VISIBLE else View.GONE; if (visible) shown++
             }
             val all = ordered.size
-            total.text = if (key == null) "$all ${if (all == 1) "link" else "links"}" else "${ordered.count { matchesSource(it, key) }} of $all links"
+            total.text = if (key == null) "$all ${if (all == 1) "link" else "links"}" else getString(R.string.t_x_of_x_links, ordered.count { matchesSource(it, key) }, all)
             paintChips()
         }
         fun chip(key: String?, description: String, filters: Boolean): LinearLayout = LinearLayout(this).apply {
@@ -3988,16 +4006,16 @@ class MainActivity : Activity() {
             val name = DebridServices.name(service)
             val fromAddons = ordered.count { viaAddon(it, service) }
             // Real-Debrid-style services can't say in advance what is cached (unless a debrid add-on already did).
-            if (service in checkOnPlay && fromAddons == 0) { if (torrents) count(service, "?", "$name checks the cache when a link is played") }
-            else ordered.count { service in it.cachedServices || viaAddon(it, service) }.takeIf { it > 0 }?.let { count(service, "$it", "$it links cached on $name") }
+            if (service in checkOnPlay && fromAddons == 0) { if (torrents) count(service, "?", getString(R.string.t_x_checks_the_cache_when_a, name)) }
+            else ordered.count { service in it.cachedServices || viaAddon(it, service) }.takeIf { it > 0 }?.let { count(service, "$it", getString(R.string.t_x_links_cached_on_x, it, name)) }
         }
-        if (Easynews.active(store)) ordered.count { Easynews.isHost(it.directUrl) }.let { count(PlaybackDebrid.EASYNEWS, "$it", "$it Easynews links") }
+        if (Easynews.active(store)) ordered.count { Easynews.isHost(it.directUrl) }.let { count(PlaybackDebrid.EASYNEWS, "$it", getString(R.string.t_x_easynews_links, it)) }
         // Add-ons with their own logo show their count when they returned links (scrapers' logos stay on their links only).
-        listOf(PlaybackDebrid.AIOSTREAMS to "AIOStreams", PlaybackDebrid.PENGUPLAY to "PenguPlay", PlaybackDebrid.CNCVERSE to "CNCVerse", PlaybackDebrid.PLAVIO to "PlavioHD", AddonBadges.ALTMOUNT to "AltMount", AddonBadges.STREAMNZB to "StreamNZB").forEach { (addon, name) ->
+        listOf(PlaybackDebrid.AIOSTREAMS to "AIOStreams", PlaybackDebrid.PENGUPLAY to getString(R.string.t_penguplay), PlaybackDebrid.CNCVERSE to "CNCVerse", PlaybackDebrid.PLAVIO to getString(R.string.t_plaviohd), AddonBadges.ALTMOUNT to getString(R.string.t_altmount), AddonBadges.STREAMNZB to getString(R.string.t_streamnzb)).forEach { (addon, name) ->
             ordered.count { PlaybackDebrid.addon(it) == addon }
                 .takeIf { it > 0 }?.let { count(addon, "$it", "$it $name links") }
         }
-        val totalChip = chip(null, "All links", filters = chips.isNotEmpty())
+        val totalChip = chip(null, getString(R.string.t_all_links), filters = chips.isNotEmpty())
         totalChip.addView(total)
         applySourceFilter(search?.sourceFilter)
         counts.addView(totalChip, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
@@ -4012,7 +4030,7 @@ class MainActivity : Activity() {
         fun addRow(source: SourceItem, fadeIn: Boolean) {
             if (!limitHeading && overLimit?.invoke(source) == true && !tooTall(source) && choices.childCount > 0) {
                 limitHeading = true
-                choices.addView(text("Over your auto-play limit", 14, muted, true), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10); bottomMargin = dp(8) })
+                choices.addView(text(getString(R.string.t_over_your_auto_play_limit), 14, muted, true), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10); bottomMargin = dp(8) })
             }
             val limitNote = problem(source)?.let { " · $it" }.orEmpty()
             // Only the badges, the release name and the source's own name: the scrapers' extra lines are left out.
@@ -4049,13 +4067,13 @@ class MainActivity : Activity() {
         }
         if (nextRow < ordered.size) body.post { moreRows() }
         if (search != null && (moreLinks > 0 || search.showAll) && sorting.bestPerQuality > 0) body.addView(button(
-            if (search.showAll) "Best ${sorting.bestPerQuality} per quality only" else "More links ($moreLinks)") {
+            if (search.showAll) getString(R.string.t_best_x_per_quality_only, sorting.bestPerQuality) else getString(R.string.t_more_links_x, moreLinks)) {
             // Opening the rest lands on the first link that was hidden, so the list grows in place below it.
             if (!search.showAll) ordered.toHashSet().let { shown -> fullOrder.firstOrNull { it !in shown } }?.let { pendingFocus = TvFocusSnapshot(TvChoiceKeys.source(it), scroller.scrollY) }
             search.showAll = !search.showAll; renderSearch(search)
         }, margin(-1, 40, top = 8))
-        if (search != null && ruleHidden > 0) body.addView(button(if (search.showHidden) "Hide the $ruleHidden filtered ${if (ruleHidden == 1) "link" else "links"} again"
-            else "Show $ruleHidden hidden ${if (ruleHidden == 1) "link" else "links"} (Link filters)") {
+        if (search != null && ruleHidden > 0) body.addView(button(if (search.showHidden) getString(R.string.t_hide_the_x_filtered_x_again, ruleHidden, if (ruleHidden == 1) "link" else "links")
+            else getString(R.string.t_show_x_hidden_x_link_filters, ruleHidden, if (ruleHidden == 1) "link" else "links")) {
             search.showHidden = !search.showHidden; renderSearch(search)
         }, margin(-1, 40, top = 8))
         focusAfterRender(id)
@@ -4193,15 +4211,15 @@ class MainActivity : Activity() {
     private fun debridMenu(source: SourceItem, identity: PlaybackIdentity, checkOnPlay: List<String>): Boolean {
         val options = PlaybackDebrid.choices(source, checkOnPlay).map { (service, label) -> label to { resolve(source, identity, service) } }
         if (options.isEmpty()) return false
-        holdMenu("Play with…", options)
+        holdMenu(getString(R.string.t_play_with), options)
         return true
     }
 
     /** Offcloud and TorBox can download a link that isn't cached; the other services cannot. */
     private fun offerTransfer(source: SourceItem, identity: PlaybackIdentity) {
         val service = DebridServices.connected(store).firstOrNull { it in DebridServices.TRANSFERS }
-        if (service == null) { toast("This link isn't cached on your debrid services. Choose another link."); return }
-        confirm("Add this source to your ${DebridServices.name(service)} account? A transfer may need time to finish.") {
+        if (service == null) { toast(getString(R.string.t_this_link_isn_t_cached_on)); return }
+        confirm(getString(R.string.t_add_this_source_to_your_x, DebridServices.name(service))) {
             resolve(source.copy(downloadService = service), identity)
         }
     }
@@ -4211,15 +4229,15 @@ class MainActivity : Activity() {
      * in order and the first cached one plays. [picked] is the row the viewer chose, offered for download if none play.
      */
     private fun resolveFirstCached(candidates: List<SourceItem>, identity: PlaybackIdentity, picked: SourceItem?) {
-        if (resolvingGeneration == generation || launchingPlayer) { toast("Preparing the selected source…"); return }
+        if (resolvingGeneration == generation || launchingPlayer) { toast(getString(R.string.t_preparing_the_selected_source)); return }
         cancelAutoplayCountdown()
         playingSourceText = ""; playingMedia = null
         val request = generation; resolvingGeneration = request
-        val progress = text("Checking links…", 14, accent); body.addView(progress, margin(-1, -2, top = 14))
+        val progress = text(getString(R.string.t_checking_links), 14, accent); body.addView(progress, margin(-1, -2, top = 14))
         worker.execute {
             try {
                 val prepared = resolver.prepareFirstCached(candidates, identity) { number, total, service ->
-                    runOnUiThread { if (request == generation) progress.text = "Checking link $number of $total on ${DebridServices.name(service)}…" }
+                    runOnUiThread { if (request == generation) progress.text = getString(R.string.t_checking_link_x_of_x_on, number, total, DebridServices.name(service)) }
                 }
                 runOnUiThread {
                     if (request == generation && !isFinishing && !isDestroyed) {
@@ -4227,7 +4245,7 @@ class MainActivity : Activity() {
                         when {
                             prepared == null -> {
                                 val tried = minOf(candidates.count { it.infoHash.isNotBlank() }, LinkDebrids.CHECK_LIMIT)
-                                toast("None of the first $tried links are cached. Pick another link.")
+                                toast(getString(R.string.t_none_of_the_first_x_links, tried))
                                 if (picked != null && DebridServices.connected(store).any { it in DebridServices.TRANSFERS }) offerTransfer(picked, identity)
                                 focusAfterRender(request)
                             }
@@ -4246,13 +4264,13 @@ class MainActivity : Activity() {
         current = { linkFiles(prepared) }
         val identity = prepared.identity
         val name = DebridServices.name(prepared.service)
-        val id = page("Choose a $name video", "Choose the correct file for ${identity.title}.")
+        val id = page(getString(R.string.t_choose_a_x_video, name), getString(R.string.t_choose_the_correct_file_for_x, identity.title))
         val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
         prepared.files.forEach { file ->
             choices.addChoice(TvChoiceRow(this, "${prepared.service}:${identity.imdbId}:${file.id}", file.name,
                 if (file.size > 0) "${file.size / (1024 * 1024)} MB" else "$name video", palette = theme.palette) { playLinkFile(prepared, file) })
         }
-        if (prepared.files.isEmpty()) body.addView(text("No eligible video files are available. Go back and choose another source.", 15, muted))
+        if (prepared.files.isEmpty()) body.addView(text(getString(R.string.t_no_eligible_video_files_are_available), 15, muted))
         if (pendingFocus == null) prepared.preferredFileId?.let { pendingFocus = TvFocusSnapshot("${prepared.service}:${identity.imdbId}:$it", 0) }
         focusAfterRender(id)
     }
@@ -4272,13 +4290,13 @@ class MainActivity : Activity() {
 
     /** [service] plays the link on that debrid service instead of the preferred one (chosen by holding OK on a link). */
     private fun resolve(source: SourceItem, identity: PlaybackIdentity, service: String? = null) {
-        if (resolvingGeneration == generation || launchingPlayer) { toast("Preparing the selected source…"); return }
+        if (resolvingGeneration == generation || launchingPlayer) { toast(getString(R.string.t_preparing_the_selected_source)); return }
         cancelAutoplayCountdown()
         // A show's next episode auto-plays from the same release group when it can, so quality stays the same.
         if (identity.type == "series") LinkRules.releaseGroup(source.title)?.let { getSharedPreferences("pov_last_group", 0).edit().putString(identity.imdbId, it).apply() }
         playingSourceText = "${source.title} · ${source.detail}"; playingMedia = playingSourceText to source.sizeBytes
         val request = generation; resolvingGeneration = request
-        val progress = text("Preparing your video…", 14, accent); body.addView(progress, margin(-1, -2, top = 14))
+        val progress = text(getString(R.string.t_preparing_your_video), 14, accent); body.addView(progress, margin(-1, -2, top = 14))
         worker.execute {
             try {
                 val prepared = resolver.prepare(source, identity, service)
@@ -4315,13 +4333,13 @@ class MainActivity : Activity() {
 
     private fun offcloudFiles(prepared: PreparedSource.OffcloudFiles) {
         current = { offcloudFiles(prepared) }
-        val id = page("Choose an Offcloud video", "Choose the correct file for ${prepared.identity.title}.")
+        val id = page(getString(R.string.t_choose_an_offcloud_video), getString(R.string.t_choose_the_correct_file_for_x, prepared.identity.title))
         val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
         val sourceKey = prepared.requestId ?: "cache:${prepared.identity.imdbId}:${prepared.identity.season}:${prepared.identity.episode}"
         prepared.files.forEach { file ->
             val focusKey = "offcloud:$sourceKey:${file.id}"
             choices.addChoice(TvChoiceRow(this, focusKey, file.name,
-                if (file.size > 0) "${file.size / (1024 * 1024)} MB" else "Offcloud video",
+                if (file.size > 0) "${file.size / (1024 * 1024)} MB" else getString(R.string.t_offcloud_video),
                 palette = theme.palette) { playOffcloudFile(prepared, file) })
         }
         if (pendingFocus == null) prepared.preferredFileId?.let {
@@ -4332,7 +4350,7 @@ class MainActivity : Activity() {
 
     private fun playOffcloudFile(prepared: PreparedSource.OffcloudFiles, file: OffcloudFile) {
         if (!OffcloudApi(store).owns(prepared)) {
-            toast("Connect Offcloud and select the source again"); return
+            toast(getString(R.string.t_connect_offcloud_and_select_the_source)); return
         }
         val identity = prepared.identity
         mediaFile(file.name, file.size)
@@ -4343,13 +4361,13 @@ class MainActivity : Activity() {
         current = { preparedFiles(prepared) }
         val identity = prepared.identity
         val suffix = if (identity.type == "series") " · S${identity.season} E${identity.episode}" else ""
-        val id = page("Choose a video version", "Choose the correct file for ${identity.title}$suffix. Each row plays that exact file.")
+        val id = page(getString(R.string.t_choose_a_video_version), getString(R.string.t_choose_the_correct_file_for_x_2, identity.title, suffix))
         val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
         prepared.files.forEach { file ->
             choices.addChoice(TvChoiceRow(this, TvChoiceKeys.file(prepared.folder.kind, prepared.folder.id, file.id),
                 file.name, fileSize(file), palette = theme.palette) { playPreparedFile(prepared, file) })
         }
-        if (prepared.files.isEmpty()) body.addView(text("No eligible video files are available. Go back and choose another source.", 15, muted))
+        if (prepared.files.isEmpty()) body.addView(text(getString(R.string.t_no_eligible_video_files_are_available), 15, muted))
         if (pendingFocus == null) prepared.preferredFileId?.let { fileId ->
             pendingFocus = TvFocusSnapshot(TvChoiceKeys.file(prepared.folder.kind, prepared.folder.id, fileId), 0)
         }
@@ -4361,15 +4379,15 @@ class MainActivity : Activity() {
         val identity = prepared.identity
         prepared.accountTag?.let { tag ->
             if (!torbox.ownsTag(tag)) {
-                toast("Connect TorBox and select the source again"); return
+                toast(getString(R.string.t_connect_torbox_and_select_the_source)); return
             }
             val key = "media:${identity.imdbId}:${identity.season}:${identity.episode}"
             prepared.resolvedUrls[file.id]?.let { play(it, identity.title, identity, key, "torbox"); return }
-            val hash = prepared.sourceInfoHash ?: run { toast("Select the source again"); return }
+            val hash = prepared.sourceInfoHash ?: run { toast(getString(R.string.t_select_the_source_again)); return }
             streamFile(prepared.folder, file, identity.title, identity, key) {
-                check(torbox.ownsTag(tag)) { "The TorBox account changed. Select the source again." }
-                val resolved = torbox.prepareCached(SourceItem(file.name, "TorBox", hash, cached = true), identity, selectedFile = file)
-                check(resolved.accountTag == tag && torbox.ownsTag(tag)) { "The TorBox account changed. Select the source again." }
+                check(torbox.ownsTag(tag)) { getString(R.string.t_the_torbox_account_changed_select_the) }
+                val resolved = torbox.prepareCached(SourceItem(file.name, getString(R.string.t_torbox), hash, cached = true), identity, selectedFile = file)
+                check(resolved.accountTag == tag && torbox.ownsTag(tag)) { getString(R.string.t_the_torbox_account_changed_select_the) }
                 resolved.resolvedUrls.values.single()
             }
             return
@@ -4385,7 +4403,7 @@ class MainActivity : Activity() {
     private fun selectedCloud() {
         val services = DebridServices.connected(store).filter { it in DebridServices.TRANSFERS }
         current = { selectedCloud() }; destination = "library"; refreshNavigation()
-        val id = page("Library", "Your debrid clouds and add-on libraries.")
+        val id = page(getString(R.string.t_library), getString(R.string.t_your_debrid_clouds_and_add_on))
         val providers = runCatching { SourceProviders(store).load() }.getOrDefault(emptyList())
         val nzbLibraries = streamNzbLibraries(providers)
         val altLibraries = altMountLibraries(providers)
@@ -4401,23 +4419,23 @@ class MainActivity : Activity() {
                 }
                 return@read
             }
-            if (services.isEmpty() && libraries.isEmpty() && nzbLibraries.isEmpty() && altLibraries.isEmpty()) body.addView(button("Connect a debrid service in Settings") { navigate { debridServicesPage() } }, margin(-1, 44))
+            if (services.isEmpty() && libraries.isEmpty() && nzbLibraries.isEmpty() && altLibraries.isEmpty()) body.addView(button(getString(R.string.t_connect_a_debrid_service_in_settings)) { navigate { debridServicesPage() } }, margin(-1, 44))
             services.forEach { service ->
-                body.addView(button("${DebridServices.name(service)} cloud  ›") {
+                body.addView(button(getString(R.string.t_x_cloud, DebridServices.name(service))) {
                     navigate { if (service == "offcloud") offcloudCloud() else cloud("torrents") }
                 }, margin(-1, 44, bottom = 8))
             }
             libraries.forEach { library ->
-                body.addView(button("${library.provider} · AIOStreams library  ›") { navigate { aioLibraryPage(library) } }, margin(-1, 44, bottom = 8))
+                body.addView(button(getString(R.string.t_x_aiostreams_library, library.provider)) { navigate { aioLibraryPage(library) } }, margin(-1, 44, bottom = 8))
             }
             nzbLibraries.forEach { library ->
                 val signedIn = streamNzbToken(library.origin) != null
-                body.addView(button("${library.provider.name} · StreamNZB library${if (signedIn) "" else " · sign in"}  ›") { openStreamNzbLibrary(library) },
+                body.addView(button(getString(R.string.t_x_streamnzb_library_x, library.provider.name, if (signedIn) "" else L10n.tr(R.string.t_sign_in_2, " · sign in"))) { openStreamNzbLibrary(library) },
                     margin(-1, 44, bottom = 8))
             }
             altLibraries.forEach { library ->
                 val signedIn = altMountLogin(library.origin) != null
-                body.addView(button("${library.provider.name} · AltMount library${if (signedIn) "" else " · sign in"}  ›") { openAltMountLibrary(library) },
+                body.addView(button(getString(R.string.t_x_altmount_library_x, library.provider.name, if (signedIn) "" else L10n.tr(R.string.t_sign_in_2, " · sign in"))) { openAltMountLibrary(library) },
                     margin(-1, 44, bottom = 8))
             }
             focusAfterRender(id)
@@ -4451,29 +4469,29 @@ class MainActivity : Activity() {
      */
     private fun signInStreamNzb(library: StreamNzbSource, then: () -> Unit = {}) {
         val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
-        content.addView(text("Sign in with your StreamNZB dashboard login (${library.origin.removePrefix("https://")}). Only the sign-in token is kept on this device.", 13, muted), margin(-1, -2, bottom = 8))
+        content.addView(text(L10n.tr(R.string.t_sign_in_with_your_streamnzb_dashboard, "Sign in with your StreamNZB dashboard login (%1\$s). Only the sign-in token is kept on this device.", library.origin.removePrefix("https://")), 13, muted), margin(-1, -2, bottom = 8))
         val user = TvEditText(this).apply {
-            hint = "StreamNZB username"; setSingleLine()
+            hint = L10n.tr(R.string.t_streamnzb_username, "StreamNZB username"); setSingleLine()
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         }
         val password = TvEditText(this).apply {
-            hint = "StreamNZB password"; setSingleLine()
+            hint = L10n.tr(R.string.t_streamnzb_password, "StreamNZB password"); setSingleLine()
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         }
         val status = text("", 14, muted)
         content.addView(user, margin(-1, -2)); content.addView(password, margin(-1, -2, top = 8)); content.addView(status, margin(-1, -2, top = 8))
         val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
-        val dialog = AlertDialog.Builder(this).setTitle("StreamNZB library").setView(content)
-            .setPositiveButton("Sign in", null).setNegativeButton("Cancel", null).create()
+        val dialog = AlertDialog.Builder(this).setTitle(L10n.tr(R.string.t_streamnzb_library, "StreamNZB library")).setView(content)
+            .setPositiveButton(L10n.tr(R.string.t_sign_in, "Sign in"), null).setNegativeButton(L10n.tr(R.string.t_cancel, "Cancel"), null).create()
         dialog.setOnDismissListener { cancelled.set(true); password.setText("") }
         dialog.show(); dialog.submitOnEnter(password)
         dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
             val name = user.text.toString().trim(); val secret = password.text.toString()
-            if (name.isBlank()) { user.error = "Enter your StreamNZB username"; return@setOnClickListener }
-            if (secret.isEmpty()) { password.error = "Enter your StreamNZB password"; return@setOnClickListener }
+            if (name.isBlank()) { user.error = L10n.tr(R.string.t_enter_your_streamnzb_username, "Enter your StreamNZB username"); return@setOnClickListener }
+            if (secret.isEmpty()) { password.error = L10n.tr(R.string.t_enter_your_streamnzb_password, "Enter your StreamNZB password"); return@setOnClickListener }
             val request = generation
             val connect = dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE)
-            connect.isEnabled = false; status.text = "Signing in to StreamNZB…"
+            connect.isEnabled = false; status.text = L10n.tr(R.string.t_signing_in_to_streamnzb, "Signing in to StreamNZB…")
             worker.execute {
                 try {
                     val token = StreamNzbLibrary().login(library.origin, name, secret)
@@ -4482,7 +4500,7 @@ class MainActivity : Activity() {
                     runOnUiThread {
                         if (request == generation && !isFinishing && !isDestroyed) {
                             if (dialog.isShowing) dialog.dismiss()
-                            toast("Signed in to the StreamNZB library"); then()
+                            toast(L10n.tr(R.string.t_signed_in_to_the_streamnzb_library, "Signed in to the StreamNZB library")); then()
                         }
                     }
                 } catch (error: Exception) {
@@ -4495,10 +4513,10 @@ class MainActivity : Activity() {
     /** The releases StreamNZB has kept, newest first; one plays through the StreamNZB add-on. */
     private fun streamNzbLibraryPage(library: StreamNzbSource, shown: Int = StreamNzbLibrary.PAGE) {
         current = { streamNzbLibraryPage(library, shown) }; destination = "library"; refreshNavigation()
-        val id = page("${library.provider.name} library", "Releases StreamNZB has kept, newest first. Select one to play it.")
+        val id = page("${library.provider.name} library", getString(R.string.t_releases_streamnzb_has_kept_newest_first))
         val token = streamNzbToken(library.origin)
         if (token == null) {
-            body.addView(button("Sign in to the StreamNZB library  ›") { signInStreamNzb(library) { streamNzbLibraryPage(library) } }, margin(-1, 44))
+            body.addView(button(getString(R.string.t_sign_in_to_the_streamnzb_library)) { signInStreamNzb(library) { streamNzbLibraryPage(library) } }, margin(-1, 44))
             focusAfterRender(id); return
         }
         val api = StreamNzbLibrary()
@@ -4518,15 +4536,15 @@ class MainActivity : Activity() {
         }) { result ->
             if (result == null) {
                 store.putAll(mapOf(StreamNzbLibrary.TOKEN to ""))
-                body.addView(text("StreamNZB signed this device out. Sign in again to see the library.", 15, muted), margin(-1, -2, bottom = 10))
-                body.addView(button("Sign in again  ›") { signInStreamNzb(library) { streamNzbLibraryPage(library) } }, margin(-1, 44))
+                body.addView(text(getString(R.string.t_streamnzb_signed_this_device_out_sign), 15, muted), margin(-1, -2, bottom = 10))
+                body.addView(button(getString(R.string.t_sign_in_again)) { signInStreamNzb(library) { streamNzbLibraryPage(library) } }, margin(-1, 44))
                 focusAfterRender(id); return@read
             }
             val (entries, more) = result
-            if (entries.isEmpty()) body.addView(text("Nothing in this library yet. Releases you stream through StreamNZB appear here.", 15, muted))
+            if (entries.isEmpty()) body.addView(text(getString(R.string.t_nothing_in_this_library_yet_releases), 15, muted))
             val open: (StreamNzbLibrary.Item) -> Unit = { item ->
                 val request = generation
-                toast("Opening ${item.release.take(60)}…")
+                toast(getString(R.string.t_opening_x, item.release.take(60)))
                 worker.execute {
                     val link = runCatching { api.link(library.endpoint, item) }.getOrNull()
                     runOnUiThread {
@@ -4535,23 +4553,23 @@ class MainActivity : Activity() {
                             link != null -> { playingAddon = AddonBadges.STREAMNZB; play(link.url, item.release, null, "", headers = link.headers) }
                             // Not offered on its own right now: the title's links, where StreamNZB lists it among the others.
                             item.contentId.startsWith("tt") -> {
-                                toast("Pick ${item.release.take(50)} from this title's links")
+                                toast(getString(R.string.t_pick_x_from_this_title_s, item.release.take(50)))
                                 navigate { showSources(PlaybackIdentity(item.contentId, if (item.type == "movie") "movie" else "series", item.release, item.season, item.episode)) }
                             }
-                            else -> toast("StreamNZB has no playable link for this release right now.")
+                            else -> toast(getString(R.string.t_streamnzb_has_no_playable_link_for))
                         }
                     }
                 }
             }
             fun caption(item: StreamNzbLibrary.Item) = listOfNotNull(
                 if (item.type != "movie" && item.season > 0 && item.episode > 0) "S${item.season} E${item.episode}" else null,
-                SourceMetadata.sizeLabel(item.sizeBytes).takeIf { it.isNotBlank() }, "StreamNZB library").joinToString(" · ")
+                SourceMetadata.sizeLabel(item.sizeBytes).takeIf { it.isNotBlank() }, getString(R.string.t_streamnzb_library)).joinToString(" · ")
             if (flix) libraryGrid(entries.map { item -> LibraryEntry("snzblib:${item.id}", item.release, caption(item)) { open(item) } })
             else {
                 val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
                 entries.forEach { item -> choices.addChoice(cloudRow("snzblib:${item.id}", item.release, caption(item)) { open(item) }) }
             }
-            if (more) body.addView(button("Show more") { streamNzbLibraryPage(library, shown + StreamNzbLibrary.PAGE) }.apply { gravity = Gravity.CENTER },
+            if (more) body.addView(button(getString(R.string.t_show_more)) { streamNzbLibraryPage(library, shown + StreamNzbLibrary.PAGE) }.apply { gravity = Gravity.CENTER },
                 margin(200, 44, top = 12))
             focusAfterRender(id)
         }
@@ -4584,29 +4602,29 @@ class MainActivity : Activity() {
     /** AltMount's library is its WebDAV folders: the viewer enters the WebDAV login once (it is needed to play files). */
     private fun signInAltMount(library: AltMountSource, then: () -> Unit = {}) {
         val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
-        content.addView(text("Enter AltMount's WebDAV login (${library.origin.removePrefix("https://")}${AltMountLibrary.ROOT}). It is kept encrypted on this device and used to play library files.", 13, muted), margin(-1, -2, bottom = 8))
+        content.addView(text(L10n.tr(R.string.t_enter_altmount_s_webdav_login_x, "Enter AltMount's WebDAV login (%1\$s%2\$s). It is kept encrypted on this device and used to play library files.", library.origin.removePrefix("https://"), AltMountLibrary.ROOT), 13, muted), margin(-1, -2, bottom = 8))
         val user = TvEditText(this).apply {
-            hint = "WebDAV username"; setSingleLine()
+            hint = L10n.tr(R.string.t_webdav_username, "WebDAV username"); setSingleLine()
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         }
         val password = TvEditText(this).apply {
-            hint = "WebDAV password"; setSingleLine()
+            hint = L10n.tr(R.string.t_webdav_password, "WebDAV password"); setSingleLine()
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         }
         val status = text("", 14, muted)
         content.addView(user, margin(-1, -2)); content.addView(password, margin(-1, -2, top = 8)); content.addView(status, margin(-1, -2, top = 8))
         val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
-        val dialog = AlertDialog.Builder(this).setTitle("AltMount library").setView(content)
-            .setPositiveButton("Connect", null).setNegativeButton("Cancel", null).create()
+        val dialog = AlertDialog.Builder(this).setTitle(L10n.tr(R.string.t_altmount_library, "AltMount library")).setView(content)
+            .setPositiveButton(L10n.tr(R.string.t_connect, "Connect"), null).setNegativeButton(L10n.tr(R.string.t_cancel, "Cancel"), null).create()
         dialog.setOnDismissListener { cancelled.set(true); password.setText("") }
         dialog.show(); dialog.submitOnEnter(password)
         dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
             val name = user.text.toString().trim(); val secret = password.text.toString()
-            if (name.isBlank()) { user.error = "Enter the WebDAV username"; return@setOnClickListener }
-            if (secret.isEmpty()) { password.error = "Enter the WebDAV password"; return@setOnClickListener }
+            if (name.isBlank()) { user.error = L10n.tr(R.string.t_enter_the_webdav_username, "Enter the WebDAV username"); return@setOnClickListener }
+            if (secret.isEmpty()) { password.error = L10n.tr(R.string.t_enter_the_webdav_password, "Enter the WebDAV password"); return@setOnClickListener }
             val request = generation
             val connect = dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE)
-            connect.isEnabled = false; status.text = "Checking AltMount's WebDAV…"
+            connect.isEnabled = false; status.text = L10n.tr(R.string.t_checking_altmount_s_webdav, "Checking AltMount's WebDAV…")
             worker.execute {
                 try {
                     AltMountLibrary().verify(library.origin, name, secret)
@@ -4615,7 +4633,7 @@ class MainActivity : Activity() {
                     runOnUiThread {
                         if (request == generation && !isFinishing && !isDestroyed) {
                             if (dialog.isShowing) dialog.dismiss()
-                            toast("AltMount library connected"); then()
+                            toast(L10n.tr(R.string.t_altmount_library_connected, "AltMount library connected")); then()
                         }
                     }
                 } catch (error: Exception) {
@@ -4628,10 +4646,10 @@ class MainActivity : Activity() {
     /** AltMount's imported files, newest first; one plays straight from WebDAV. */
     private fun altMountLibraryPage(library: AltMountSource, shown: Int = AIO_LIBRARY_PAGE) {
         current = { altMountLibraryPage(library, shown) }; destination = "library"; refreshNavigation()
-        val id = page("${library.provider.name} library", "Files AltMount has imported, newest first. Select one to play it.")
+        val id = page("${library.provider.name} library", getString(R.string.t_files_altmount_has_imported_newest_first))
         val login = altMountLogin(library.origin)
         if (login == null) {
-            body.addView(button("Connect the AltMount library  ›") { signInAltMount(library) { altMountLibraryPage(library) } }, margin(-1, 44))
+            body.addView(button(getString(R.string.t_connect_the_altmount_library)) { signInAltMount(library) { altMountLibraryPage(library) } }, margin(-1, 44))
             focusAfterRender(id); return
         }
         read(id, {
@@ -4640,25 +4658,25 @@ class MainActivity : Activity() {
         }) { files ->
             if (files == null) {
                 store.putAll(mapOf(AltMountLibrary.PASSWORD to ""))
-                body.addView(text("AltMount no longer accepts the saved WebDAV login. Connect again to see the library.", 15, muted), margin(-1, -2, bottom = 10))
-                body.addView(button("Connect again  ›") { signInAltMount(library) { altMountLibraryPage(library) } }, margin(-1, 44))
+                body.addView(text(getString(R.string.t_altmount_no_longer_accepts_the_saved), 15, muted), margin(-1, -2, bottom = 10))
+                body.addView(button(getString(R.string.t_connect_again)) { signInAltMount(library) { altMountLibraryPage(library) } }, margin(-1, 44))
                 focusAfterRender(id); return@read
             }
-            if (files.isEmpty()) body.addView(text("Nothing in this library yet. Files AltMount imports appear here.", 15, muted))
-            val headers = mapOf("Authorization" to AltMountLibrary.authorization(login.first, login.second))
+            if (files.isEmpty()) body.addView(text(getString(R.string.t_nothing_in_this_library_yet_files), 15, muted))
+            val headers = mapOf(getString(R.string.t_authorization) to AltMountLibrary.authorization(login.first, login.second))
             val open: (AltMountLibrary.File) -> Unit = { file ->
                 playingAddon = AddonBadges.ALTMOUNT
                 play(AltMountLibrary.url(library.origin, file), file.name, null, "", headers = headers)
             }
             fun caption(file: AltMountLibrary.File) = listOfNotNull(file.folder.takeIf { it.isNotBlank() },
-                SourceMetadata.sizeLabel(file.sizeBytes).takeIf { it.isNotBlank() }, "AltMount library").joinToString(" · ")
+                SourceMetadata.sizeLabel(file.sizeBytes).takeIf { it.isNotBlank() }, getString(R.string.t_altmount_library)).joinToString(" · ")
             val page = files.take(shown)
             if (flix) libraryGrid(page.map { file -> LibraryEntry("altlib:${file.path}", file.name, caption(file)) { open(file) } })
             else {
                 val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
                 page.forEach { file -> choices.addChoice(cloudRow("altlib:${file.path}", file.name, caption(file)) { open(file) }) }
             }
-            if (files.size > shown) body.addView(button("Show more") { altMountLibraryPage(library, shown + AIO_LIBRARY_PAGE) }.apply { gravity = Gravity.CENTER },
+            if (files.size > shown) body.addView(button(getString(R.string.t_show_more)) { altMountLibraryPage(library, shown + AIO_LIBRARY_PAGE) }.apply { gravity = Gravity.CENTER },
                 margin(200, 44, top = 12))
             focusAfterRender(id)
         }
@@ -4667,7 +4685,7 @@ class MainActivity : Activity() {
     /** An AIOStreams library: the files streamed through it (Usenet and others), with posters found from the names. */
     private fun aioLibraryPage(library: AioLibrary.Source, shown: Int = AIO_LIBRARY_PAGE) {
         current = { aioLibraryPage(library, shown) }; destination = "library"; refreshNavigation()
-        val id = page("${library.provider} library", "Files in your AIOStreams library, newest first. Select one to play it.")
+        val id = page("${library.provider} library", getString(R.string.t_files_in_your_aiostreams_library_newest))
         val api = AioLibrary()
         read(id, {
             // Pages of AIOStreams' size until [shown] files are loaded, or the library ends.
@@ -4679,25 +4697,25 @@ class MainActivity : Activity() {
             }
             all
         }) { entries ->
-            if (entries.isEmpty()) body.addView(text("Nothing in this library yet. Files you stream through AIOStreams appear here.", 15, muted))
+            if (entries.isEmpty()) body.addView(text(getString(R.string.t_nothing_in_this_library_yet_files_2), 15, muted))
             val open: (AioLibrary.Entry) -> Unit = { entry ->
                 val request = generation
-                toast("Opening ${entry.name.take(60)}…")
+                toast(getString(R.string.t_opening_x, entry.name.take(60)))
                 worker.execute {
                     val link = runCatching { api.link(library, entry) }.getOrNull()
                     runOnUiThread {
                         if (request != generation || isDestroyed) return@runOnUiThread
-                        if (link == null) toast("AIOStreams has no playable link for this file right now.")
+                        if (link == null) toast(getString(R.string.t_aiostreams_has_no_playable_link_for))
                         else { playingAddon = AddonBadges.AIOSTREAMS; play(link.url, entry.name, null, "", headers = link.headers) }
                     }
                 }
             }
-            if (flix) libraryGrid(entries.map { entry -> LibraryEntry("aiolib:${entry.id}", entry.name, "AIOStreams library") { open(entry) } })
+            if (flix) libraryGrid(entries.map { entry -> LibraryEntry("aiolib:${entry.id}", entry.name, getString(R.string.t_aiostreams_library)) { open(entry) } })
             else {
                 val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
-                entries.forEach { entry -> choices.addChoice(cloudRow("aiolib:${entry.id}", entry.name, "AIOStreams library") { open(entry) }) }
+                entries.forEach { entry -> choices.addChoice(cloudRow("aiolib:${entry.id}", entry.name, getString(R.string.t_aiostreams_library)) { open(entry) }) }
             }
-            if (entries.size >= shown) body.addView(button("Show more") { aioLibraryPage(library, shown + AIO_LIBRARY_PAGE) }.apply { gravity = Gravity.CENTER },
+            if (entries.size >= shown) body.addView(button(getString(R.string.t_show_more)) { aioLibraryPage(library, shown + AIO_LIBRARY_PAGE) }.apply { gravity = Gravity.CENTER },
                 margin(200, 44, top = 12))
             focusAfterRender(id)
         }
@@ -4705,20 +4723,20 @@ class MainActivity : Activity() {
 
     private fun offcloudCloud() {
         current = { offcloudCloud() }; destination = "library"; refreshNavigation()
-        val id = page("My Offcloud", "Your Offcloud downloads. Open a completed download to choose a video.")
+        val id = page(getString(R.string.t_my_offcloud), getString(R.string.t_your_offcloud_downloads_open_a_completed))
         val api = OffcloudApi(store)
         if (!api.connected()) {
-            body.addView(button("Connect Offcloud in Settings") { navigate { debridServicesPage() } }, margin(260, 44)); return
+            body.addView(button(getString(R.string.t_connect_offcloud_in_settings)) { navigate { debridServicesPage() } }, margin(260, 44)); return
         }
-        body.addView(button("Refresh downloads") { offcloudCloud() }, margin(220, 44, bottom = 10))
+        body.addView(button(getString(R.string.t_refresh_downloads)) { offcloudCloud() }, margin(220, 44, bottom = 10))
         read(id, { api.cloud() }) { downloads ->
-            if (downloads.isEmpty()) body.addView(text("No Offcloud downloads yet. Choose a source from a movie or episode.", 15, muted))
+            if (downloads.isEmpty()) body.addView(text(getString(R.string.t_no_offcloud_downloads_yet_choose_a), 15, muted))
             val open: (OffcloudDownload) -> Unit = { download ->
                 if (download.status == "downloaded") navigate { offcloudCloudFiles(download) }
-                else toast("This download is ${download.status.ifBlank { "not ready" }}. Refresh after Offcloud finishes processing it.")
+                else toast(getString(R.string.t_this_download_is_x_refresh_after, download.status.ifBlank { L10n.tr(R.string.t_not_ready_2, "not ready") }))
             }
             if (flix) libraryGrid(downloads.map { download ->
-                LibraryEntry("offcloud:${download.id}", download.name, if (download.status == "downloaded") "Ready" else download.status.ifBlank { "Not ready" }) { open(download) }
+                LibraryEntry("offcloud:${download.id}", download.name, if (download.status == "downloaded") getString(R.string.t_ready) else download.status.ifBlank { getString(R.string.t_not_ready) }) { open(download) }
             }) else {
                 val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
                 downloads.forEach { download -> choices.addChoice(cloudRow("offcloud:${download.id}", download.name, download.status) { open(download) }) }
@@ -4729,16 +4747,16 @@ class MainActivity : Activity() {
 
     private fun offcloudCloudFiles(download: OffcloudDownload) {
         current = { offcloudCloudFiles(download) }
-        val id = page(download.name, "Choose a video file from Offcloud.")
+        val id = page(download.name, getString(R.string.t_choose_a_video_file_from_offcloud))
         val api = OffcloudApi(store)
         read(id, { api.cloudFiles(download) }) { files ->
             val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
-            if (files.isEmpty()) body.addView(text("No playable video files in this download.", 15, muted))
+            if (files.isEmpty()) body.addView(text(getString(R.string.t_no_playable_video_files_in_this), 15, muted))
             files.forEach { file ->
                 choices.addChoice(cloudRow("offcloud:${download.id}:${file.id}", file.name,
-                    if (file.size > 0) "${file.size / (1024 * 1024)} MB" else "Offcloud video") {
+                    if (file.size > 0) "${file.size / (1024 * 1024)} MB" else getString(R.string.t_offcloud_video)) {
                     if (api.ownsTag(download.accountTag)) play(file.url, file.name, null, "offcloud:${download.id}:${file.id}", "offcloud")
-                    else toast("The Offcloud account changed. Refresh your library.")
+                    else toast(getString(R.string.t_the_offcloud_account_changed_refresh_your))
                 })
             }
             focusAfterRender(id)
@@ -4748,21 +4766,21 @@ class MainActivity : Activity() {
     private fun cloud(kind: String) {
         current = { cloud(kind) }
         destination = "library"; refreshNavigation()
-        val id = page("My TorBox", "Your library, ready for the big screen.")
-        if (!store.has("torbox.token")) { body.addView(button("Connect TorBox") { startTorBox() }, margin(190, 44)); return }
-        if (DeviceLayout.phone) phoneTabs(listOf("torrents" to "Torrents", "usenet" to "Usenet", "webdl" to "Web").map { (key, title) -> title to { cloud(key) } })
+        val id = page(getString(R.string.t_my_torbox), getString(R.string.t_your_library_ready_for_the_big))
+        if (!store.has("torbox.token")) { body.addView(button(getString(R.string.t_connect_torbox)) { startTorBox() }, margin(190, 44)); return }
+        if (DeviceLayout.phone) phoneTabs(listOf("torrents" to getString(R.string.t_torrents), "usenet" to getString(R.string.t_usenet), "webdl" to getString(R.string.t_web)).map { (key, title) -> title to { cloud(key) } })
         else {
             val tabs = horizontalRow()
-            listOf("torrents" to "Torrents", "usenet" to "Usenet", "webdl" to "Web downloads").forEach { (key, title) -> tabs.addView(button(title) { cloud(key) }, margin(150, 39, right = 8)) }
+            listOf("torrents" to getString(R.string.t_torrents), "usenet" to getString(R.string.t_usenet), "webdl" to getString(R.string.t_web_downloads)).forEach { (key, title) -> tabs.addView(button(title) { cloud(key) }, margin(150, 39, right = 8)) }
         }
         read(id, { torbox.cloud(kind) }) { folders ->
-            if (folders.isEmpty()) body.addView(text("Nothing here yet. Your TorBox downloads will appear in this library.", 15, muted))
+            if (folders.isEmpty()) body.addView(text(getString(R.string.t_nothing_here_yet_your_torbox_downloads), 15, muted))
             if (flix) libraryGrid(folders.map { folder ->
-                LibraryEntry(TvChoiceKeys.folder(folder.kind, folder.id), folder.name, if (folder.ready) "Ready" else "Not ready yet") { navigate { cloudFolder(folder) } }
+                LibraryEntry(TvChoiceKeys.folder(folder.kind, folder.id), folder.name, if (folder.ready) getString(R.string.t_ready) else getString(R.string.t_not_ready_yet)) { navigate { cloudFolder(folder) } }
             }) else {
                 val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
                 folders.forEach { folder -> choices.addChoice(cloudRow(TvChoiceKeys.folder(folder.kind, folder.id),
-                    folder.name, if (folder.ready) "Ready to browse" else "Not ready yet") {
+                    folder.name, if (folder.ready) getString(R.string.t_ready_to_browse) else getString(R.string.t_not_ready_yet)) {
                     navigate { cloudFolder(folder) }
                 }) }
             }
@@ -4771,10 +4789,10 @@ class MainActivity : Activity() {
 
     private fun cloudFolder(folder: CloudFolder) {
         current = { cloudFolder(folder) }
-        val id = page(folder.name, "Choose a video file.")
+        val id = page(folder.name, getString(R.string.t_choose_a_video_file))
         read(id, { torbox.folder(folder.kind, folder.id) }) { result ->
             val files = result.files.filter { Regex("\\.(mkv|mp4|m4v|avi|mov|webm|ts|m2ts|mpg|mpeg)$", RegexOption.IGNORE_CASE).containsMatchIn(it.name) }
-            if (files.isEmpty()) body.addView(text("No playable video files are available yet.", 15, muted))
+            if (files.isEmpty()) body.addView(text(getString(R.string.t_no_playable_video_files_are_available), 15, muted))
             val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
             files.forEach { file -> choices.addChoice(cloudRow(TvChoiceKeys.file(result.kind, result.id, file.id),
                 file.name, fileSize(file)) { cloudChoice(result, file) }) }
@@ -4839,13 +4857,13 @@ class MainActivity : Activity() {
     /** Debug-only, offline fixture uses the same cards/navigation without loading any account or library. */
     private fun sourceChoiceAudit() {
         current = { sourceChoiceAudit() }
-        val id = page("Source navigation check", "Seven synthetic source versions. No account or playback request is made.")
+        val id = page(getString(R.string.t_source_navigation_check), getString(R.string.t_seven_synthetic_source_versions_no_account))
         val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
         repeat(7) { index ->
-            val source = SourceItem("Version ${index + 1} · Example Movie 2026 extended edition with a deliberately long title to verify every row remains independently selectable",
-                "Public fixture", infoHash = String.format(java.util.Locale.ROOT, "%040x", index + 1), fileIndex = index, cached = true)
+            val source = SourceItem(getString(R.string.t_version_x_example_movie_2026_extended, index + 1),
+                getString(R.string.t_public_fixture), infoHash = String.format(java.util.Locale.ROOT, "%040x", index + 1), fileIndex = index, cached = true)
             choices.addChoice(TvChoiceRow(this, TvChoiceKeys.source(source), source.title,
-                "1080p · synthetic file · no network", "READY IN TORBOX · Public fixture", theme.palette) {
+                getString(R.string.t_1080p_synthetic_file_no_network), getString(R.string.t_ready_in_torbox_public_fixture), theme.palette) {
                 navigate { sourceChoiceAuditFiles(index + 1) }
             })
         }
@@ -4854,60 +4872,60 @@ class MainActivity : Activity() {
 
     private fun sourceChoiceAuditFiles(sourceVersion: Int) {
         current = { sourceChoiceAuditFiles(sourceVersion) }
-        val id = page("Choose a video version", "Selected source version $sourceVersion. All filenames below are synthetic.")
-        val selection = text("Choose a file version", 13, accent).apply { tag = "fixture:selection" }
+        val id = page(getString(R.string.t_choose_a_video_version), getString(R.string.t_selected_source_version_x_all_filenames, sourceVersion))
+        val selection = text(getString(R.string.t_choose_a_file_version), 13, accent).apply { tag = "fixture:selection" }
         body.addView(selection, margin(-1, -2, bottom = 12))
         val choices = TvChoiceList(this); body.addView(choices, margin(-1, -2))
         repeat(7) { index ->
             choices.addChoice(TvChoiceRow(this, TvChoiceKeys.file("torrents", 1234, 101L + index),
-                "File version ${index + 1} · Example Movie with a long synthetic filename.1080p.mkv", "${index + 1}.00 GB", palette = theme.palette) {
-                selection.text = "Selected file version ${index + 1}"
+                getString(R.string.t_file_version_x_example_movie_with, index + 1), getString(R.string.t_x_00_gb, index + 1), palette = theme.palette) {
+                selection.text = getString(R.string.t_selected_file_version_x, index + 1)
             })
         }
         focusAfterRender(id)
     }
 
     private fun cloudChoice(folder: CloudFolder, file: CloudFile) {
-        val choices = arrayOf("Play file", "Identify movie for ${wetrakr.name}", "Identify episode for ${wetrakr.name}")
+        val choices = arrayOf(getString(R.string.t_play_file), getString(R.string.t_identify_movie_for_x, wetrakr.name), getString(R.string.t_identify_episode_for_x, wetrakr.name))
         AlertDialog.Builder(this).setTitle(file.name).setItems(choices) { _, choice ->
             if (choice == 0) playCloud(folder, file, null)
             else identifyCloud(folder, file, if (choice == 1) "movie" else "series")
-        }.setNegativeButton("Cancel", null).show()
+        }.setNegativeButton(getString(R.string.t_cancel), null).show()
     }
 
     private fun identifyCloud(folder: CloudFolder, file: CloudFile, type: String) {
-        val input = TvEditText(this).apply { hint = "Search title"; setSingleLine() }
-        AlertDialog.Builder(this).setTitle("Identify ${if (type == "movie") "movie" else "show"}").setView(input).setPositiveButton("Search") { _, _ ->
+        val input = TvEditText(this).apply { hint = getString(R.string.t_search_title); setSingleLine() }
+        AlertDialog.Builder(this).setTitle(getString(R.string.t_identify_x, if (type == "movie") "movie" else "show")).setView(input).setPositiveButton(getString(R.string.t_search)) { _, _ ->
             val query = input.text.toString().trim()
             if (query.isBlank()) return@setPositiveButton
             load(generation, { catalog.search(query, type) }) { items ->
-                if (items.isEmpty()) { toast("No titles found"); return@load }
-                AlertDialog.Builder(this).setTitle("Choose the correct title").setItems(items.map { "${it.title} (${it.year})" }.toTypedArray()) { _, index ->
+                if (items.isEmpty()) { toast(getString(R.string.t_no_titles_found)); return@load }
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_choose_the_correct_title)).setItems(items.map { "${it.title} (${it.year})" }.toTypedArray()) { _, index ->
                     val item = items[index]; val identity = PlaybackIdentity(item.imdbId, type, item.title)
                     if (type == "movie") playCloud(folder, file, identity)
                     else load(generation, { catalog.details(item) }) { detail ->
                         chooseCloudEpisode(folder, file, detail)
                     }
-                }.setNegativeButton("Cancel", null).show()
+                }.setNegativeButton(getString(R.string.t_cancel), null).show()
             }
-        }.setNegativeButton("Cancel", null).show().submitOnEnter(input)
+        }.setNegativeButton(getString(R.string.t_cancel), null).show().submitOnEnter(input)
     }
 
     private fun chooseCloudEpisode(folder: CloudFolder, file: CloudFile, detail: MediaItemData) {
         val seasons = EpisodePresentation.seasons(detail.episodes)
-        if (seasons.isEmpty()) { toast("Episode information unavailable"); return }
-        AlertDialog.Builder(this).setTitle("Choose a season for ${detail.title}")
-            .setItems(seasons.map { if (it == 0) "Specials & extras" else "Season $it" }.toTypedArray()) { _, index ->
+        if (seasons.isEmpty()) { toast(getString(R.string.t_episode_information_unavailable)); return }
+        AlertDialog.Builder(this).setTitle(getString(R.string.t_choose_a_season_for_x, detail.title))
+            .setItems(seasons.map { if (it == 0) getString(R.string.t_specials_extras) else getString(R.string.t_season_x, it) }.toTypedArray()) { _, index ->
                 val season = seasons[index]
                 val episodes = detail.episodes.filter { it.season == season }.sortedBy { it.episode }
-                AlertDialog.Builder(this).setTitle(if (season == 0) "Choose a special" else "Choose a Season $season episode")
+                AlertDialog.Builder(this).setTitle(if (season == 0) getString(R.string.t_choose_a_special) else getString(R.string.t_choose_a_season_x_episode, season))
                     .setItems(episodes.map { "${if (season == 0) "Special" else "Episode"} ${it.episode}  ${it.title}" }.toTypedArray()) { _, e ->
                         val episode = episodes[e]
-                        if (EpisodePresentation.future(episode.released)) toast("This episode has not been released yet")
+                        if (EpisodePresentation.future(episode.released)) toast(getString(R.string.t_this_episode_has_not_been_released))
                         else playCloud(folder, file, PlaybackIdentity(detail.imdbId, "series", detail.title, season, episode.episode))
-                    }.setNeutralButton("Seasons") { _, _ -> chooseCloudEpisode(folder, file, detail) }
-                    .setNegativeButton("Cancel", null).show()
-            }.setNegativeButton("Cancel", null).show()
+                    }.setNeutralButton(getString(R.string.t_seasons)) { _, _ -> chooseCloudEpisode(folder, file, detail) }
+                    .setNegativeButton(getString(R.string.t_cancel), null).show()
+            }.setNegativeButton(getString(R.string.t_cancel), null).show()
     }
 
     private fun playCloud(folder: CloudFolder, file: CloudFile, identity: PlaybackIdentity?) {
@@ -4916,9 +4934,9 @@ class MainActivity : Activity() {
     }
 
     private fun streamFile(folder: CloudFolder, file: CloudFile, title: String, identity: PlaybackIdentity?, key: String, resolveUrl: (() -> String)? = null) {
-        if (resolvingGeneration == generation || launchingPlayer) { toast("Preparing the selected file…"); return }
+        if (resolvingGeneration == generation || launchingPlayer) { toast(getString(R.string.t_preparing_the_selected_file)); return }
         val request = generation; resolvingGeneration = request
-        val progress = text("Preparing your video…", 14, accent); body.addView(progress, margin(-1, -2, top = 14))
+        val progress = text(getString(R.string.t_preparing_your_video), 14, accent); body.addView(progress, margin(-1, -2, top = 14))
         worker.execute {
             try {
                 val url = resolveUrl?.invoke() ?: torbox.streamUrl(folder.kind, folder.id, file.id)
@@ -4941,7 +4959,7 @@ class MainActivity : Activity() {
     private fun play(url: String, title: String, identity: PlaybackIdentity?, key: String, debridService: String? = null, resumeImmediately: Boolean = false,
                      headers: Map<String, String> = emptyMap()) {
         if (launchingPlayer) return
-        if (Uri.parse(url).scheme !in setOf("https", "http")) { toast("This stream did not return a playable web link."); return }
+        if (Uri.parse(url).scheme !in setOf("https", "http")) { toast(getString(R.string.t_this_stream_did_not_return_a)); return }
         launchingPlayer = true; playerShown = true
         val remotePercent = identity?.let { remoteProgress[identityKey(it)] } ?: 0.0
         val start = {
@@ -4966,18 +4984,18 @@ class MainActivity : Activity() {
         current = { weTrakrPage() }
         destination = "wetrakr"; refreshNavigation()
         val tracker = weTrakrClient()
-        val id = page("My ${tracker.name}", "Your watchlist. Your progress. Your next episode.")
+        val id = page(getString(R.string.t_my_x, tracker.name), getString(R.string.t_your_watchlist_your_progress_your_next))
         if (tracker.signedIn() && !tracker.enabled()) {
-            body.addView(text("${tracker.name} is switched off. Turn it on in Settings → Tracking.", 15, muted))
-            body.addView(button("Open Settings") { navigate { settings() } }, margin(210, 44, top = 10)); return
+            body.addView(text(getString(R.string.t_x_is_switched_off_turn_it, tracker.name), 15, muted))
+            body.addView(button(getString(R.string.t_open_settings)) { navigate { settings() } }, margin(210, 44, top = 10)); return
         }
-        if (!tracker.connected()) { body.addView(button("Connect ${tracker.name}") { startWeTrakr() }, margin(210, 44)); return }
+        if (!tracker.connected()) { body.addView(button(getString(R.string.t_connect_x, tracker.name)) { startWeTrakr() }, margin(210, 44)); return }
         if (flix) { flixWeTrakrPage(id); return }
         // Start with the visual library shelves; progress rows must not push them off-screen.
         read(id, { tracker.watchlist("movie") to tracker.watchlist("series") }) { (movies, series) ->
-            mediaRow("Movie watchlist", movies); mediaRow("TV watchlist", series)
+            mediaRow(getString(R.string.t_movie_watchlist), movies); mediaRow(getString(R.string.t_tv_watchlist), series)
             likedLists(id, false)
-            if (tracker.supportsLists) body.addView(button("Personal lists") { navigate { weTrakrLists() } }, margin(180, 42, top = 18))
+            if (tracker.supportsLists) body.addView(button(getString(R.string.t_personal_lists)) { navigate { weTrakrLists() } }, margin(180, 42, top = 18))
             weTrakrProgress(id)
         }
     }
@@ -4993,28 +5011,28 @@ class MainActivity : Activity() {
         fun heading(host: LinearLayout, title: String) = host.addView(text(title, theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 14, bottom = 6))
         read(id, { wetrakr.continueWatching() }) { progress ->
             if (progress.isEmpty()) return@read
-            heading(progressSlot, "Continue Watching")
+            heading(progressSlot, getString(R.string.t_continue_watching))
             val row = horizontalRow(progressSlot)
             progress.forEach { (identity, percent) ->
                 remoteProgress[identityKey(identity)] = percent
                 val caption = listOf(if (identity.type == "series") "S${identity.season} E${identity.episode}" else "", "${percent.toInt()}%").filter { it.isNotBlank() }.joinToString(" · ")
                 val item = MediaItemData(identity.imdbId, identity.type, identity.title)
                 val open: () -> Unit = { navigate { showSources(identity) } }
-                row.addView((if (resumeCards()) resumeCard(item, percent / 100, episodeLine(identity), "${percent.toInt()}% watched", open) else tile(item, percent / 100, caption, open))
+                row.addView((if (resumeCards()) resumeCard(item, percent / 100, episodeLine(identity), getString(R.string.t_x_watched, percent.toInt()), open) else tile(item, percent / 100, caption, open))
                     .apply { continueOptions(this, "", identity, identity.title) }, continueSlot())
             }
         }
         read(id, { wetrakr.nextEpisodes() }) { next ->
             if (next.isEmpty()) return@read
-            heading(nextSlot, "Up Next")
+            heading(nextSlot, getString(R.string.t_up_next))
             val row = horizontalRow(nextSlot)
             next.forEach { identity ->
                 row.addView(tile(MediaItemData(identity.imdbId, "series", identity.title), caption = "S${identity.season} E${identity.episode}") { navigate { showSources(identity) } },
                     margin(cardWidth(), theme.layout.cardHeightDp, right = theme.layout.cardGapDp))
             }
         }
-        read(id, { wetrakr.watchlist("movie") }) { mediaRow("Movie watchlist", it, movieSlot) }
-        read(id, { wetrakr.watchlist("series") }) { mediaRow("TV watchlist", it, showSlot) }
+        read(id, { wetrakr.watchlist("movie") }) { mediaRow(getString(R.string.t_movie_watchlist), it, movieSlot) }
+        read(id, { wetrakr.watchlist("series") }) { mediaRow(getString(R.string.t_tv_watchlist), it, showSlot) }
         if (wetrakr.supportsLists) read(id, { wetrakr.lists() }) { lists ->
             lists.forEach { (listId, title) ->
                 val listSlot = column().also { personalSlot.addView(it, margin(-1, -2)) }
@@ -5031,10 +5049,10 @@ class MainActivity : Activity() {
         val host = column(); body.addView(host, margin(-1, -2, top = 12))
         read(id, { wetrakr.continueWatching() }) { progress ->
             if (progress.isNotEmpty()) {
-                host.addView(text("Continue watching", 20, ink, true), margin(-1, -2, bottom = 8))
+                host.addView(text(getString(R.string.t_continue_watching_2), 20, ink, true), margin(-1, -2, bottom = 8))
                 progress.forEach { (identity, percent) ->
                     remoteProgress[identityKey(identity)] = percent
-                    host.addView(button("${identity.title}${if (identity.type == "series") "  ·  S${identity.season} E${identity.episode}" else ""}   ·   ${percent.toInt()}%") {
+                    host.addView(button(getString(R.string.t_x_x_x, identity.title, if (identity.type == "series") "  ·  S${identity.season} E${identity.episode}" else "", percent.toInt())) {
                         navigate { showSources(identity) }
                     }.apply { continueOptions(this, "", identity, identity.title) }, margin(-1, 44, bottom = 7))
                 }
@@ -5043,7 +5061,7 @@ class MainActivity : Activity() {
         val nextGroup = column(); body.addView(nextGroup, margin(-1, -2, top = 16))
         read(id, { wetrakr.nextEpisodes() }) { next ->
             if (next.isNotEmpty()) {
-                nextGroup.addView(text("Up next", 20, ink, true), margin(-1, -2, bottom = 12))
+                nextGroup.addView(text(getString(R.string.t_up_next_2), 20, ink, true), margin(-1, -2, bottom = 12))
                 next.forEach { identity -> nextGroup.addView(button("${identity.title}   ·   S${identity.season} E${identity.episode}") {
                     navigate { showSources(identity) }
                 }, margin(-1, 44, bottom = 7)) }
@@ -5054,9 +5072,9 @@ class MainActivity : Activity() {
     private fun weTrakrLists() {
         current = { weTrakrLists() }
         val tracker = weTrakrClient()
-        val id = page("Your ${tracker.name} lists")
+        val id = page(getString(R.string.t_your_x_lists, tracker.name))
         read(id, { tracker.lists() }) { lists ->
-            if (lists.isEmpty()) body.addView(text("No personal lists yet.", 15, muted))
+            if (lists.isEmpty()) body.addView(text(getString(R.string.t_no_personal_lists_yet), 15, muted))
             lists.forEach { (listId, title) -> body.addView(button(title) {
                 navigate { personalListGrid(listId, title) }
             }, margin(-1, 44, bottom = 8)) }
@@ -5068,9 +5086,9 @@ class MainActivity : Activity() {
         val keepScroll = scroller.scrollY
         current = { debridServicesPage() }
         destination = "settings"; refreshNavigation()
-        page("Debrid services", "Cached links play from the first service that's on, in this order. Off keeps the account saved but skips it.")
+        page(getString(R.string.t_debrid_services), getString(R.string.t_cached_links_play_from_the_first))
         val order = DebridServices.priority(store)
-        val list = settingsGroup("Services · 1 plays first", "library")
+        val list = settingsGroup(getString(R.string.t_services_1_plays_first), "library")
         order.forEachIndexed { index, id ->
             settingsDivider(list)
             val name = DebridServices.name(id)
@@ -5079,7 +5097,7 @@ class MainActivity : Activity() {
             val line = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(8), dp(8)) }
             val copy = column()
             copy.addView(text("${index + 1}. $name", 14, if (on) ink else muted, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
-            copy.addView(text(if (!linked) "Not connected" else if (on) "On" else "Off · account kept", 11, if (on) 0xFF46D369.toInt() else muted), margin(-1, -2, top = 2))
+            copy.addView(text(if (!linked) getString(R.string.t_not_connected) else if (on) getString(R.string.t_on) else getString(R.string.t_off_account_kept), 11, if (on) 0xFF46D369.toInt() else muted), margin(-1, -2, top = 2))
             line.addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
             fun control(label: String, tagName: String, description: String, width: Int, enabled: Boolean = true, action: () -> Unit) {
                 line.addView(button(label) { if (enabled) action() }.apply {
@@ -5087,16 +5105,16 @@ class MainActivity : Activity() {
                     alpha = if (enabled) 1f else 0.3f; isFocusable = enabled
                 }, margin(width, 38).apply { leftMargin = dp(6) })
             }
-            control("▲", "debrid-up", "Move $name up", 46, index > 0) { DebridServices.move(store, index, -1); debridServicesPage("debrid-up:$id") }
-            control("▼", "debrid-down", "Move $name down", 46, index < order.lastIndex) { DebridServices.move(store, index, 1); debridServicesPage("debrid-down:$id") }
-            if (linked) control(if (on) "On" else "Off", "debrid-on", "$name · ${if (on) "On" else "Off"}", 56) {
+            control("▲", "debrid-up", getString(R.string.t_move_x_up, name), 46, index > 0) { DebridServices.move(store, index, -1); debridServicesPage("debrid-up:$id") }
+            control("▼", "debrid-down", getString(R.string.t_move_x_down, name), 46, index < order.lastIndex) { DebridServices.move(store, index, 1); debridServicesPage("debrid-down:$id") }
+            if (linked) control(if (on) getString(R.string.t_on) else getString(R.string.t_off), "debrid-on", "$name · ${if (on) "On" else "Off"}", 56) {
                 DebridServices.setEnabled(store, id, !on); debridServicesPage("debrid-on:$id")
             } else line.addView(View(this), margin(56, 38).apply { leftMargin = dp(6) })
-            control(if (linked) "Manage" else "Connect", "debrid-manage", if (linked) "Manage $name" else "Connect $name", 84) { debridActions(id) }
+            control(if (linked) getString(R.string.t_manage_2) else getString(R.string.t_connect), "debrid-manage", if (linked) getString(R.string.t_manage_x, name) else getString(R.string.t_connect_x, name), 84) { debridActions(id) }
             list.addView(line, margin(-1, -2))
         }
-        body.addView(text("Real-Debrid, AllDebrid and Debrid-Link can't say in advance what's cached, so their links are checked when you play: " +
-            "the first cached one of the top ${LinkDebrids.CHECK_LIMIT} plays. Premiumize, Offcloud and TorBox are checked while the link list loads.", 11, muted).apply {
+        body.addView(text(getString(R.string.t_real_debrid_alldebrid_and_debrid_link) +
+            getString(R.string.t_the_first_cached_one_of_the, LinkDebrids.CHECK_LIMIT), 11, muted).apply {
             setLineSpacing(dp(1).toFloat(), 1f) }, margin(-1, -2, top = 12))
         body.addView(View(this), margin(-1, 24))
         if (focusTag != null) keepPlace(generation, focusTag, keepScroll) else focusAfterRender(generation)
@@ -5108,14 +5126,14 @@ class MainActivity : Activity() {
         val linked = store.has(DebridServices.credential(id))
         val actions = mutableListOf<Pair<String, () -> Unit>>()
         when (id) {
-            "offcloud" -> actions += (if (linked) "Replace API key" else "Connect with your API key") to { connectOffcloud() }
+            "offcloud" -> actions += (if (linked) getString(R.string.t_replace_api_key) else getString(R.string.t_connect_with_your_api_key)) to { connectOffcloud() }
             "torbox" -> {
-                actions += "Sign in with a code" to { startTorBox() }
-                actions += (if (linked) "Replace with an API key" else "Paste an API key") to {
-                    inputSetting("TorBox API key", "Paste your own TorBox API key", "", true) { key -> load(generation, { torbox.setApiKey(key) }) { toast("TorBox connected"); refreshSettings() } }
+                actions += getString(R.string.t_sign_in_with_a_code) to { startTorBox() }
+                actions += (if (linked) getString(R.string.t_replace_with_an_api_key) else getString(R.string.t_paste_an_api_key)) to {
+                    inputSetting(getString(R.string.t_torbox_api_key), getString(R.string.t_paste_your_own_torbox_api_key), "", true) { key -> load(generation, { torbox.setApiKey(key) }) { toast(getString(R.string.t_torbox_connected)); refreshSettings() } }
                 }
             }
-            else -> actions += (if (linked) "Replace API key" else "Connect with your API key") to {
+            else -> actions += (if (linked) getString(R.string.t_replace_api_key) else getString(R.string.t_connect_with_your_api_key)) to {
                 val links = LinkDebrids(store)
                 apiKeyDialog?.dismiss()
                 apiKeyDialog = ApiKeyDialog(this, name, worker,
@@ -5126,8 +5144,8 @@ class MainActivity : Activity() {
                     }).also { it.show() }
             }
         }
-        if (linked) actions += "Disconnect" to {
-            confirm("Disconnect $name on this device?") {
+        if (linked) actions += getString(R.string.t_disconnect) to {
+            confirm(getString(R.string.t_disconnect_x_on_this_device, name)) {
                 when (id) { "offcloud" -> OffcloudApi(store).disconnect(); "torbox" -> torbox.disconnect(); else -> LinkDebrids(store).disconnect(id) }
                 DebridServices.setEnabled(store, id, true)
                 refreshSettings()
@@ -5135,45 +5153,45 @@ class MainActivity : Activity() {
         }
         if (!linked && actions.size == 1) { actions.single().second(); return }
         AlertDialog.Builder(this).setTitle(name).setItems(actions.map { it.first }.toTypedArray()) { _, index -> actions[index].second() }
-            .setNegativeButton("Cancel", null).show()
+            .setNegativeButton(getString(R.string.t_cancel), null).show()
     }
 
     private fun easynewsActions() {
         if (Easynews.credentials(store) == null) { connectEasynews(); return }
         val on = Easynews.enabled(store)
         val actions = listOf<Pair<String, () -> Unit>>(
-            (if (on) "Turn off (keep the login)" else "Turn on") to { Easynews.setEnabled(store, !on); refreshSettings() },
-            "Download server · ${Easynews.serverLabel(store)}" to { easynewsServer() },
-            "Connections · ${Easynews.connections(store)}" to { easynewsConnections() },
-            "Easynews NNTP streaming · ${if (EasynewsNntp.enabled(store)) "On" else "Off"}" to {
+            (if (on) getString(R.string.t_turn_off_keep_the_login) else getString(R.string.t_turn_on)) to { Easynews.setEnabled(store, !on); refreshSettings() },
+            getString(R.string.t_download_server_x, Easynews.serverLabel(store)) to { easynewsServer() },
+            getString(R.string.t_connections_x, Easynews.connections(store)) to { easynewsConnections() },
+            getString(R.string.t_easynews_nntp_streaming_x, if (EasynewsNntp.enabled(store)) L10n.tr(R.string.t_on, "On") else L10n.tr(R.string.t_off, "Off")) to {
                 val now = !EasynewsNntp.enabled(store)
                 if (now) store.put(EasynewsNntp.ON, "true") else store.remove(EasynewsNntp.ON)
-                toast(if (now) "Easynews links from your next search stream over NNTP when they can" else "Easynews links stream from the web servers"); refreshSettings()
+                toast(if (now) getString(R.string.t_easynews_links_from_your_next_search) else getString(R.string.t_easynews_links_stream_from_the_web)); refreshSettings()
             },
-            "NNTP connections · ${EasynewsNntp.connections(store)}" to {
-                NumberStepper.show(this, "NNTP connections", "Easynews allows 60 at once across all your devices and apps. Applies from the next video.",
-                    EasynewsNntp.connections(store), 1..EasynewsNntp.MAX_CONNECTIONS, { "$it ${if (it == 1) "connection" else "connections"}" }) { count ->
+            getString(R.string.t_nntp_connections_x, EasynewsNntp.connections(store)) to {
+                NumberStepper.show(this, getString(R.string.t_nntp_connections), getString(R.string.t_easynews_allows_60_at_once_across),
+                    EasynewsNntp.connections(store), 1..EasynewsNntp.MAX_CONNECTIONS, { if (it == 1) L10n.tr(R.string.t_1_connection, "1 connection") else L10n.tr(R.string.t_x_connections, "%1\$s connections", it) }) { count ->
                     store.put(EasynewsNntp.CONNECTIONS, count.toString()); refreshSettings()
                 }
             },
-            "NNTP speed test" to { nntpSpeedTest() },
-            "NNTP pipeline · ${EasynewsNntp.pipeline(store)}" to {
-                NumberStepper.show(this, "NNTP pipeline", "Requests kept in flight per connection (default ${EasynewsNntp.DEFAULT_PIPELINE}). Higher can stream faster on distant servers. Applies from the next video.",
-                    EasynewsNntp.pipeline(store), 1..EasynewsNntp.MAX_PIPELINE, { "Pipeline $it" }) { depth ->
+            getString(R.string.t_nntp_speed_test) to { nntpSpeedTest() },
+            getString(R.string.t_nntp_pipeline_x, EasynewsNntp.pipeline(store)) to {
+                NumberStepper.show(this, getString(R.string.t_nntp_pipeline), getString(R.string.t_requests_kept_in_flight_per_connection, EasynewsNntp.DEFAULT_PIPELINE),
+                    EasynewsNntp.pipeline(store), 1..EasynewsNntp.MAX_PIPELINE, { getString(R.string.t_pipeline_x, it) }) { depth ->
                     store.put(EasynewsNntp.PIPELINE, depth.toString()); refreshSettings()
                 }
             },
-            "Change login" to { connectEasynews() },
-            "Disconnect" to { confirm("Disconnect Easynews on this device?") { Easynews.disconnect(store); Easynews.setEnabled(store, true); refreshSettings() } })
-        AlertDialog.Builder(this).setTitle("Easynews · ${if (on) "On" else "Off"}").setItems(actions.map { it.first }.toTypedArray()) { _, index -> actions[index].second() }
-            .setNegativeButton("Cancel", null).show()
+            getString(R.string.t_change_login) to { connectEasynews() },
+            getString(R.string.t_disconnect) to { confirm(getString(R.string.t_disconnect_easynews_on_this_device)) { Easynews.disconnect(store); Easynews.setEnabled(store, true); refreshSettings() } })
+        AlertDialog.Builder(this).setTitle(getString(R.string.t_easynews_x, if (on) L10n.tr(R.string.t_on, "On") else L10n.tr(R.string.t_off, "Off"))).setItems(actions.map { it.first }.toTypedArray()) { _, index -> actions[index].second() }
+            .setNegativeButton(getString(R.string.t_cancel), null).show()
     }
 
     /** Downloads from the Easynews news server at several connection counts and lists the speeds; takes about 90 seconds. */
     private fun nntpSpeedTest() {
-        val lines = TextView(this).apply { setPadding(dp(18), dp(10), dp(18), dp(10)); textSize = 14f; setTextColor(Color.WHITE); text = "Starting…" }
-        val dialog = AlertDialog.Builder(this).setTitle("NNTP speed test").setView(ScrollView(this).apply { addView(lines) })
-            .setPositiveButton("Close", null).show()
+        val lines = TextView(this).apply { setPadding(dp(18), dp(10), dp(18), dp(10)); textSize = 14f; setTextColor(Color.WHITE); text = getString(R.string.t_starting) }
+        val dialog = AlertDialog.Builder(this).setTitle(getString(R.string.t_nntp_speed_test)).setView(ScrollView(this).apply { addView(lines) })
+            .setPositiveButton(getString(R.string.t_close), null).show()
         val shown = StringBuilder()
         Thread({
             EasynewsNntp.speedTest(store) { line -> runOnUiThread { if (dialog.isShowing) { shown.appendLine(line); lines.text = shown } } }
@@ -5186,54 +5204,79 @@ class MainActivity : Activity() {
         val keepScroll = scroller.scrollY
         current = { usenetPage() }
         destination = "settings"; refreshNavigation()
-        page("Usenet", "Search your indexers and stream straight from your news providers. Nothing is downloaded first; the article list is fetched only when you play a link.")
+        page(getString(R.string.t_usenet), getString(R.string.t_search_your_indexers_and_stream_straight))
         val providers = try { NewsProviders(store).load() } catch (error: Exception) { body.addView(text(uiErrorMessage(error), 15, muted)); emptyList() }
-        val providerCard = settingsGroup("News providers", "library")
-        if (providers.isNotEmpty()) holdHint(providerCard, "a provider")
+        val providerCard = settingsGroup(getString(R.string.t_news_providers), "library")
+        if (providers.isNotEmpty()) holdHint(providerCard, getString(R.string.t_a_provider))
         linkColumns(providers.map { provider ->
-            switchSettingsRow(providerCard, provider.name, if (provider.backup) "Backup" else "Main",
-                "${provider.host}:${provider.port} · ${if (provider.tls) "SSL" else "No SSL"} · ${provider.connections} connections · pipeline ${provider.pipelineDepth}",
+            switchSettingsRow(providerCard, provider.name, if (provider.backup) getString(R.string.t_backup) else getString(R.string.t_main),
+                getString(R.string.t_x_x_x_x_connections_pipeline, provider.host, provider.port, if (provider.tls) "SSL" else L10n.tr(R.string.t_no_ssl, "No SSL"), provider.connections, provider.pipelineDepth),
                 provider.enabled, "provider-switch",
                 toggle = { saveNewsProviders(providers.map { if (it.id == provider.id) it.copy(enabled = !provider.enabled) else it }, "provider-switch:${provider.name}") },
                 menu = { newsProviderActions(provider) })
         })
         val warm = NewsProviders.warm { store.get(it) }
-        settingsRow(providerCard, "Warm connections", if (warm == 0) "Off" else "$warm",
-            "Signs in to your main provider while the link list is open, and keeps that many connections through a pause, so playing starts without the sign-in wait. Off frees those connection slots.") {
+        settingsRow(providerCard, getString(R.string.t_warm_connections), if (warm == 0) getString(R.string.t_off) else "$warm",
+            getString(R.string.t_signs_in_to_your_main_provider)) {
             val next = NewsProviders.WARM_CHOICES[(NewsProviders.WARM_CHOICES.indexOf(warm) + 1) % NewsProviders.WARM_CHOICES.size]
-            store.put(NewsProviders.WARM_KEY, next.toString()); usenetPage("setting:Warm connections")
+            store.put(NewsProviders.WARM_KEY, next.toString()); usenetPage("setting:" + getString(R.string.t_warm_connections))
         }
-        settingsRow(providerCard, "Add news provider", "", "Pick yours from the list or enter any server by hand. A backup provider is asked only for articles the main one is missing.") { chooseNewsProviderPreset() }
+        settingsRow(providerCard, getString(R.string.t_add_news_provider), "", getString(R.string.t_pick_yours_from_the_list_or)) { chooseNewsProviderPreset() }
 
         val indexerConfig = NewznabIndexers(store)
         val indexers = try { indexerConfig.load() } catch (error: Exception) { body.addView(text(uiErrorMessage(error), 15, muted)); emptyList() }
-        val indexerCard = settingsGroup("Indexers", "library")
-        if (indexers.isNotEmpty()) holdHint(indexerCard, "an indexer")
-        linkColumns(indexers.map { indexer ->
-            val host = runCatching { java.net.URI(indexer.url).host }.getOrNull().orEmpty()
-            switchSettingsRow(indexerCard, indexer.name, host, indexerConfig.usage(indexer.id).takeIf { it.isNotBlank() }?.let { "Today: $it" }.orEmpty(),
-                indexer.enabled, "indexer-switch",
-                toggle = { saveIndexers(indexers.map { if (it.id == indexer.id) it.copy(enabled = !indexer.enabled) else it }, "indexer-switch:${indexer.name}") },
-                menu = { indexerActions(indexer) })
+        // One card per priority, saying when it is searched; without priorities, one card as before.
+        val nextTier = dev.pov.tv.data.UsenetSearch.nextTierQuality(store)
+        val prioritized = indexers.map { it.priority }.distinct().size > 1 || indexers.any { it.backupOnly }
+        val levels = indexers.sortedWith(compareBy({ it.backupOnly }, { it.priority })).groupBy { if (it.backupOnly) -1 else it.priority }
+        var indexerCard: LinearLayout? = null
+        linkColumns(levels.entries.flatMapIndexed { index, (level, group) ->
+            val title = when {
+                !prioritized -> getString(R.string.t_indexers)
+                level == -1 -> L10n.tr(R.string.t_indexers_backup_heading, "Backup · only if nothing was found above")
+                index == 0 -> L10n.tr(R.string.t_indexers_first_heading, "Priority %1\$s · searched first, all together", level)
+                else -> L10n.tr(R.string.t_indexers_next_heading, "Priority %1\$s · together, only if the ones above find %2\$s", level, nextTierShortfall(nextTier))
+            }
+            val card = settingsGroup(title, "library")
+            if (index == 0) { holdHint(card, getString(R.string.t_an_indexer)); indexerCard = card }
+            group.map { indexer ->
+                val host = runCatching { java.net.URI(indexer.url).host }.getOrNull().orEmpty()
+                val today = indexerConfig.searchesToday(indexer.id)
+                val limit = if (indexer.dailyLimit > 0) L10n.tr(R.string.t_x_of_x_searches_today, "%1\$s of %2\$s searches today", today, indexer.dailyLimit) else ""
+                val grabs = if (indexer.dailyGrabLimit > 0) L10n.tr(R.string.t_x_of_x_grabs_today, "%1\$s of %2\$s grabs today", indexerConfig.grabsToday(indexer.id), indexer.dailyGrabLimit) else ""
+                val usage = indexerConfig.usage(indexer.id).takeIf { it.isNotBlank() }?.let { getString(R.string.t_today_x, it) }.orEmpty()
+                switchSettingsRow(card, indexer.name, host, listOf(limit, grabs, usage).filter { it.isNotBlank() }.joinToString(" · "),
+                    indexer.enabled, "indexer-switch",
+                    toggle = { saveIndexers(indexers.map { if (it.id == indexer.id) it.copy(enabled = !indexer.enabled) else it }, "indexer-switch:${indexer.name}") },
+                    menu = { indexerActions(indexer) })
+            }
         })
+        val optionsCard = if (prioritized || indexerCard == null) settingsGroup(L10n.tr(R.string.t_indexer_search_order, "Indexer search order"), "library") else indexerCard!!
+        settingsRow(optionsCard, L10n.tr(R.string.t_go_to_next_priority_when, "Go to the next priority when"), nextTierLabel(nextTier),
+            L10n.tr(R.string.t_priority_how_it_works, "Hold an indexer to set its priority. Lower numbers are searched first; indexers with the same number are searched together. Backup indexers run only when nothing was found.")) {
+            val choices = dev.pov.tv.data.UsenetSearch.NEXT_TIER_CHOICES
+            store.put(dev.pov.tv.data.UsenetSearch.NEXT_TIER_QUALITY, choices[(choices.indexOf(nextTier) + 1) % choices.size].toString())
+            usenetPage("setting:" + L10n.tr(R.string.t_go_to_next_priority_when, "Go to the next priority when"))
+        }
+        val indexerOptions = optionsCard
         val fallbackOnly = dev.pov.tv.data.UsenetSearch.fallbackOnly(store)
-        settingsRow(indexerCard, "Usenet Fallback", if (fallbackOnly) "On" else "Off",
-            "On: your indexers are searched only when add-ons and debrid services find no links for a title. Off: searched together with everything else.",
+        settingsRow(indexerOptions, getString(R.string.t_usenet_fallback), if (fallbackOnly) getString(R.string.t_on) else getString(R.string.t_off),
+            getString(R.string.t_on_your_indexers_are_searched_only),
             status = fallbackOnly) {
             if (fallbackOnly) store.remove(dev.pov.tv.data.UsenetSearch.FALLBACK_ONLY) else store.put(dev.pov.tv.data.UsenetSearch.FALLBACK_ONLY, "true")
-            usenetPage("setting:Usenet Fallback")
+            usenetPage("setting:" + getString(R.string.t_usenet_fallback))
         }
-        settingsRow(indexerCard, "Add indexer", "", if (providers.none { it.enabled }) "Add a news provider first: indexer links need one to play."
-            else "Pick a known indexer and enter your API key, or enter any Newznab address (NZBHydra2 and Prowlarr work too).") { chooseIndexerPreset() }
+        settingsRow(indexerOptions, getString(R.string.t_add_indexer), "", if (providers.none { it.enabled }) getString(R.string.t_add_a_news_provider_first_indexer)
+            else getString(R.string.t_pick_a_known_indexer_and_enter)) { chooseIndexerPreset() }
 
-        val headerCard = settingsGroup("Indexer headers", "library")
+        val headerCard = settingsGroup(getString(R.string.t_indexer_headers), "library")
         val checked = store.get(UsenetHeaders.CHECKED).toLongOrNull()
-        settingsRow(headerCard, "Search header", UsenetHeaders.query { store.get(it) }, "The client name sent with indexer searches. Many indexers only answer clients they know.") {
-            editUsenetHeader("Search header", UsenetHeaders.QUERY, UsenetHeaders.DEFAULT_QUERY) }
-        settingsRow(headerCard, "Download header", UsenetHeaders.grab { store.get(it) }, "The client name sent when a link's article list is fetched.") {
-            editUsenetHeader("Download header", UsenetHeaders.GRAB, UsenetHeaders.DEFAULT_GRAB) }
-        settingsRow(headerCard, "Update now", if (checked == null) "Not checked yet" else "Checked " + android.text.format.DateUtils.getRelativeTimeSpanString(checked, System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS),
-            "Moves both headers to their tools' newest versions. This also happens by itself about once a day while you have an indexer.") { updateUsenetHeaders() }
+        settingsRow(headerCard, getString(R.string.t_search_header), UsenetHeaders.query { store.get(it) }, getString(R.string.t_the_client_name_sent_with_indexer)) {
+            editUsenetHeader(getString(R.string.t_search_header), UsenetHeaders.QUERY, UsenetHeaders.DEFAULT_QUERY) }
+        settingsRow(headerCard, getString(R.string.t_download_header), UsenetHeaders.grab { store.get(it) }, getString(R.string.t_the_client_name_sent_when_a)) {
+            editUsenetHeader(getString(R.string.t_download_header), UsenetHeaders.GRAB, UsenetHeaders.DEFAULT_GRAB) }
+        settingsRow(headerCard, getString(R.string.t_update_now), if (checked == null) getString(R.string.t_not_checked_yet) else getString(R.string.t_checked) + android.text.format.DateUtils.getRelativeTimeSpanString(checked, System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS),
+            getString(R.string.t_moves_both_headers_to_their_tools)) { updateUsenetHeaders() }
         body.addView(View(this), margin(-1, 24))
         if (focusTag != null) keepPlace(generation, focusTag, keepScroll) else focusAfterRender(generation)
     }
@@ -5247,23 +5290,23 @@ class MainActivity : Activity() {
         val index = all.indexOfFirst { it.id == provider.id }
         val focus = "setting:${provider.name}"
         val actions = mutableListOf<Pair<String, () -> Unit>>(
-            "Edit" to { editNewsProvider(provider, null) },
-            "Test the login" to { testNewsProvider(provider) },
-            (if (provider.enabled) "Turn off" else "Turn on") to { saveNewsProviders(all.map { if (it.id == provider.id) it.copy(enabled = !provider.enabled) else it }, focus) },
-            (if (provider.backup) "Use as a main provider" else "Use as a backup only") to { saveNewsProviders(all.map { if (it.id == provider.id) it.copy(backup = !provider.backup) else it }, focus) })
-        if (index > 0) actions += "Move up (asked earlier)" to { saveNewsProviders(all.toMutableList().apply { add(index - 1, removeAt(index)) }, focus) }
-        if (index in 0 until all.lastIndex) actions += "Move down (asked later)" to { saveNewsProviders(all.toMutableList().apply { add(index + 1, removeAt(index)) }, focus) }
-        actions += "Remove" to { confirm("Remove ${provider.name} from this device?") { saveNewsProviders(all.filter { it.id != provider.id }) } }
+            getString(R.string.t_edit) to { editNewsProvider(provider, null) },
+            getString(R.string.t_test_the_login) to { testNewsProvider(provider) },
+            (if (provider.enabled) getString(R.string.t_turn_off) else getString(R.string.t_turn_on)) to { saveNewsProviders(all.map { if (it.id == provider.id) it.copy(enabled = !provider.enabled) else it }, focus) },
+            (if (provider.backup) getString(R.string.t_use_as_a_main_provider) else getString(R.string.t_use_as_a_backup_only)) to { saveNewsProviders(all.map { if (it.id == provider.id) it.copy(backup = !provider.backup) else it }, focus) })
+        if (index > 0) actions += getString(R.string.t_move_up_asked_earlier) to { saveNewsProviders(all.toMutableList().apply { add(index - 1, removeAt(index)) }, focus) }
+        if (index in 0 until all.lastIndex) actions += getString(R.string.t_move_down_asked_later) to { saveNewsProviders(all.toMutableList().apply { add(index + 1, removeAt(index)) }, focus) }
+        actions += getString(R.string.t_remove) to { confirm(getString(R.string.t_remove_x_from_this_device, provider.name)) { saveNewsProviders(all.filter { it.id != provider.id }) } }
         AlertDialog.Builder(this).setTitle(provider.name).setItems(actions.map { it.first }.toTypedArray()) { _, picked -> actions[picked].second() }
-            .setNegativeButton("Cancel", null).show()
+            .setNegativeButton(getString(R.string.t_cancel), null).show()
     }
 
     private fun testNewsProvider(provider: NewsProvider) {
-        toast("Signing in to ${provider.name}…")
+        toast(getString(R.string.t_signing_in_to_x, provider.name))
         worker.execute {
             val result = try {
                 val took = dev.pov.tv.usenet.Nntp.check(dev.pov.tv.usenet.NntpServer(provider.host, provider.port, provider.tls, provider.user, provider.password))
-                "${provider.name}: signed in ($took ms)"
+                getString(R.string.t_x_signed_in_x_ms, provider.name, took)
             } catch (error: Exception) { "${provider.name}: ${error.message ?: "couldn't connect"}" }
             runOnUiThread { if (!isFinishing && !isDestroyed) toast(result) }
         }
@@ -5271,10 +5314,10 @@ class MainActivity : Activity() {
 
     private fun chooseNewsProviderPreset() {
         val presets = NewsProviders.PRESETS
-        val labels = (listOf("Custom (any server)") + presets.map { it.name }).toTypedArray()
-        AlertDialog.Builder(this).setTitle("Add news provider").setItems(labels) { _, picked ->
+        val labels = (listOf(getString(R.string.t_custom_any_server)) + presets.map { it.name }).toTypedArray()
+        AlertDialog.Builder(this).setTitle(getString(R.string.t_add_news_provider)).setItems(labels) { _, picked ->
             editNewsProvider(null, presets.getOrNull(picked - 1))
-        }.setNegativeButton("Cancel", null).show()
+        }.setNegativeButton(getString(R.string.t_cancel), null).show()
     }
 
     /**
@@ -5313,20 +5356,20 @@ class MainActivity : Activity() {
         val plain = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
         // Easynews members already gave this app their login: offer it for the Easynews news server.
         val easynews = if (provider == null && preset?.name == "Easynews") Easynews.credentials(store) else null
-        val name = usenetField("Name", provider?.name ?: preset?.name.orEmpty(), plain)
-        val host = usenetField("Server address (news.example.com)", provider?.host ?: preset?.host.orEmpty(), InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
-        val port = usenetField("Port", (provider?.port ?: preset?.port ?: 563).toString(), InputType.TYPE_CLASS_NUMBER)
-        val user = usenetField("Username", provider?.user ?: easynews?.first.orEmpty(), plain)
-        val password = usenetField("Password", provider?.password ?: easynews?.second.orEmpty(), InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        val name = usenetField(getString(R.string.t_name), provider?.name ?: preset?.name.orEmpty(), plain)
+        val host = usenetField(getString(R.string.t_server_address_news_example_com), provider?.host ?: preset?.host.orEmpty(), InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
+        val port = usenetField(getString(R.string.t_port), (provider?.port ?: preset?.port ?: 563).toString(), InputType.TYPE_CLASS_NUMBER)
+        val user = usenetField(getString(R.string.t_username), provider?.user ?: easynews?.first.orEmpty(), plain)
+        val password = usenetField(getString(R.string.t_password), provider?.password ?: easynews?.second.orEmpty(), InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
         val suggested = minOf(NewsProviders.DEFAULT_CONNECTIONS, preset?.maxConnections ?: NewsProviders.DEFAULT_CONNECTIONS)
-        val connections = usenetField("Connections", (provider?.connections ?: suggested).toString(), InputType.TYPE_CLASS_NUMBER)
-        val pipeline = usenetField("Pipeline (default ${NewsProviders.DEFAULT_PIPELINE_DEPTH}, 1–${NewsProviders.MAX_PIPELINE_DEPTH})", (provider?.pipelineDepth ?: NewsProviders.DEFAULT_PIPELINE_DEPTH).toString(), InputType.TYPE_CLASS_NUMBER)
+        val connections = usenetField(getString(R.string.t_connections), (provider?.connections ?: suggested).toString(), InputType.TYPE_CLASS_NUMBER)
+        val pipeline = usenetField(getString(R.string.t_pipeline_default_x_1_x, NewsProviders.DEFAULT_PIPELINE_DEPTH, NewsProviders.MAX_PIPELINE_DEPTH), (provider?.pipelineDepth ?: NewsProviders.DEFAULT_PIPELINE_DEPTH).toString(), InputType.TYPE_CLASS_NUMBER)
         val tls = android.widget.CheckBox(this).apply { text = "SSL"; isChecked = provider?.tls ?: true; setTextColor(ink) }
-        val backup = android.widget.CheckBox(this).apply { text = "Backup only (fills in what the main provider is missing)"; isChecked = provider?.backup ?: false; setTextColor(ink) }
+        val backup = android.widget.CheckBox(this).apply { text = getString(R.string.t_backup_only_fills_in_what_the); isChecked = provider?.backup ?: false; setTextColor(ink) }
         // Switching SSL moves a standard port to its counterpart; a custom port is left alone.
         tls.setOnCheckedChangeListener { _, on -> when (port.text.toString()) { "563", "443" -> if (!on) port.setText("119"); "119", "23", "80" -> if (on) port.setText("563") } }
-        val status = text((preset?.let { "${it.name} allows up to ${it.maxConnections} connections on most plans; 10–20 suit a TV." } ?: "Connections: 1–${NewsProviders.MAX_CONNECTIONS}.") +
-            " SSL uses port 563 (119 without). Pipeline = requests ahead per connection; applies to the next video.", 13, muted)
+        val status = text((preset?.let { getString(R.string.t_x_allows_up_to_x_connections, it.name, it.maxConnections) } ?: getString(R.string.t_connections_1_x, NewsProviders.MAX_CONNECTIONS)) +
+            getString(R.string.t_ssl_uses_port_563_119_without), 13, muted)
         // Two fields to a row, so the whole form and its buttons fit a TV screen.
         fun row(vararg views: Pair<View, Float>) = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
@@ -5355,9 +5398,9 @@ class MainActivity : Activity() {
             content.addView(tls, margin(-1, -2))
         }
         content.addView(backup, margin(-1, -2))
-        val dialog = AlertDialog.Builder(this).setTitle(if (provider == null) "Add news provider" else "Edit ${provider.name}")
+        val dialog = AlertDialog.Builder(this).setTitle(if (provider == null) getString(R.string.t_add_news_provider) else getString(R.string.t_edit_x, provider.name))
             .setView(formWithStatus(content, status))
-            .setPositiveButton("Save", null).setNegativeButton("Cancel", null).setNeutralButton("Test", null).create()
+            .setPositiveButton(getString(R.string.t_save), null).setNegativeButton(getString(R.string.t_cancel), null).setNeutralButton(getString(R.string.t_test), null).create()
             .apply { window?.setSoftInputMode(formInputMode()) }
         dialog.setOnDismissListener { password.setText("") }
         dialog.show()
@@ -5371,11 +5414,11 @@ class MainActivity : Activity() {
         }
         dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
             val candidate = try { typed() } catch (error: Exception) { status.text = uiErrorMessage(error); return@setOnClickListener }
-            status.text = "Signing in…"
+            status.text = getString(R.string.t_signing_in)
             worker.execute {
                 val result = try {
-                    "Signed in (${dev.pov.tv.usenet.Nntp.check(dev.pov.tv.usenet.NntpServer(candidate.host, candidate.port, candidate.tls, candidate.user, candidate.password))} ms). Save to keep it."
-                } catch (error: Exception) { error.message ?: "Couldn't connect." }
+                    getString(R.string.t_signed_in_x_ms_save_to, dev.pov.tv.usenet.Nntp.check(dev.pov.tv.usenet.NntpServer(candidate.host, candidate.port, candidate.tls, candidate.user, candidate.password)))
+                } catch (error: Exception) { error.message ?: getString(R.string.t_couldn_t_connect) }
                 runOnUiThread { if (dialog.isShowing) status.text = result }
             }
         }
@@ -5398,44 +5441,86 @@ class MainActivity : Activity() {
         val all = runCatching { NewznabIndexers(store).load() }.getOrDefault(emptyList())
         val focus = "setting:${indexer.name}"
         val actions = listOf<Pair<String, () -> Unit>>(
-            "Edit" to { editIndexer(indexer, null) },
-            "Test" to {
-                toast("Asking ${indexer.name}…")
+            getString(R.string.t_edit) to { editIndexer(indexer, null) },
+            getString(R.string.t_test) to {
+                toast(getString(R.string.t_asking_x, indexer.name))
                 worker.execute {
-                    val result = try { "${indexer.name}: " + Newznab().test(indexer, UsenetHeaders.query { store.get(it) }) } catch (error: Exception) { "${indexer.name}: ${error.message ?: "no answer"}" }
+                    val result = try { "${indexer.name}: " + Newznab().test(indexer, UsenetHeaders.query { store.get(it) }) } catch (error: Exception) { "${indexer.name}: ${error.message ?: L10n.tr(R.string.t_no_answer_lower, "no answer")}" }
                     runOnUiThread { if (!isFinishing && !isDestroyed) toast(result) }
                 }
             },
-            (if (indexer.enabled) "Turn off" else "Turn on") to { saveIndexers(all.map { if (it.id == indexer.id) it.copy(enabled = !indexer.enabled) else it }, focus) },
-            "Remove" to { confirm("Remove ${indexer.name} from this device?") { saveIndexers(all.filter { it.id != indexer.id }) } })
+            (if (indexer.enabled) getString(R.string.t_turn_off) else getString(R.string.t_turn_on)) to { saveIndexers(all.map { if (it.id == indexer.id) it.copy(enabled = !indexer.enabled) else it }, focus) },
+            L10n.tr(R.string.t_priority_x, "Priority %1\$s", indexer.priority) to {
+                NumberStepper.show(this, L10n.tr(R.string.t_priority_of_x, "Priority of %1\$s", indexer.name),
+                    L10n.tr(R.string.t_priority_stepper_detail, "Lower numbers are searched first. Indexers with the same number are searched together."),
+                    indexer.priority, 1..dev.pov.tv.data.NewznabIndexers.MAX_PRIORITY, { L10n.tr(R.string.t_priority_x, "Priority %1\$s", it) }) { level ->
+                    saveIndexers(all.map { if (it.id == indexer.id) it.copy(priority = level, backupOnly = false) else it }, focus)
+                }
+            },
+            (if (indexer.dailyLimit > 0) L10n.tr(R.string.t_daily_limit_x, "Daily search limit · %1\$s", indexer.dailyLimit)
+                else L10n.tr(R.string.t_daily_limit_off, "Daily search limit · Off")) to {
+                NumberStepper.show(this, L10n.tr(R.string.t_daily_search_limit, "Daily search limit"),
+                    L10n.tr(R.string.t_daily_limit_detail, "After this many searches today, the indexer is skipped until tomorrow, like NZBHydra2. It is also skipped when it says its own daily limit is used up."),
+                    indexer.dailyLimit, 0..dev.pov.tv.data.NewznabIndexers.MAX_DAILY_LIMIT,
+                    { if (it == 0) L10n.tr(R.string.t_no_limit_2, "No limit") else L10n.tr(R.string.t_x_searches_a_day, "%1\$s searches a day", it) }) { limit ->
+                    saveIndexers(all.map { if (it.id == indexer.id) it.copy(dailyLimit = limit) else it }, focus)
+                }
+            },
+            (if (indexer.dailyGrabLimit > 0) L10n.tr(R.string.t_daily_grab_limit_x, "Daily grab limit · %1\$s", indexer.dailyGrabLimit)
+                else L10n.tr(R.string.t_daily_grab_limit_off, "Daily grab limit · Off")) to {
+                NumberStepper.show(this, L10n.tr(R.string.t_daily_grab_limit, "Daily grab limit"),
+                    L10n.tr(R.string.t_daily_grab_limit_detail, "A grab is the NZB download when you press play; resuming from this device costs none. After this many today, the indexer is left out of searches until tomorrow, as its links couldn't play. Free tiers often allow fewer grabs than searches."),
+                    indexer.dailyGrabLimit, 0..dev.pov.tv.data.NewznabIndexers.MAX_DAILY_LIMIT,
+                    { if (it == 0) L10n.tr(R.string.t_no_limit_2, "No limit") else L10n.tr(R.string.t_x_grabs_a_day, "%1\$s grabs a day", it) }) { limit ->
+                    saveIndexers(all.map { if (it.id == indexer.id) it.copy(dailyGrabLimit = limit) else it }, focus)
+                }
+            },
+            (if (indexer.backupOnly) L10n.tr(R.string.t_use_as_a_main_indexer, "Use as a main indexer") else L10n.tr(R.string.t_use_only_as_backup_free_tier, "Use only as backup (free tier)")) to {
+                saveIndexers(all.map { if (it.id == indexer.id) it.copy(backupOnly = !indexer.backupOnly) else it }, focus) },
+            getString(R.string.t_remove) to { confirm(getString(R.string.t_remove_x_from_this_device, indexer.name)) { saveIndexers(all.filter { it.id != indexer.id }) } })
         AlertDialog.Builder(this).setTitle(indexer.name).setItems(actions.map { it.first }.toTypedArray()) { _, picked -> actions[picked].second() }
-            .setNegativeButton("Cancel", null).show()
+            .setNegativeButton(getString(R.string.t_cancel), null).show()
+    }
+
+    private fun nextTierLabel(quality: Int) = when (quality) {
+        2160 -> L10n.tr(R.string.t_next_tier_no_4k, "No 4K yet")
+        1080 -> L10n.tr(R.string.t_next_tier_no_1080, "No 1080p or better yet")
+        720 -> L10n.tr(R.string.t_next_tier_no_720, "No 720p or better yet")
+        else -> L10n.tr(R.string.t_next_tier_nothing, "Nothing found yet")
+    }
+
+    /** What makes the next priority run, for its heading ("no 1080p or better"). */
+    private fun nextTierShortfall(quality: Int) = when (quality) {
+        2160 -> L10n.tr(R.string.t_shortfall_4k, "no 4K")
+        1080 -> L10n.tr(R.string.t_shortfall_1080, "no 1080p or better")
+        720 -> L10n.tr(R.string.t_shortfall_720, "no 720p or better")
+        else -> L10n.tr(R.string.t_shortfall_nothing, "nothing")
     }
 
     private fun chooseIndexerPreset() {
         val presets = NewznabIndexers.PRESETS
-        val labels = (listOf("Generic Newznab (any address)") + presets.map { it.name }).toTypedArray()
-        AlertDialog.Builder(this).setTitle("Add indexer").setItems(labels) { _, picked ->
+        val labels = (listOf(getString(R.string.t_generic_newznab_any_address)) + presets.map { it.name }).toTypedArray()
+        AlertDialog.Builder(this).setTitle(getString(R.string.t_add_indexer)).setItems(labels) { _, picked ->
             editIndexer(null, presets.getOrNull(picked - 1))
-        }.setNegativeButton("Cancel", null).show()
+        }.setNegativeButton(getString(R.string.t_cancel), null).show()
     }
 
     /** Add or edit an indexer: a known one with its API key, or any Newznab address. */
     private fun editIndexer(indexer: NewznabIndexer?, preset: NewznabIndexers.Preset?) {
         val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
         val plain = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
-        val name = usenetField("Name", indexer?.name ?: preset?.name?.substringBefore(" (").orEmpty(), plain)
-        val address = usenetField("API address (https://api.example.com/api)", indexer?.url ?: preset?.url.orEmpty(), InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
-        val key = usenetField(if (preset?.keyOptional == true) "API key (optional here)" else "API key", indexer?.apiKey.orEmpty(), plain)
+        val name = usenetField(getString(R.string.t_name), indexer?.name ?: preset?.name?.substringBefore(" (").orEmpty(), plain)
+        val address = usenetField(getString(R.string.t_api_address_https_api_example_com), indexer?.url ?: preset?.url.orEmpty(), InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
+        val key = usenetField(if (preset?.keyOptional == true) getString(R.string.t_api_key_optional_here) else getString(R.string.t_api_key), indexer?.apiKey.orEmpty(), plain)
         val status = text(when {
-            preset == null -> if (indexer == null) "Your API key is on the indexer's website, usually under Profile or API." else ""
-            preset.url.startsWith("http://") -> "Change the address to your own server's, then enter its API key."
-            else -> "Enter your ${preset.name} API key. It is on their website, usually under Profile or API."
+            preset == null -> if (indexer == null) getString(R.string.t_your_api_key_is_on_the) else ""
+            preset.url.startsWith("http://") -> getString(R.string.t_change_the_address_to_your_own)
+            else -> getString(R.string.t_enter_your_x_api_key_it, preset.name)
         }, 13, muted)
         content.addView(captioned(name), margin(-1, -2)); content.addView(captioned(address), margin(-1, -2, top = 4)); content.addView(captioned(key), margin(-1, -2, top = 4))
-        val dialog = AlertDialog.Builder(this).setTitle(if (indexer == null) "Add indexer" else "Edit ${indexer.name}")
+        val dialog = AlertDialog.Builder(this).setTitle(if (indexer == null) getString(R.string.t_add_indexer) else getString(R.string.t_edit_x, indexer.name))
             .setView(formWithStatus(content, status))
-            .setPositiveButton("Save", null).setNegativeButton("Cancel", null).setNeutralButton("Test", null).create()
+            .setPositiveButton(getString(R.string.t_save), null).setNegativeButton(getString(R.string.t_cancel), null).setNeutralButton(getString(R.string.t_test), null).create()
             .apply { window?.setSoftInputMode(formInputMode()) }
         dialog.show()
         // A known indexer only needs its key: start there.
@@ -5446,9 +5531,9 @@ class MainActivity : Activity() {
         }
         dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
             val candidate = try { typed() } catch (error: Exception) { status.text = uiErrorMessage(error); return@setOnClickListener }
-            status.text = "Asking the indexer…"
+            status.text = getString(R.string.t_asking_the_indexer)
             worker.execute {
-                val result = try { Newznab().test(candidate, UsenetHeaders.query { store.get(it) }) + ". Save to keep it." } catch (error: Exception) { error.message ?: "No answer." }
+                val result = try { Newznab().test(candidate, UsenetHeaders.query { store.get(it) }) + getString(R.string.t_save_to_keep_it) } catch (error: Exception) { error.message ?: getString(R.string.t_no_answer) }
                 runOnUiThread { if (dialog.isShowing) status.text = result }
             }
         }
@@ -5457,7 +5542,7 @@ class MainActivity : Activity() {
                 val saved = typed()
                 val config = NewznabIndexers(store)
                 val existing = config.load()
-                require(existing.none { it.url == saved.url && it.apiKey == saved.apiKey && it.id != saved.id }) { "This indexer is already saved." }
+                require(existing.none { it.url == saved.url && it.apiKey == saved.apiKey && it.id != saved.id }) { getString(R.string.t_this_indexer_is_already_saved) }
                 config.save(if (indexer == null) existing + saved else existing.map { if (it.id == indexer.id) saved else it })
                 dialog.dismiss(); usenetPage("setting:${saved.name}")
             } catch (error: Exception) { status.text = uiErrorMessage(error) }
@@ -5468,8 +5553,8 @@ class MainActivity : Activity() {
         val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
         val field = usenetField(default, store.get(key).ifBlank { default }, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
         content.addView(field, margin(-1, -2))
-        content.addView(text("A tool name and version, like $default. Names this app knows (Prowlarr, Sonarr, Radarr, SABnzbd, nzbget) keep up with new versions by themselves; anything else stays as you wrote it. Leave it empty for the default.", 13, muted), margin(-1, -2, top = 8))
-        val dialog = AlertDialog.Builder(this).setTitle(label).setView(content).setPositiveButton("Save", null).setNegativeButton("Cancel", null).create()
+        content.addView(text(getString(R.string.t_a_tool_name_and_version_like, default), 13, muted), margin(-1, -2, top = 8))
+        val dialog = AlertDialog.Builder(this).setTitle(label).setView(content).setPositiveButton(getString(R.string.t_save), null).setNegativeButton(getString(R.string.t_cancel), null).create()
         dialog.show(); dialog.submitOnEnter(field)
         dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
             val typed = UsenetHeaders.clean(field.text.toString())
@@ -5479,31 +5564,44 @@ class MainActivity : Activity() {
     }
 
     private fun updateUsenetHeaders() {
-        toast("Checking for newer versions…")
+        toast(getString(R.string.t_checking_for_newer_versions))
         worker.execute {
             val result = try {
                 val changed = UsenetHeaders.refresh({ store.get(it) }, { key, value -> store.put(key, value) })
-                if (changed.isEmpty()) "Both headers are already current" else "Updated to ${changed.joinToString(" and ")}"
-            } catch (error: Exception) { "Couldn't check just now. Try again later." }
-            runOnUiThread { if (!isFinishing && !isDestroyed) { toast(result); if (destination == "settings") usenetPage("setting:Update now") } }
+                if (changed.isEmpty()) getString(R.string.t_both_headers_are_already_current) else getString(R.string.t_updated_to_x, changed.joinToString(" and "))
+            } catch (error: Exception) { getString(R.string.t_couldn_t_check_just_now_try) }
+            runOnUiThread { if (!isFinishing && !isDestroyed) { toast(result); if (destination == "settings") usenetPage("setting:" + getString(R.string.t_update_now)) } }
         }
     }
 
     /** Which Easynews server links stream from. Easynews ignores the download port, so the server is the speed setting. */
     private fun easynewsServer() {
         val servers = Easynews.SERVERS
-        AlertDialog.Builder(this).setTitle("Easynews download server")
+        AlertDialog.Builder(this).setTitle(getString(R.string.t_easynews_download_server))
             .setSingleChoiceItems(servers.map { it.second }.toTypedArray(), servers.indexOfFirst { it.first == Easynews.server(store) }) { dialog, index ->
                 store.put(Easynews.SERVER, servers[index].first); dialog.dismiss()
-                toast("Easynews links now stream from ${servers[index].second}. Search again to use it."); refreshSettings()
-            }.setNegativeButton("Cancel", null).show()
+                toast(getString(R.string.t_easynews_links_now_stream_from_x, servers[index].second)); refreshSettings()
+            }.setNegativeButton(getString(R.string.t_cancel), null).show()
+    }
+
+    /** Settings → Language: the app's own language. The screen is rebuilt in the new language straight away. */
+    private fun chooseLanguage() {
+        val choices = AppLanguage.CHOICES
+        val names = choices.map { it.name.ifBlank { getString(R.string.t_device_language) } }.toTypedArray()
+        AlertDialog.Builder(this).setTitle(getString(R.string.t_language))
+            .setSingleChoiceItems(names, choices.indexOfFirst { it.tag == AppLanguage.tag(this) }.coerceAtLeast(0)) { dialog, index ->
+                dialog.dismiss()
+                if (choices[index].tag == AppLanguage.tag(this)) return@setSingleChoiceItems
+                AppLanguage.set(this, choices[index].tag)
+                recreate()
+            }.setNegativeButton(getString(R.string.t_cancel), null).show()
     }
 
     /** Parallel connections per Easynews video: each connection is capped, so more connections stream faster. */
     private fun easynewsConnections() {
-        NumberStepper.show(this, "Easynews connections", "More connections stream faster; 1 = a single connection. Applies from the next video.",
-            Easynews.connections(store), 1..Easynews.MAX_CONNECTIONS, { "$it ${if (it == 1) "connection" else "connections"}" }) { count ->
-            store.put(Easynews.CONNECTIONS, count.toString()); toast("Easynews uses $count ${if (count == 1) "connection" else "connections"} from the next video"); refreshSettings()
+        NumberStepper.show(this, getString(R.string.t_easynews_connections), getString(R.string.t_more_connections_stream_faster_1_a),
+            Easynews.connections(store), 1..Easynews.MAX_CONNECTIONS, { if (it == 1) L10n.tr(R.string.t_1_connection, "1 connection") else L10n.tr(R.string.t_x_connections, "%1\$s connections", it) }) { count ->
+            store.put(Easynews.CONNECTIONS, count.toString()); toast(getString(R.string.t_easynews_uses_x_x_from_the, count, if (count == 1) "connection" else "connections")); refreshSettings()
         }
     }
 
@@ -5511,27 +5609,27 @@ class MainActivity : Activity() {
     private fun connectEasynews() {
         val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
         val user = TvEditText(this).apply {
-            hint = "Easynews username"; setSingleLine()
+            hint = getString(R.string.t_easynews_username); setSingleLine()
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         }
         val password = TvEditText(this).apply {
-            hint = "Easynews password"; setSingleLine()
+            hint = getString(R.string.t_easynews_password); setSingleLine()
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         }
         val status = text("", 14, muted)
         content.addView(user, margin(-1, -2)); content.addView(password, margin(-1, -2, top = 8)); content.addView(status, margin(-1, -2, top = 8))
         val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
-        val dialog = AlertDialog.Builder(this).setTitle("Easynews account").setView(content)
-            .setPositiveButton("Connect", null).setNegativeButton("Cancel", null).create()
+        val dialog = AlertDialog.Builder(this).setTitle(getString(R.string.t_easynews_account)).setView(content)
+            .setPositiveButton(getString(R.string.t_connect), null).setNegativeButton(getString(R.string.t_cancel), null).create()
         dialog.setOnDismissListener { cancelled.set(true); password.setText("") }
         dialog.show(); dialog.submitOnEnter(password)
         dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
             val name = user.text.toString().trim(); val secret = password.text.toString()
-            if (name.isBlank()) { user.error = "Enter your Easynews username"; return@setOnClickListener }
-            if (secret.isEmpty()) { password.error = "Enter your Easynews password"; return@setOnClickListener }
+            if (name.isBlank()) { user.error = getString(R.string.t_enter_your_easynews_username); return@setOnClickListener }
+            if (secret.isEmpty()) { password.error = getString(R.string.t_enter_your_easynews_password); return@setOnClickListener }
             val request = generation
             val connect = dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE)
-            connect.isEnabled = false; status.text = "Checking your Easynews account…"
+            connect.isEnabled = false; status.text = getString(R.string.t_checking_your_easynews_account)
             worker.execute {
                 try {
                     EasynewsApi(store).verify(name, secret)
@@ -5540,7 +5638,7 @@ class MainActivity : Activity() {
                     runOnUiThread {
                         if (request == generation && !isFinishing && !isDestroyed) {
                             if (dialog.isShowing) dialog.dismiss()
-                            toast("Easynews connected"); refreshSettings()
+                            toast(getString(R.string.t_easynews_connected)); refreshSettings()
                         }
                     }
                 } catch (error: Exception) {
@@ -5554,8 +5652,8 @@ class MainActivity : Activity() {
         val preferences = SubtitlePreferences(this)
         val languages = if (allLanguages) SubtitlePreferences.LANGUAGES else
             SubtitlePreferences.COMMON_LANGUAGES.map { code -> SubtitlePreferences.LANGUAGES.first { it.first == code } }
-        val labels = languages.map { it.second } + if (allLanguages) emptyList() else listOf("More languages…")
-        AlertDialog.Builder(this).setTitle("Preferred subtitle language")
+        val labels = languages.map { it.second } + if (allLanguages) emptyList() else listOf(getString(R.string.t_more_languages))
+        AlertDialog.Builder(this).setTitle(getString(R.string.t_preferred_subtitle_language))
             .setSingleChoiceItems(labels.toTypedArray(), languages.indexOfFirst { it.first == preferences.language }) { dialog, index ->
                 dialog.dismiss()
                 if (index == languages.size) subtitleLanguage(true) else {
@@ -5563,7 +5661,7 @@ class MainActivity : Activity() {
                     InAppPlaybackSession.refreshSubtitleLanguage()
                     refreshSettings()
                 }
-            }.setNegativeButton("Cancel", null).show()
+            }.setNegativeButton(getString(R.string.t_cancel), null).show()
     }
 
     /** [second]: the second audio language, whose list starts with "None" instead of "Automatic" and leaves out the first. */
@@ -5571,10 +5669,10 @@ class MainActivity : Activity() {
         val preferences = AudioPreferences(this)
         val all = if (allLanguages) AudioPreferences.LANGUAGES else
             AudioPreferences.COMMON_LANGUAGES.map { code -> AudioPreferences.LANGUAGES.first { it.first == code } }
-        val languages = if (!second) all else listOf("" to "None") + all.filter { it.first.isNotEmpty() && it.first != preferences.language }
-        val labels = languages.map { it.second } + if (allLanguages) emptyList() else listOf("More languages…")
+        val languages = if (!second) all else listOf("" to getString(R.string.t_none)) + all.filter { it.first.isNotEmpty() && it.first != preferences.language }
+        val labels = languages.map { it.second } + if (allLanguages) emptyList() else listOf(getString(R.string.t_more_languages))
         val chosen = if (second) preferences.secondLanguage else preferences.language
-        AlertDialog.Builder(this).setTitle(if (second) "Second audio language" else "Preferred audio language")
+        AlertDialog.Builder(this).setTitle(if (second) getString(R.string.t_second_audio_language) else getString(R.string.t_preferred_audio_language))
             .setSingleChoiceItems(labels.toTypedArray(), languages.indexOfFirst { it.first == chosen }) { dialog, index ->
                 dialog.dismiss()
                 if (index == languages.size) audioLanguage(true, second) else {
@@ -5582,13 +5680,13 @@ class MainActivity : Activity() {
                     InAppPlaybackSession.refreshAudioLanguage()
                     refreshSettings()
                 }
-            }.setNegativeButton("Cancel", null).show()
+            }.setNegativeButton(getString(R.string.t_cancel), null).show()
     }
 
     private fun settings() {
         current = { settings() }
         destination = "settings"; refreshNavigation()
-        page("Settings", "Make ${BuildConfig.APP_SHORT} yours.")
+        page(getString(R.string.t_settings), getString(R.string.t_make_x_yours, BuildConfig.APP_SHORT))
 
         val section = settingsSection
         settingsCards(section)
@@ -5607,241 +5705,242 @@ class MainActivity : Activity() {
         try {
             when (section) {
                 "account" -> {
-            val card = settingsGroup("${BuildConfig.APP_SHORT} account & backup", "account")
+            val card = settingsGroup(getString(R.string.t_x_account_backup, BuildConfig.APP_SHORT), "account")
             if (!cloud.signedIn) {
-                settingsRow(card, "Create account", "", "Back up your debrid services, add-ons, Home rows and watch progress, encrypted on this device. " +
-                    "Sign in on any TV or phone and everything comes back.") { accountDialogs.createAccount() }
-                settingsRow(card, "Sign in", "", "Bring back your setup from your ${BuildConfig.APP_SHORT} account.") { accountDialogs.signIn() }
-                settingsRow(card, "Backup server", java.net.URI(cloud.server).host.orEmpty(),
-                    "Where backups are kept. Change it only if you run your own copy of the backup server.") { accountDialogs.backupServer() }
+                settingsRow(card, getString(R.string.t_create_account), "", getString(R.string.t_back_up_your_debrid_services_add) +
+                    getString(R.string.t_sign_in_on_any_tv_or)) { accountDialogs.createAccount() }
+                settingsRow(card, getString(R.string.t_sign_in), "", getString(R.string.t_bring_back_your_setup_from_your, BuildConfig.APP_SHORT)) { accountDialogs.signIn() }
+                settingsRow(card, getString(R.string.t_backup_server), java.net.URI(cloud.server).host.orEmpty(),
+                    getString(R.string.t_where_backups_are_kept_change_it)) { accountDialogs.backupServer() }
             } else {
-                settingsRow(card, "Signed in", cloud.email, "Debrid keys, add-ons and logins are encrypted with your password before they leave this device.", status = true) {}
-                settingsToggle(card, "Automatic backup", "Backs up when you leave the app, whenever something changed.", cloud.autoBackup) { on ->
+                settingsRow(card, getString(R.string.t_signed_in), cloud.email, getString(R.string.t_debrid_keys_add_ons_and_logins), status = true) {}
+                settingsToggle(card, getString(R.string.t_automatic_backup), getString(R.string.t_backs_up_when_you_leave_the), cloud.autoBackup) { on ->
                     cloud.autoBackup = on; if (on) accountDialogs.backupNow()
                 }
                 val last = cloud.lastBackup
-                settingsRow(card, "Back up now", if (last > 0) "Last: ${android.text.format.DateUtils.getRelativeTimeSpanString(last, System.currentTimeMillis(), 60_000)}" else "Never") {
+                settingsRow(card, getString(R.string.t_back_up_now), if (last > 0) getString(R.string.t_last_x, android.text.format.DateUtils.getRelativeTimeSpanString(last, System.currentTimeMillis(), 60_000)) else getString(R.string.t_never)) {
                     accountDialogs.backupNow()
                 }
-                settingsRow(card, "Change password") { accountDialogs.changePassword() }
-                settingsRow(card, "Sign out", "", "This device keeps its settings and stops backing up.") { accountDialogs.signOut() }
-                settingsRow(card, "Delete account", danger = true) { accountDialogs.deleteAccount() }
+                settingsRow(card, getString(R.string.t_change_password)) { accountDialogs.changePassword() }
+                settingsRow(card, getString(R.string.t_sign_out), "", getString(R.string.t_this_device_keeps_its_settings_and)) { accountDialogs.signOut() }
+                settingsRow(card, getString(R.string.t_delete_account), danger = true) { accountDialogs.deleteAccount() }
             }
                 }
                 "home" -> {
-            val home = settingsGroup("Home & appearance", "home")
+            val home = settingsGroup(getString(R.string.t_home_appearance), "home")
+            settingsRow(home, getString(R.string.t_language), AppLanguage.label(this, getString(R.string.t_device_language)), getString(R.string.t_the_language_of_menus_and_settings)) { chooseLanguage() }
             if (DeviceLayout.tv) {
-                settingsRow(home, "Trailers", if (!heroTrailersEnabled()) "Off" else listOf("On", if (heroTrailerSoundEnabled()) "sound on" else "muted", if (heroTrailerHighQuality()) "high quality" else "standard quality").joinToString(" · "),
-                    "Trailers on details pages and focused Home posters: sound, quality and screen fill.") { navigate { playbackPage("trailers") } }
-                settingsToggle(home, "TV home Continue Watching", "Show resume cards on supported TV launchers. Your TV controls whether the row appears.", TvContinueWatching.enabled(this)) { enabled ->
+                settingsRow(home, getString(R.string.t_trailers), if (!heroTrailersEnabled()) getString(R.string.t_off) else listOf(getString(R.string.t_on), if (heroTrailerSoundEnabled()) getString(R.string.t_sound_on) else "muted", if (heroTrailerHighQuality()) getString(R.string.t_high_quality) else getString(R.string.t_standard_quality)).joinToString(" · "),
+                    getString(R.string.t_trailers_on_details_pages_and_focused)) { navigate { playbackPage("trailers") } }
+                settingsToggle(home, getString(R.string.t_tv_home_continue_watching), getString(R.string.t_show_resume_cards_on_supported_tv), TvContinueWatching.enabled(this)) { enabled ->
                     TvContinueWatching.setEnabled(this,enabled)
                 }
             }
-            settingsRow(home, "Cast & crew cards", if (roundCast()) "Round" else "Large portraits",
-                "How the cast and crew look on details pages: large portrait photos, or the smaller round ones.") {
-                val styles = listOf("large" to "Large portraits", "round" to "Round")
-                AlertDialog.Builder(this).setTitle("Cast & crew cards")
+            settingsRow(home, getString(R.string.t_cast_crew_cards), if (roundCast()) getString(R.string.t_round) else getString(R.string.t_large_portraits),
+                getString(R.string.t_how_the_cast_and_crew_look)) {
+                val styles = listOf("large" to getString(R.string.t_large_portraits), "round" to getString(R.string.t_round))
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_cast_crew_cards))
                     .setSingleChoiceItems(styles.map { it.second }.toTypedArray(), if (roundCast()) 1 else 0) { dialog, index ->
                         store.put(CAST_STYLE, styles[index].first); dialog.dismiss(); refreshSettings()
-                    }.setNegativeButton("Cancel", null).show()
+                    }.setNegativeButton(getString(R.string.t_cancel), null).show()
             }
             val tmdbKey = store.get(TMDB_KEY)
-            settingsRow(home, "TMDB", if (tmdbKey.isBlank()) "Not set" else "Connected",
-                "Your own free TMDB key adds catalogs, cast, keywords and similar titles.",
+            settingsRow(home, "TMDB", if (tmdbKey.isBlank()) getString(R.string.t_not_set) else getString(R.string.t_connected),
+                getString(R.string.t_your_own_free_tmdb_key_adds),
                 status = tmdbKey.isNotBlank()) {
-                inputSetting("TMDB API key", "TMDB API key or API Read Access Token", "", secret = true) { key ->
-                    load(generation, { TmdbCatalog(this, key, tmdbRegion()).validate() }) { store.put(TMDB_KEY, key); toast("TMDB connected. Home now uses TMDB catalogs."); refreshSettings() }
+                inputSetting(getString(R.string.t_tmdb_api_key), getString(R.string.t_tmdb_api_key_or_api_read), "", secret = true) { key ->
+                    load(generation, { TmdbCatalog(this, key, tmdbRegion()).validate() }) { store.put(TMDB_KEY, key); toast(getString(R.string.t_tmdb_connected_home_now_uses_tmdb)); refreshSettings() }
                 }
             }
             val tvdbKey = store.get(TVDB_KEY)
-            settingsRow(home, "TVDB", if (tvdbKey.isBlank()) "Not set" else "Connected",
-                "Your own TVDB key gives shows TVDB's seasons and episodes: usually more complete, with specials, stills and synopses.",
+            settingsRow(home, "TVDB", if (tvdbKey.isBlank()) getString(R.string.t_not_set) else getString(R.string.t_connected),
+                getString(R.string.t_your_own_tvdb_key_gives_shows),
                 status = tvdbKey.isNotBlank()) {
-                inputSetting("TVDB API key", "TVDB API key (thetvdb.com → Account → API Keys)", "", secret = true) { key ->
-                    load(generation, { TvdbApi(this, key).validate() }) { store.put(TVDB_KEY, key); forgetDetails(); toast("TVDB connected. Show pages now use TVDB episodes."); refreshSettings() }
+                inputSetting(getString(R.string.t_tvdb_api_key), getString(R.string.t_tvdb_api_key_thetvdb_com_account), "", secret = true) { key ->
+                    load(generation, { TvdbApi(this, key).validate() }) { store.put(TVDB_KEY, key); forgetDetails(); toast(getString(R.string.t_tvdb_connected_show_pages_now_use)); refreshSettings() }
                 }
             }
-            if (tvdbKey.isNotBlank()) settingsToggle(home, "Use TVDB for shows", "Seasons, episode titles, stills and synopses from TVDB. Off uses Cinemeta's episode lists again.",
-                store.get(TVDB_SHOWS) != "false", contentLabel = "Use TVDB for shows") { on -> store.put(TVDB_SHOWS, on.toString()); forgetDetails() }
-            settingsRow(home, "Search and details", metadataSource?.name ?: MetadataSource.fromJson(store.get(MetadataSource.KEY))?.let { "Cinemeta · ${it.name} off" } ?: "Cinemeta",
-                "Use one of your catalog add-ons, such as a self-hosted AIOMetadata, for search and title details (descriptions, episodes). Cinemeta stays the fallback.") { chooseMetadataSource() }
-            settingsRow(home, "Cinema country", countryName(tmdbRegion()), "Used for Now Playing in Cinemas.") {
+            if (tvdbKey.isNotBlank()) settingsToggle(home, getString(R.string.t_use_tvdb_for_shows), getString(R.string.t_seasons_episode_titles_stills_and_synopses),
+                store.get(TVDB_SHOWS) != "false", contentLabel = getString(R.string.t_use_tvdb_for_shows)) { on -> store.put(TVDB_SHOWS, on.toString()); forgetDetails() }
+            settingsRow(home, getString(R.string.t_search_and_details), metadataSource?.name ?: MetadataSource.fromJson(store.get(MetadataSource.KEY))?.let { getString(R.string.t_cinemeta_x_off, it.name) } ?: getString(R.string.t_cinemeta),
+                getString(R.string.t_use_one_of_your_catalog_add)) { chooseMetadataSource() }
+            settingsRow(home, getString(R.string.t_cinema_country), countryName(tmdbRegion()), getString(R.string.t_used_for_now_playing_in_cinemas)) {
                 val countries = java.util.Locale.getISOCountries().map { it to countryName(it) }.sortedBy { it.second }
-                AlertDialog.Builder(this).setTitle("Now Playing in Cinemas · country")
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_now_playing_in_cinemas_country))
                     .setSingleChoiceItems(countries.map { it.second }.toTypedArray(), countries.indexOfFirst { it.first == tmdbRegion() }) { dialog, index ->
                         store.put(TMDB_REGION, countries[index].first); dialog.dismiss(); refreshSettings()
-                    }.setNegativeButton("Cancel", null).show()
+                    }.setNegativeButton(getString(R.string.t_cancel), null).show()
             }
-            settingsRow(home, "Home rows", "", "Reorder or hide the rows after Top 10, and add catalog add-ons such as AIOMetadata.") { navigate { homeRowsPage() } }
-            settingsToggle(home, "Resume cards", "Continue Watching as wide cards with the episode, time left and progress beside the artwork.",
+            settingsRow(home, getString(R.string.t_home_rows), "", getString(R.string.t_reorder_or_hide_the_rows_after)) { navigate { homeRowsPage() } }
+            settingsToggle(home, getString(R.string.t_resume_cards), getString(R.string.t_continue_watching_as_wide_cards_with),
                 store.get(RESUME_CARDS) != "false") { on -> store.put(RESUME_CARDS, on.toString()) }
-            if (tmdbKey.isNotBlank()) settingsRow(home, "Remove TMDB key", danger = true) {
-                confirm("Remove your TMDB key? Home will use Cinemeta catalogs.") { store.remove(TMDB_KEY); refreshSettings() }
+            if (tmdbKey.isNotBlank()) settingsRow(home, getString(R.string.t_remove_tmdb_key), danger = true) {
+                confirm(getString(R.string.t_remove_your_tmdb_key_home_will)) { store.remove(TMDB_KEY); refreshSettings() }
             }
-            if (tvdbKey.isNotBlank()) settingsRow(home, "Remove TVDB key", danger = true) {
-                confirm("Remove your TVDB key? Shows will use Cinemeta's episode lists.") { store.remove(TVDB_KEY); forgetDetails(); refreshSettings() }
+            if (tvdbKey.isNotBlank()) settingsRow(home, getString(R.string.t_remove_tvdb_key), danger = true) {
+                confirm(getString(R.string.t_remove_your_tvdb_key_shows_will)) { store.remove(TVDB_KEY); forgetDetails(); refreshSettings() }
             }
                 }
                 "playback" -> {
-            val playback = settingsGroup("Playback", "nowplaying")
+            val playback = settingsGroup(getString(R.string.t_playback), "nowplaying")
             // Playback opens three short pages instead of one long list of switches.
-            settingsRow(playback, "Links & sorting", SourceSortPreferences(this).label,
-                "Sort order, badge style, compact list, and hiding uncached, cam and low-quality links.") { navigate { playbackPage("links") } }
+            settingsRow(playback, getString(R.string.t_links_sorting), SourceSortPreferences(this).label,
+                getString(R.string.t_sort_order_badge_style_compact_list)) { navigate { playbackPage("links") } }
             val autoplaySearch = SourceSearchPreferences(this)
             val autoplayMode = autoplaySearch.mode(store.get(AUTOPLAY_FIRST) == "true")
             val autoplayOn = autoplayMode != SourceSearchPreferences.OFF
-            settingsRow(playback, "Auto-play", if (!autoplayOn) "Off" else if (store.get(AUTOPLAY_LIMIT_ON) == "true") "${autoplaySearch.modeLabel(autoplayMode)} · up to ${autoplayMaxMbps()} Mbps" else autoplaySearch.modeLabel(autoplayMode),
-                "Auto-play the first link, its bitrate and size limits, and auto-play next episode.") { navigate { playbackPage("autoplay") } }
-            settingsRow(playback, "Player", if (MiniPlayerPreferences(this).enabled) "Mini player on" else "Mini player off",
-                "Mini player, skip buttons, seek previews, read-ahead and Dolby Vision.") { navigate { playbackPage("player") } }
+            settingsRow(playback, getString(R.string.t_auto_play), if (!autoplayOn) getString(R.string.t_off) else if (store.get(AUTOPLAY_LIMIT_ON) == "true") getString(R.string.t_x_up_to_x_mbps, autoplaySearch.modeLabel(autoplayMode), autoplayMaxMbps()) else autoplaySearch.modeLabel(autoplayMode),
+                getString(R.string.t_auto_play_the_first_link_its)) { navigate { playbackPage("autoplay") } }
+            settingsRow(playback, getString(R.string.t_player), if (MiniPlayerPreferences(this).enabled) getString(R.string.t_mini_player_on) else getString(R.string.t_mini_player_off),
+                getString(R.string.t_mini_player_skip_buttons_seek_previews)) { navigate { playbackPage("player") } }
                 }
                 "captions" -> {
             // Two cards: audio, then subtitles, each with its own English fallback.
-            val sound = settingsGroup("Audio", "nowplaying")
-            settingsRow(sound, "Audio language", AudioPreferences(this).languageLabel, "Chosen automatically when available, and links in this language are listed and auto-played first. You can pick another track in the player.") { audioLanguage() }
-            if (AudioPreferences(this).language.isNotEmpty()) settingsRow(sound, "Second audio language", AudioPreferences(this).secondLanguageLabel,
-                "Used when a video has no audio in your first language, before English. E.g. English first, Hindi second picks Hindi over Telugu or Tamil, and Hindi links are listed before other languages.") { audioLanguage(second = true) }
-            settingsToggle(sound, "English audio fallback", "If a video has no audio in your language, English is chosen instead, and English links are listed before other languages.",
+            val sound = settingsGroup(getString(R.string.t_audio), "nowplaying")
+            settingsRow(sound, getString(R.string.t_audio_language), AudioPreferences(this).languageLabel, getString(R.string.t_chosen_automatically_when_available_and_links)) { audioLanguage() }
+            if (AudioPreferences(this).language.isNotEmpty()) settingsRow(sound, getString(R.string.t_second_audio_language), AudioPreferences(this).secondLanguageLabel,
+                getString(R.string.t_used_when_a_video_has_no)) { audioLanguage(second = true) }
+            settingsToggle(sound, getString(R.string.t_english_audio_fallback), getString(R.string.t_if_a_video_has_no_audio),
                 AudioPreferences(this).englishFallback) { on ->
                 AudioPreferences(this).englishFallback = on; InAppPlaybackSession.refreshAudioLanguage()
             }
             val boost = VolumeBoostPreferences(this)
-            settingsRow(sound, "Volume boost by default", boost.label, "Every video starts with this boost. You can still change it for one video in the player's Audio & Subtitles menu.") {
-                AlertDialog.Builder(this).setTitle("Volume boost by default")
-                    .setSingleChoiceItems(SessionVolumeBoost.STEPS.map { if (it == 0) "Off · normal audio" else "+$it dB" }.toTypedArray(),
+            settingsRow(sound, getString(R.string.t_volume_boost_by_default), boost.label, getString(R.string.t_every_video_starts_with_this_boost)) {
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_volume_boost_by_default))
+                    .setSingleChoiceItems(SessionVolumeBoost.STEPS.map { if (it == 0) getString(R.string.t_off_normal_audio) else getString(R.string.t_x_db, it) }.toTypedArray(),
                         SessionVolumeBoost.STEPS.indexOf(boost.defaultDb).coerceAtLeast(0)) { dialog, index ->
                         VolumeBoostPreferences(this).defaultDb = SessionVolumeBoost.STEPS[index]; dialog.dismiss(); refreshSettings()
-                    }.setNegativeButton("Cancel", null).show()
+                    }.setNegativeButton(getString(R.string.t_cancel), null).show()
             }
-            val captions = settingsGroup("Subtitles", "series")
+            val captions = settingsGroup(getString(R.string.t_subtitles), "series")
             val subtitlePreferences = SubtitlePreferences(this)
-            settingsRow(captions, "Subtitle language", subtitlePreferences.languageLabel, "Chosen automatically when available. You can pick another track in the player.") { subtitleLanguage() }
-            settingsToggle(captions, "English subtitle fallback", "If a video has no subtitles in your language, English subtitles are chosen instead.",
+            settingsRow(captions, getString(R.string.t_subtitle_language), subtitlePreferences.languageLabel, getString(R.string.t_chosen_automatically_when_available_you_can)) { subtitleLanguage() }
+            settingsToggle(captions, getString(R.string.t_english_subtitle_fallback), getString(R.string.t_if_a_video_has_no_subtitles),
                 SubtitlePreferences(this).englishFallback) { on ->
                 SubtitlePreferences(this).englishFallback = on; InAppPlaybackSession.refreshSubtitleLanguage()
             }
-            settingsToggle(captions, "Find missing subtitles", "When a video has no subtitles in your language, the best matches from OpenSubtitles are added and the first one is turned on. Others are in the player's Subtitles list.",
+            settingsToggle(captions, getString(R.string.t_find_missing_subtitles), getString(R.string.t_when_a_video_has_no_subtitles),
                 subtitlePreferences.autoFetch) { on -> SubtitlePreferences(this).autoFetch = on }
-            settingsRow(captions, "Subtitle style", "${subtitlePreferences.fontLabel} · ${subtitlePreferences.sizeLabel}",
-                "Font, size, text and outline colors, outline type and background, with a live preview and Netflix, Prime and YouTube-style presets.") {
+            settingsRow(captions, getString(R.string.t_subtitle_style), "${subtitlePreferences.fontLabel} · ${subtitlePreferences.sizeLabel}",
+                getString(R.string.t_font_size_text_and_outline_colors)) {
                 navigate { subtitleStylePage() }
             }
             val wyzie = store.get(InAppPlaybackSession.WYZIE_KEY)
-            settingsRow(captions, "Wyzie Subs", if (wyzie.isBlank()) "Not set" else "Connected",
-                "Optional: your own free Wyzie key (store.wyzie.io) adds more subtitle sources to Find missing subtitles.", status = wyzie.isNotBlank()) {
-                inputSetting("Wyzie Subs API key", "Paste your free Wyzie key", "", secret = true) { key ->
-                    store.put(InAppPlaybackSession.WYZIE_KEY, key.trim()); toast("Wyzie Subs added"); refreshSettings()
+            settingsRow(captions, getString(R.string.t_wyzie_subs), if (wyzie.isBlank()) getString(R.string.t_not_set) else getString(R.string.t_connected),
+                getString(R.string.t_optional_your_own_free_wyzie_key), status = wyzie.isNotBlank()) {
+                inputSetting(getString(R.string.t_wyzie_subs_api_key), getString(R.string.t_paste_your_free_wyzie_key), "", secret = true) { key ->
+                    store.put(InAppPlaybackSession.WYZIE_KEY, key.trim()); toast(getString(R.string.t_wyzie_subs_added)); refreshSettings()
                 }
             }
-            if (wyzie.isNotBlank()) settingsRow(captions, "Remove Wyzie key", danger = true) {
-                confirm("Remove your Wyzie Subs key?") { store.remove(InAppPlaybackSession.WYZIE_KEY); refreshSettings() }
+            if (wyzie.isNotBlank()) settingsRow(captions, getString(R.string.t_remove_wyzie_key), danger = true) {
+                confirm(getString(R.string.t_remove_your_wyzie_subs_key)) { store.remove(InAppPlaybackSession.WYZIE_KEY); refreshSettings() }
             }
             val subdl = store.get(InAppPlaybackSession.SUBDL_KEY)
-            settingsRow(captions, "SubDL", if (subdl.isBlank()) "Not set" else "Connected",
-                "Optional: your own free SubDL key (subdl.com → Account → API) adds the large SubDL library (strong for Spanish, Arabic, Persian, Turkish…) to Find missing subtitles.",
+            settingsRow(captions, getString(R.string.t_subdl), if (subdl.isBlank()) getString(R.string.t_not_set) else getString(R.string.t_connected),
+                getString(R.string.t_optional_your_own_free_subdl_key),
                 status = subdl.isNotBlank()) {
-                inputSetting("SubDL API key", "Paste your free SubDL key", "", secret = true) { key ->
-                    store.put(InAppPlaybackSession.SUBDL_KEY, key.trim()); toast("SubDL added"); refreshSettings()
+                inputSetting(getString(R.string.t_subdl_api_key), getString(R.string.t_paste_your_free_subdl_key), "", secret = true) { key ->
+                    store.put(InAppPlaybackSession.SUBDL_KEY, key.trim()); toast(getString(R.string.t_subdl_added)); refreshSettings()
                 }
             }
-            if (subdl.isNotBlank()) settingsRow(captions, "Remove SubDL key", danger = true) {
-                confirm("Remove your SubDL key?") { store.remove(InAppPlaybackSession.SUBDL_KEY); refreshSettings() }
+            if (subdl.isNotBlank()) settingsRow(captions, getString(R.string.t_remove_subdl_key), danger = true) {
+                confirm(getString(R.string.t_remove_your_subdl_key)) { store.remove(InAppPlaybackSession.SUBDL_KEY); refreshSettings() }
             }
-            settingsRow(captions, "Subtitle position", subtitlePreferences.positionLabel) {
+            settingsRow(captions, getString(R.string.t_subtitle_position), subtitlePreferences.positionLabel) {
                 SubtitlePositionPicker.show(this, liveVideo = false,
                     changed = { InAppPlaybackSession.refreshSubtitleStyle() }, dismissed = { refreshSettings() })
             }
                 }
                 "sources" -> {
-            val sources = settingsGroup("Sources", "library")
+            val sources = settingsGroup(getString(R.string.t_sources), "library")
             val linkedDebrids = DebridServices.linked(store); val activeDebrids = DebridServices.connected(store)
-            settingsRow(sources, "Debrid services", if (linkedDebrids.isEmpty()) "None connected" else "${activeDebrids.size} of ${linkedDebrids.size} on",
-                if (activeDebrids.isEmpty()) "Connect Offcloud, TorBox, Real-Debrid and more, switch each on or off, and choose which plays first."
-                else "Cached links play from: ${activeDebrids.joinToString(" → ") { DebridServices.name(it) }}.", status = activeDebrids.isNotEmpty()) { navigate { debridServicesPage() } }
+            settingsRow(sources, getString(R.string.t_debrid_services), if (linkedDebrids.isEmpty()) getString(R.string.t_none_connected) else getString(R.string.t_x_of_x_on, activeDebrids.size, linkedDebrids.size),
+                if (activeDebrids.isEmpty()) getString(R.string.t_connect_offcloud_torbox_real_debrid_and)
+                else getString(R.string.t_cached_links_play_from_x, activeDebrids.joinToString(" → ") { DebridServices.name(it) }), status = activeDebrids.isNotEmpty()) { navigate { debridServicesPage() } }
             val easynewsLinked = Easynews.credentials(store) != null
-            settingsRow(sources, "Easynews", if (!easynewsLinked) "Not connected" else if (Easynews.enabled(store)) "On" else "Off",
-                "Search Usenet with your Easynews account. Its results play directly, listed with your add-ons' links. Experimental: it uses the Easynews members website.",
+            settingsRow(sources, getString(R.string.t_easynews), if (!easynewsLinked) getString(R.string.t_not_connected) else if (Easynews.enabled(store)) getString(R.string.t_on) else getString(R.string.t_off),
+                getString(R.string.t_search_usenet_with_your_easynews_account),
                 status = Easynews.active(store)) { easynewsActions() }
             val newsOn = runCatching { NewsProviders(store).load().count { it.enabled } }.getOrDefault(0)
             val indexersOn = runCatching { NewznabIndexers(store).load().count { it.enabled } }.getOrDefault(0)
-            settingsRow(sources, "Usenet", if (newsOn == 0 && indexersOn == 0) "Not set up" else "$newsOn ${if (newsOn == 1) "provider" else "providers"} · $indexersOn ${if (indexersOn == 1) "indexer" else "indexers"}",
-                "Stream straight from your news providers (Newshosting, Easynews, any server) with links from your own indexers. Experimental.",
+            settingsRow(sources, getString(R.string.t_usenet), if (newsOn == 0 && indexersOn == 0) getString(R.string.t_not_set_up) else "$newsOn ${if (newsOn == 1) "provider" else "providers"} · $indexersOn ${if (indexersOn == 1) "indexer" else "indexers"}",
+                getString(R.string.t_stream_straight_from_your_news_providers),
                 status = newsOn > 0 && indexersOn > 0) { navigate { usenetPage() } }
             val providerList = runCatching { SourceProviders(store).load() }.getOrDefault(emptyList())
-            settingsRow(sources, "Source providers", if (providerList.isEmpty()) "None added" else "${providerList.count { it.enabled }} of ${providerList.size} on",
-                "Your Stremio scraper add-ons, such as Torrentio. Switch each on or off, and add, edit or remove them.",
+            settingsRow(sources, getString(R.string.t_source_providers), if (providerList.isEmpty()) getString(R.string.t_none_added) else getString(R.string.t_x_of_x_on, providerList.count { it.enabled }, providerList.size),
+                getString(R.string.t_your_stremio_scraper_add_ons_such),
                 status = providerList.any { it.enabled }) { navigate { sourceProvidersPage() } }
                 }
                 "tracking" -> {
-            val tracking = settingsGroup("Tracking", "wetrakr")
-            settingsRow(tracking, "Service", wetrakr.name, "WeTrakr or Simkl: watchlists, Continue Watching, Up Next and progress sync.") { chooseTracker() }
-            settingsRow(tracking, "Account", if (wetrakr.signedIn()) "Connected" else "Not connected",
-                if (wetrakr.signedIn()) "Select to sign in again." else "Sign in with a code to sync watchlists and progress.", status = wetrakr.signedIn()) { startWeTrakr() }
-            if (wetrakr.signedIn()) settingsToggle(tracking, "Use ${wetrakr.name}", "Off keeps you signed in, but hides its Home rows, watched badges and lists, and sends no playback updates. Turn it back on any time.",
-                wetrakr.enabled(), contentLabel = "Use ${wetrakr.name}") { on ->
+            val tracking = settingsGroup(getString(R.string.t_tracking), "wetrakr")
+            settingsRow(tracking, getString(R.string.t_service), wetrakr.name, getString(R.string.t_wetrakr_or_simkl_watchlists_continue_watching)) { chooseTracker() }
+            settingsRow(tracking, getString(R.string.t_account), if (wetrakr.signedIn()) getString(R.string.t_connected) else getString(R.string.t_not_connected),
+                if (wetrakr.signedIn()) getString(R.string.t_select_to_sign_in_again) else getString(R.string.t_sign_in_with_a_code_to), status = wetrakr.signedIn()) { startWeTrakr() }
+            if (wetrakr.signedIn()) settingsToggle(tracking, getString(R.string.t_use_x, wetrakr.name), getString(R.string.t_off_keeps_you_signed_in_but),
+                wetrakr.enabled(), contentLabel = getString(R.string.t_use_x, wetrakr.name)) { on ->
                 wetrakr.setEnabled(on); wetrakrOutbox.clearPending(); remoteProgress.clear(); retainedHome = null; refreshWatched(force = on)
             }
-            settingsToggle(tracking, "Scrobbling", "Automatic playback updates. Your library, Continue Watching and manual actions still work when this is off.",
+            settingsToggle(tracking, getString(R.string.t_scrobbling), getString(R.string.t_automatic_playback_updates_your_library_continue),
                 wetrakr.scrobblingEnabled(), contentLabel = "${wetrakr.name} scrobbling") { on -> wetrakr.setScrobblingEnabled(on); wetrakrOutbox.clearPending() }
-            if (wetrakr.supportsLists) settingsToggle(tracking, "Liked lists on Home", "Shows your liked ${wetrakr.name} lists as rows on Home.",
-                store.get("wetrakr.home_liked_opt_in") == "true", contentLabel = "${wetrakr.name} liked lists on Home") { on -> store.put("wetrakr.home_liked_opt_in", on.toString()) }
-            if (wetrakr.signedIn()) settingsRow(tracking, "Disconnect ${wetrakr.name}", danger = true) {
-                confirm("Disconnect ${wetrakr.name} on this device?") { wetrakr.disconnect(); wetrakrOutbox.clearPending(); remoteProgress.clear(); refreshWatched(); refreshSettings() }
+            if (wetrakr.supportsLists) settingsToggle(tracking, getString(R.string.t_liked_lists_on_home), getString(R.string.t_shows_your_liked_x_lists_as, wetrakr.name),
+                store.get("wetrakr.home_liked_opt_in") == "true", contentLabel = getString(R.string.t_x_liked_lists_on_home, wetrakr.name)) { on -> store.put("wetrakr.home_liked_opt_in", on.toString()) }
+            if (wetrakr.signedIn()) settingsRow(tracking, getString(R.string.t_disconnect_x, wetrakr.name), danger = true) {
+                confirm(getString(R.string.t_disconnect_x_on_this_device, wetrakr.name)) { wetrakr.disconnect(); wetrakrOutbox.clearPending(); remoteProgress.clear(); refreshWatched(); refreshSettings() }
             }
                 }
                 "updates" -> {
-            val updates = settingsGroup("Updates", "settings")
-            settingsRow(updates, "Check for updates", "${BuildConfig.APP_NAME} ${packageManager.getPackageInfo(packageName, 0).versionName.orEmpty().removeSuffix("-rajput")}") { startActivity(Intent(this, UpdateActivity::class.java)) }
-            settingsToggle(updates, "Check on startup", "Looks for a newer signed release each time the app opens.",
-                store.get("updates.startup") != "false", contentLabel = "Check for updates on startup") { on -> store.put("updates.startup", on.toString()) }
+            val updates = settingsGroup(getString(R.string.t_updates), "settings")
+            settingsRow(updates, getString(R.string.t_check_for_updates), "${BuildConfig.APP_NAME} ${packageManager.getPackageInfo(packageName, 0).versionName.orEmpty().removeSuffix("-rajput")}") { startActivity(Intent(this, UpdateActivity::class.java)) }
+            settingsToggle(updates, getString(R.string.t_check_on_startup), getString(R.string.t_looks_for_a_newer_signed_release),
+                store.get("updates.startup") != "false", contentLabel = getString(R.string.t_check_for_updates_on_startup)) { on -> store.put("updates.startup", on.toString()) }
                 }
                 "about" -> {
             val version = packageManager.getPackageInfo(packageName, 0).versionName.orEmpty().removeSuffix("-rajput")
             // The app: icon, name and version, then help and feedback, then the services it uses as a grid.
-            val app = settingsGroup("App", null, heading = false)
+            val app = settingsGroup(getString(R.string.t_app), null, heading = false)
             val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(12), dp(14), dp(12)) }
             header.addView(ImageView(this).apply { setImageResource(R.drawable.pov_logo); scaleType = ImageView.ScaleType.FIT_CENTER
                 background = rounded(Color.TRANSPARENT, 10); clipToOutline = true }, margin(46, 46))
             val names = column()
             names.addView(text("${BuildConfig.APP_NAME}", 18, ink, true))
-            names.addView(text("Version $version · ${if (DeviceLayout.tv) "Android TV" else "Phone"}", 12, muted), margin(-1, -2, top = 3))
+            names.addView(text(getString(R.string.t_version_x_x, version, if (DeviceLayout.tv) "Android TV" else L10n.tr(R.string.t_phone, "Phone")), 12, muted), margin(-1, -2, top = 3))
             header.addView(names, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(14) })
             app.addView(header, margin(-1, -2))
 
-            val about = settingsGroup("Help & feedback", null)
+            val about = settingsGroup(getString(R.string.t_help_feedback), null)
             // Only the app version and device are added to the bug link, shown on the form before sending.
             val appDetails = "${BuildConfig.APP_NAME} ${packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()} · ${if (DeviceLayout.tv) "TV" else "Phone"} · " +
-                "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android ${android.os.Build.VERSION.RELEASE}"
-            settingsRow(about, "Report a bug", BUG_PAGE.removePrefix("https://"), "Something not working? Tell us what happened. No account needed.") {
-                openWebPage("Report a bug", android.net.Uri.parse(BUG_PAGE).buildUpon().appendQueryParameter("app", appDetails).build().toString(), BUG_PAGE)
+                getString(R.string.t_x_x_android_x, android.os.Build.MANUFACTURER, android.os.Build.MODEL, android.os.Build.VERSION.RELEASE)
+            settingsRow(about, getString(R.string.t_report_a_bug), BUG_PAGE.removePrefix("https://"), getString(R.string.t_something_not_working_tell_us_what)) {
+                openWebPage(getString(R.string.t_report_a_bug), android.net.Uri.parse(BUG_PAGE).buildUpon().appendQueryParameter("app", appDetails).build().toString(), BUG_PAGE)
             }
-            settingsRow(about, "Request a feature", FEATURE_PAGE.removePrefix("https://"), "Have an idea that would make ${BuildConfig.APP_SHORT} better? Send it here.") {
-                openWebPage("Request a feature", FEATURE_PAGE, FEATURE_PAGE)
+            settingsRow(about, getString(R.string.t_request_a_feature), FEATURE_PAGE.removePrefix("https://"), getString(R.string.t_have_an_idea_that_would_make, BuildConfig.APP_SHORT)) {
+                openWebPage(getString(R.string.t_request_a_feature), FEATURE_PAGE, FEATURE_PAGE)
             }
-            settingsRow(about, "Website", WEBSITE.removePrefix("https://"), "Downloads, install guide and help for ${BuildConfig.APP_NAME}.") {
+            settingsRow(about, getString(R.string.t_website), WEBSITE.removePrefix("https://"), getString(R.string.t_downloads_install_guide_and_help_for, BuildConfig.APP_NAME)) {
                 openWebPage("${BuildConfig.APP_NAME} website", WEBSITE, WEBSITE)
             }
-            settingsRow(about, "Open-source notices", "", "Licences and credits for the code and fonts this app builds on.") {
-                AlertDialog.Builder(this).setTitle("Open-source notices").setMessage(assets.open("NOTICE.txt").bufferedReader().use { it.readText() }).setPositiveButton("Close", null).show()
+            settingsRow(about, getString(R.string.t_open_source_notices), "", getString(R.string.t_licences_and_credits_for_the_code)) {
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_open_source_notices)).setMessage(assets.open("NOTICE.txt").bufferedReader().use { it.readText() }).setPositiveButton(getString(R.string.t_close), null).show()
             }
 
             // Services the app uses: logo, name and one short line each. Credits for code are in Open-source notices.
             val services = listOf(
-                Triple(R.drawable.pov_about_tmdb, "TMDB", "Uses the TMDB API but is not endorsed or certified by TMDB."),
-                Triple(R.drawable.pov_about_tvdb, "TheTVDB", "Show details with your TVDB key. Please add missing info or subscribe."),
-                Triple(R.drawable.pov_about_cinemeta, "Cinemeta", "Catalogs and details."),
-                Triple(0, "Kitsu", "Anime catalogs and IDs."),
-                Triple(R.drawable.pov_about_queuedup, "Queued Up", "Catalogs."),
-                Triple(R.drawable.wetrakr_logo, "WeTrakr", "Tracking and lists."),
-                Triple(R.drawable.pov_about_simkl, "Simkl", "Tracking and lists."),
-                Triple(R.drawable.pov_about_introdb, "TheIntroDB", "Skip intro, recap and credits times."),
-                Triple(0, "AniSkip", "Anime skip times."),
-                Triple(R.drawable.pov_about_opensubtitles, "OpenSubtitles", "Subtitles found online."),
-                Triple(R.drawable.pov_about_subdl, "SubDL", "Subtitles found online."),
-                Triple(R.drawable.pov_about_wyzie, "Wyzie Subs", "Subtitles with your key."),
-                Triple(R.drawable.pov_about_seekr, "Seekr", "Seek previews with your key."),
+                Triple(R.drawable.pov_about_tmdb, "TMDB", getString(R.string.t_uses_the_tmdb_api_but_is)),
+                Triple(R.drawable.pov_about_tvdb, getString(R.string.t_thetvdb), getString(R.string.t_show_details_with_your_tvdb_key)),
+                Triple(R.drawable.pov_about_cinemeta, getString(R.string.t_cinemeta), getString(R.string.t_catalogs_and_details)),
+                Triple(0, getString(R.string.t_kitsu), getString(R.string.t_anime_catalogs_and_ids)),
+                Triple(R.drawable.pov_about_queuedup, getString(R.string.t_queued_up), getString(R.string.t_catalogs)),
+                Triple(R.drawable.wetrakr_logo, getString(R.string.t_wetrakr), getString(R.string.t_tracking_and_lists)),
+                Triple(R.drawable.pov_about_simkl, getString(R.string.t_simkl), getString(R.string.t_tracking_and_lists)),
+                Triple(R.drawable.pov_about_introdb, getString(R.string.t_theintrodb), getString(R.string.t_skip_intro_recap_and_credits_times)),
+                Triple(0, getString(R.string.t_aniskip), getString(R.string.t_anime_skip_times)),
+                Triple(R.drawable.pov_about_opensubtitles, getString(R.string.t_opensubtitles), getString(R.string.t_subtitles_found_online)),
+                Triple(R.drawable.pov_about_subdl, getString(R.string.t_subdl), getString(R.string.t_subtitles_found_online)),
+                Triple(R.drawable.pov_about_wyzie, getString(R.string.t_wyzie_subs), getString(R.string.t_subtitles_with_your_key)),
+                Triple(R.drawable.pov_about_seekr, getString(R.string.t_seekr), getString(R.string.t_seek_previews_with_your_key)),
             )
-            val powered = settingsGroup("Powered by", null)
+            val powered = settingsGroup(getString(R.string.t_powered_by), null)
             gridRows(powered, services.map { (logo, name, line) ->
                 val wordmark = logo == R.drawable.pov_about_tmdb || logo == R.drawable.pov_about_tvdb || logo == R.drawable.wetrakr_logo
                 val tile = LinearLayout(this).apply {
@@ -5864,7 +5963,7 @@ class MainActivity : Activity() {
                 tile
             }, if (DeviceLayout.phone) 3 else 5)
             // TMDB's terms ask for this notice wherever its data is used.
-            powered.addView(text("This product uses the TMDB API but is not endorsed or certified by TMDB.", 11, muted).apply {
+            powered.addView(text(getString(R.string.t_this_product_uses_the_tmdb_api), 11, muted).apply {
                 setTypeface(typeface, android.graphics.Typeface.ITALIC) }, margin(-1, -2, bottom = 10).apply { leftMargin = dp(14); rightMargin = dp(14) })
                 }
             }
@@ -5889,8 +5988,9 @@ class MainActivity : Activity() {
     }
 
     // Short names fit seven cards across the TV; each section's own headings keep the full names.
-    private val settingsSections = listOf("account" to "Account", "home" to "Home", "playback" to "Playback", "captions" to "Audio & Subtitles",
-        "sources" to "Sources", "tracking" to "Tracking", "updates" to "Updates", "about" to "About")
+    private val settingsSections = listOf("account" to R.string.t_account, "home" to R.string.t_home, "playback" to R.string.t_playback,
+        "captions" to R.string.t_audio_subtitles, "sources" to R.string.t_sources, "tracking" to R.string.t_tracking,
+        "updates" to R.string.t_updates, "about" to R.string.t_about)
     /** The Settings section shown under the cards, remembered between visits. */
     private var settingsSection: String
         get() = store.get(SETTINGS_SECTION).takeIf { saved -> settingsSections.any { it.first == saved } } ?: "home"
@@ -5904,19 +6004,19 @@ class MainActivity : Activity() {
     private var refreshingSettings = false
 
     private fun settingsSummary(id: String): String = when (id) {
-        "account" -> if (cloud.signedIn) cloud.email else "Back up your setup"
-        "home" -> if (store.get(TMDB_KEY).isBlank()) "Cinemeta catalogs" else "TMDB connected"
-        "playback" -> listOfNotNull(if (store.get(AUTOPLAY_FIRST) == "true") "Auto-play on" else "Auto-play off",
-            if (SkipButtonPreferences(this).enabled) "skip buttons" else null).joinToString(" · ")
+        "account" -> if (cloud.signedIn) cloud.email else getString(R.string.t_back_up_your_setup)
+        "home" -> if (store.get(TMDB_KEY).isBlank()) getString(R.string.t_cinemeta_catalogs) else getString(R.string.t_tmdb_connected)
+        "playback" -> listOfNotNull(if (store.get(AUTOPLAY_FIRST) == "true") getString(R.string.t_auto_play_on) else getString(R.string.t_auto_play_off),
+            if (SkipButtonPreferences(this).enabled) getString(R.string.t_skip_buttons) else null).joinToString(" · ")
         "captions" -> "${SubtitlePreferences(this).languageLabel} subtitles"
         "sources" -> {
             val debrids = DebridServices.connected(store).size
             val addons = runCatching { SourceProviders(store).load().count { it.enabled } }.getOrDefault(0)
-            listOfNotNull("$debrids debrid", "$addons add-on${if (addons == 1) "" else "s"}", if (Easynews.active(store)) "Easynews" else null).joinToString(" · ")
+            listOfNotNull("$debrids debrid", "$addons add-on${if (addons == 1) "" else "s"}", if (Easynews.active(store)) getString(R.string.t_easynews) else null).joinToString(" · ")
         }
         "tracking" -> "${wetrakr.name} · ${when { !wetrakr.signedIn() -> "not connected"; !wetrakr.enabled() -> "off"; else -> "connected" }}"
-        "updates" -> "Version ${packageManager.getPackageInfo(packageName, 0).versionName.orEmpty().removeSuffix("-rajput")}"
-        else -> "${WEBSITE.removePrefix("https://")} · credits"
+        "updates" -> getString(R.string.t_version_x, packageManager.getPackageInfo(packageName, 0).versionName.orEmpty().removeSuffix("-rajput"))
+        else -> getString(R.string.t_x_credits, WEBSITE.removePrefix("https://"))
     }
 
     private fun settingsIcon(id: String): String? = when (id) {
@@ -5963,7 +6063,8 @@ class MainActivity : Activity() {
             settingsSectionContent(id)
         }
         settingsChoose = ::choose
-        settingsSections.forEach { (id, label) ->
+        settingsSections.forEach { (id, labelRes) ->
+            val label = getString(labelRes)
             val tab = text(label, 15, muted, true).apply {
                 gravity = Gravity.CENTER; maxLines = 1; setPadding(dp(18), dp(9), dp(18), dp(9))
                 isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true
@@ -5999,8 +6100,8 @@ class MainActivity : Activity() {
         val box = column().apply { gravity = Gravity.CENTER_HORIZONTAL; setPadding(dp(20), dp(12), dp(20), dp(8)) }
         box.addView(code, LinearLayout.LayoutParams(dp(200), dp(200)))
         box.addView(text(shown.removePrefix("https://"), 16, ink, true).apply { gravity = Gravity.CENTER }, margin(-2, -2, top = 12))
-        box.addView(text("Scan with your phone's camera.", 12, muted).apply { gravity = Gravity.CENTER }, margin(-2, -2, top = 4))
-        AlertDialog.Builder(this).setTitle(title).setView(box).setPositiveButton("Close", null).show()
+        box.addView(text(getString(R.string.t_scan_with_your_phone_s_camera), 12, muted).apply { gravity = Gravity.CENTER }, margin(-2, -2, top = 4))
+        AlertDialog.Builder(this).setTitle(title).setView(box).setPositiveButton(getString(R.string.t_close), null).show()
     }
 
     /** A titled card that holds one group of settings rows. */
@@ -6060,17 +6161,17 @@ class MainActivity : Activity() {
         current = { playbackPage(section) }
         destination = "settings"; refreshNavigation()
         val (title, subtitle) = when (section) {
-            "links" -> "Links & sorting" to "How links are ordered, and which are left out."
-            "autoplay" -> "Auto-play" to "What Play starts on its own, and the next episode."
-            "rules", "filters", "preferred", "qualities" -> "Link filters" to "Which links show, which are hidden and which move up. Each tile saves at once."
-            "words:prefer" -> "Your words to prefer" to "Links with these words move up, the first word ranking highest."
-            "words:hide" -> "Your words to hide" to "Links with any of these words are left out."
-            "groups" -> "Trusted release groups" to "Lists of well-known release groups; links from groups in lists that are on move up, best first."
-            "trailers" -> "Trailers" to "Trailers on details pages and when a Home shelf poster has focus."
-            else -> if (section.startsWith("group:")) (LinkRules.groupSet(section.removePrefix("group:"))?.label ?: "Release groups") to
-                (if (LinkRules.GROUP_SETS.any { it.id == section.removePrefix("group:") }) "Trusted release groups, best first. Links from groups that are on move up."
-                else "Links from groups that are on are hidden.")
-            else "Player" to "The player's extras: mini player, skip buttons, seek previews and picture."
+            "links" -> getString(R.string.t_links_sorting) to getString(R.string.t_how_links_are_ordered_and_which)
+            "autoplay" -> getString(R.string.t_auto_play) to getString(R.string.t_what_play_starts_on_its_own)
+            "rules", "filters", "preferred", "qualities" -> getString(R.string.t_link_filters) to getString(R.string.t_which_links_show_which_are_hidden)
+            "words:prefer" -> getString(R.string.t_your_words_to_prefer) to getString(R.string.t_links_with_these_words_move_up)
+            "words:hide" -> getString(R.string.t_your_words_to_hide) to getString(R.string.t_links_with_any_of_these_words)
+            "groups" -> getString(R.string.t_trusted_release_groups) to getString(R.string.t_lists_of_well_known_release_groups)
+            "trailers" -> getString(R.string.t_trailers) to getString(R.string.t_trailers_on_details_pages_and_when)
+            else -> if (section.startsWith("group:")) (LinkRules.groupSet(section.removePrefix("group:"))?.label ?: getString(R.string.t_release_groups)) to
+                (if (LinkRules.GROUP_SETS.any { it.id == section.removePrefix("group:") }) getString(R.string.t_trusted_release_groups_best_first_links)
+                else getString(R.string.t_links_from_groups_that_are_on))
+            else getString(R.string.t_player) to getString(R.string.t_the_player_s_extras_mini_player)
         }
         page(title, subtitle)
         // The page title already names the card.
@@ -6082,183 +6183,183 @@ class MainActivity : Activity() {
             val on = heroTrailersEnabled()
             fun save(key: String, value: Boolean, redraw: Boolean = false) { prefs.edit().putBoolean(key, value).apply(); heroTrailer?.stop(); if (redraw) refreshSettings() }
             tileGrid(playback, listOf(
-                Tile("trailers", "Trailers", "Details pages and Home posters", on) { value -> save("enabled", value, redraw = true) },
-                Tile("trailer_sound", "Trailer sound", "Muted when off", heroTrailerSoundEnabled(), enabled = on) { value -> save("sound", value) },
-                Tile("trailer_hq", "High quality", "VP9 when the TV can", heroTrailerHighQuality(), enabled = on) { value -> save("high_quality", value) },
-                Tile("trailer_fill", "Fill screen", "Zoom to remove bars", heroTrailerFillEnabled(), enabled = on) { value -> save("fill_screen", value) },
+                Tile("trailers", getString(R.string.t_trailers), getString(R.string.t_details_pages_and_home_posters), on) { value -> save("enabled", value, redraw = true) },
+                Tile("trailer_sound", getString(R.string.t_trailer_sound), getString(R.string.t_muted_when_off), heroTrailerSoundEnabled(), enabled = on) { value -> save("sound", value) },
+                Tile("trailer_hq", getString(R.string.t_high_quality_2), getString(R.string.t_vp9_when_the_tv_can), heroTrailerHighQuality(), enabled = on) { value -> save("high_quality", value) },
+                Tile("trailer_fill", getString(R.string.t_fill_screen), getString(R.string.t_zoom_to_remove_bars), heroTrailerFillEnabled(), enabled = on) { value -> save("fill_screen", value) },
             ), columns = if (DeviceLayout.phone) 2 else 4)
-            playback.addView(text("The rotating top recommendations show backdrop images only. Fill screen crops some picture edges.", 11, muted),
+            playback.addView(text(getString(R.string.t_the_rotating_top_recommendations_show_backdrop), 11, muted),
                 margin(-1, -2, bottom = 8).apply { leftMargin = dp(10); rightMargin = dp(10) })
             }
             "links" -> {
-            settingsRow(playback, "Link sorting", SourceSortPreferences(this).label,
-                "Library links on top (or off), then what comes next (language, quality, Preferred or size) and each one's direction. Auto-play follows this order.") {
+            settingsRow(playback, getString(R.string.t_link_sorting), SourceSortPreferences(this).label,
+                getString(R.string.t_library_links_on_top_or_off)) {
                 SourceSortPreferences.show(this, { refreshSettings() }) { navigate { playbackPage("preferred") } }
             }
             val sortPreferences = SourceSortPreferences(this)
-            settingsRow(playback, "Best per quality", if (sortPreferences.bestPerQuality == 0) "Off · all links" else "${sortPreferences.bestPerQuality} per quality",
-                "Show only the best links of each quality (4K, 1080p, 720p, lower) in your sort order, with a More links row for the rest. Auto-play and the player's Streams use the same short list.") {
-                NumberStepper.show(this, "Best per quality", "Links kept for each quality. 0 = off: show every link.", sortPreferences.bestPerQuality,
-                    SourceSortPreferences.BEST_PER_QUALITY_RANGE, { if (it == 0) "Off" else "$it ${if (it == 1) "link" else "links"}" }) { count ->
+            settingsRow(playback, getString(R.string.t_best_per_quality), if (sortPreferences.bestPerQuality == 0) getString(R.string.t_off_all_links) else getString(R.string.t_x_per_quality, sortPreferences.bestPerQuality),
+                getString(R.string.t_show_only_the_best_links_of)) {
+                NumberStepper.show(this, getString(R.string.t_best_per_quality), getString(R.string.t_links_kept_for_each_quality_0), sortPreferences.bestPerQuality,
+                    SourceSortPreferences.BEST_PER_QUALITY_RANGE, { if (it == 0) getString(R.string.t_off) else "$it ${if (it == 1) "link" else "links"}" }) { count ->
                     sortPreferences.bestPerQuality = count; refreshSettings()
                 }
             }
             val untilPrefs = SourceSearchPreferences(this)
             val until = untilPrefs.searchUntil(sortPreferences.keepSearching)
-            settingsRow(playback, "Search goal", untilPrefs.untilLabel(until, sortPreferences.bestPerQuality),
-                "When the search is done: when the time limit ends, once enough good links are in, once best per quality is full, or whichever of those two comes first. " +
-                "Good links play at once, suit this device and fit your Auto-play limit. The max search time still ends it if the goal isn't reached. " +
-                "Time limit ends is the default and finds the most links, so your preferred audio language is less likely to be missed. " +
-                "The other goals stop early and can miss links, including ones in your preferred audio language.") {
+            settingsRow(playback, getString(R.string.t_search_goal), untilPrefs.untilLabel(until, sortPreferences.bestPerQuality),
+                getString(R.string.t_when_the_search_is_done_when) +
+                getString(R.string.t_good_links_play_at_once_suit) +
+                getString(R.string.t_time_limit_ends_is_the_default) +
+                getString(R.string.t_the_other_goals_stop_early_and)) {
                 val modes = SourceSearchPreferences.UNTIL_MODES
-                val labels = listOf("Time limit ends (default) · wait for every add-on, up to the time limit. Finds the most links, best for your preferred audio language",
-                    "Good links needed · stop once this many good links are in. May miss links in your preferred audio language",
-                    "Best per quality is full · stop once 4K, 1080p and 720p each have ${sortPreferences.bestPerQuality.takeIf { it > 0 } ?: "N"} good links. Doesn't find all links and can miss your preferred audio language",
-                    "Either one · good links needed or best per quality full, whichever comes first. Can miss your preferred audio language")
-                AlertDialog.Builder(this).setTitle("Search goal").setSingleChoiceItems(labels.toTypedArray(), modes.indexOf(until)) { dialog, index ->
+                val labels = listOf(getString(R.string.t_time_limit_ends_default_wait_for),
+                    getString(R.string.t_good_links_needed_stop_once_this),
+                    getString(R.string.t_best_per_quality_is_full_stop, sortPreferences.bestPerQuality.takeIf { it > 0 } ?: "N"),
+                    getString(R.string.t_either_one_good_links_needed_or))
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_search_goal)).setSingleChoiceItems(labels.toTypedArray(), modes.indexOf(until)) { dialog, index ->
                     dialog.dismiss()
                     val mode = modes[index]
                     untilPrefs.setSearchUntil(mode)
                     if (mode == SourceSearchPreferences.UNTIL_BEST || mode == SourceSearchPreferences.UNTIL_EITHER) {
-                        if (sortPreferences.bestPerQuality == 0) toast("Set Best per quality first, or this never stops the search")
+                        if (sortPreferences.bestPerQuality == 0) toast(getString(R.string.t_set_best_per_quality_first_or))
                     }
                     if (mode == SourceSearchPreferences.UNTIL_LINKS || mode == SourceSearchPreferences.UNTIL_EITHER) {
-                        NumberStepper.show(this, "Good links needed", "The search stops once this many good links are in.", untilPrefs.goodLinksNeeded,
+                        NumberStepper.show(this, getString(R.string.t_good_links_needed), getString(R.string.t_the_search_stops_once_this_many), untilPrefs.goodLinksNeeded,
                             SourceSearchPreferences.GOOD_LINKS_RANGE, { "$it ${if (it == 1) "link" else "links"}" }) { count ->
                             untilPrefs.goodLinksNeeded = count; refreshSettings()
                         }
                     }
                     refreshSettings()
-                }.setNegativeButton("Cancel", null).show()
+                }.setNegativeButton(getString(R.string.t_cancel), null).show()
             }
             val linkRules = SourceSortPreferences(this).rules
             val preferCount = linkRules.preferWords.size + linkRules.preferPresets.size + (if (linkRules.preferPattern.isNotBlank()) 1 else 0)
             val hideCount = linkRules.hideCount(LowQualityReleases.hidden(store))
             val hiddenQualityCount = linkRules.hiddenQualities.size
-            settingsRow(playback, "Link filters", "$hideCount hide · $preferCount prefer" + if (hiddenQualityCount > 0) " · $hiddenQualityCount ${if (hiddenQualityCount == 1) "quality" else "qualities"} off" else "",
-                "Qualities to show, what to hide and what to prefer, as tiles on one page, plus your own words, release groups and patterns.") {
+            settingsRow(playback, getString(R.string.t_link_filters), getString(R.string.t_x_hide_x_prefer, hideCount, preferCount) + if (hiddenQualityCount > 0) getString(R.string.t_x_x_off, hiddenQualityCount, if (hiddenQualityCount == 1) "quality" else "qualities") else "",
+                getString(R.string.t_qualities_to_show_what_to_hide)) {
                 navigate { playbackPage("rules") }
             }
             val searchPreferences = SourceSearchPreferences(this)
             val ownLimits = (SourceProviders(store).load().map { it.id } + "easynews").count { searchPreferences.ownLimit(it) > 0 }
-            settingsRow(playback, "Max search time", searchPreferences.timeLimitLabel + if (ownLimits > 0) " · $ownLimits add-on${if (ownLimits == 1) "" else "s"} own" else "",
-                "How long the search waits for add-ons: one time for all of them, and any add-on can have its own, shorter or longer. Links show as they answer.") {
+            settingsRow(playback, getString(R.string.t_max_search_time), searchPreferences.timeLimitLabel + if (ownLimits > 0) getString(R.string.t_x_add_on_x_own, ownLimits, if (ownLimits == 1) "" else "s") else "",
+                getString(R.string.t_how_long_the_search_waits_for)) {
                 navigate { maxSearchTimePage() }
             }
             val badgeStyle = BadgeStyle.current(this)
-            settingsRow(playback, "Badge style", badgeStyle.label, "How the quality, HDR, audio and source tags on links look. ${badgeStyle.description}") { chooseBadgeStyle() }
-            settingsToggle(playback, "Compact link list", "One-line link names (the selected link shows its full name), the source at the end of the badges, and smaller badges, so about twice as many links fit. On by default.",
+            settingsRow(playback, getString(R.string.t_badge_style), badgeStyle.label, getString(R.string.t_how_the_quality_hdr_audio_and, badgeStyle.description)) { chooseBadgeStyle() }
+            settingsToggle(playback, getString(R.string.t_compact_link_list), getString(R.string.t_one_line_link_names_the_selected),
                 LinkListPreferences.compact(this)) { on -> LinkListPreferences.setCompact(this, on) }
-            settingsToggle(playback, "Hide uncached links", "Show only links that play at once (cached or direct) in the link list and the player's Streams. Real-Debrid, AllDebrid and Debrid-Link can't tell in advance, so their links stay.",
+            settingsToggle(playback, getString(R.string.t_hide_uncached_links), getString(R.string.t_show_only_links_that_play_at),
                 store.get(HIDE_UNCACHED) == "true") { on -> store.put(HIDE_UNCACHED, on.toString()) }
             }
             "rules", "filters", "preferred", "qualities" -> linkFilterTiles(playback)
             "words:prefer" -> {
                 val sort = SourceSortPreferences(this)
-                wordRows(playback, sort.rules.preferWords, "preferred word", "PSA") { list -> sort.rules = sort.rules.copy(preferWords = list) }
+                wordRows(playback, sort.rules.preferWords, getString(R.string.t_preferred_word), "PSA") { list -> sort.rules = sort.rules.copy(preferWords = list) }
             }
             "words:hide" -> {
                 val sort = SourceSortPreferences(this)
-                wordRows(playback, sort.rules.hideWords, "hide word", "YIFY") { list -> sort.rules = sort.rules.copy(hideWords = list) }
+                wordRows(playback, sort.rules.hideWords, getString(R.string.t_hide_word), "YIFY") { list -> sort.rules = sort.rules.copy(hideWords = list) }
             }
             "groups" -> {
                 val sort = SourceSortPreferences(this)
                 val rules = sort.rules
                 LinkRules.GROUP_SETS.forEach { set ->
-                    settingsToggle(playback, set.label, rules.activeGroups(set).take(8).joinToString(", ").ifEmpty { "Every group in this list is off" } +
+                    settingsToggle(playback, set.label, rules.activeGroups(set).take(8).joinToString(", ").ifEmpty { getString(R.string.t_every_group_in_this_list_is) } +
                         if (rules.activeGroups(set).size > 8) "…" else "", set.id in rules.groupSets) { on ->
                         sort.rules = sort.rules.let { it.copy(groupSets = if (on) it.groupSets + set.id else it.groupSets - set.id) }
                     }
                 }
-                settingsRow(playback, "Edit a list", "", "Switch single groups on or off, reorder, add or remove them.") {
-                    val labels = LinkRules.GROUP_SETS.map { "${it.label} · ${rules.activeGroups(it).size} of ${rules.groups(it).size} on" }
-                    AlertDialog.Builder(this).setTitle("Edit which list?").setItems(labels.toTypedArray()) { _, which ->
+                settingsRow(playback, getString(R.string.t_edit_a_list), "", getString(R.string.t_switch_single_groups_on_or_off)) {
+                    val labels = LinkRules.GROUP_SETS.map { getString(R.string.t_x_x_of_x_on, it.label, rules.activeGroups(it).size, rules.groups(it).size) }
+                    AlertDialog.Builder(this).setTitle(getString(R.string.t_edit_which_list)).setItems(labels.toTypedArray()) { _, which ->
                         navigate { playbackPage("group:${LinkRules.GROUP_SETS[which].id}") }
-                    }.setNegativeButton("Cancel", null).show()
+                    }.setNegativeButton(getString(R.string.t_cancel), null).show()
                 }
             }
             "autoplay" -> {
             val searchPreferences = SourceSearchPreferences(this)
             val mode = searchPreferences.mode(store.get(AUTOPLAY_FIRST) == "true")
-            settingsRow(playback, "Auto-play", searchPreferences.modeLabel(mode),
-                "What Play starts on its own, in your sort order: the first good link as soon as one is in, the best after a few seconds, or the best once the search ends. " +
-                "The link shows for ${SourceSearchPreferences.COUNTDOWN_SECONDS} seconds first: press any key (or tap) to choose yourself.") {
+            settingsRow(playback, getString(R.string.t_auto_play), searchPreferences.modeLabel(mode),
+                getString(R.string.t_what_play_starts_on_its_own_2) +
+                getString(R.string.t_the_link_shows_for_x_seconds, SourceSearchPreferences.COUNTDOWN_SECONDS)) {
                 val modes = SourceSearchPreferences.MODES
-                val labels = listOf("Off · show the link list", "First good link · fastest", "Best link after a few seconds", "Best link when the search ends")
-                AlertDialog.Builder(this).setTitle("Auto-play")
+                val labels = listOf(getString(R.string.t_off_show_the_link_list), getString(R.string.t_first_good_link_fastest), getString(R.string.t_best_link_after_a_few_seconds), getString(R.string.t_best_link_when_the_search_ends))
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_auto_play))
                     .setSingleChoiceItems(labels.toTypedArray(), modes.indexOf(mode)) { dialog, index ->
                         searchPreferences.setMode(modes[index]); store.put(AUTOPLAY_FIRST, (modes[index] != SourceSearchPreferences.OFF).toString())
                         dialog.dismiss(); refreshSettings()
-                    }.setNegativeButton("Cancel", null).show()
+                    }.setNegativeButton(getString(R.string.t_cancel), null).show()
             }
-            if (mode == SourceSearchPreferences.WAIT) settingsRow(playback, "Wait before auto-play", "${searchPreferences.waitSeconds} seconds",
-                "How long the search collects links before the best one starts.") {
-                NumberStepper.show(this, "Wait before auto-play", "", searchPreferences.waitSeconds, SourceSearchPreferences.WAIT_RANGE, { "$it seconds" }) { seconds ->
+            if (mode == SourceSearchPreferences.WAIT) settingsRow(playback, getString(R.string.t_wait_before_auto_play), "${searchPreferences.waitSeconds} seconds",
+                getString(R.string.t_how_long_the_search_collects_links)) {
+                NumberStepper.show(this, getString(R.string.t_wait_before_auto_play), "", searchPreferences.waitSeconds, SourceSearchPreferences.WAIT_RANGE, { "$it seconds" }) { seconds ->
                     searchPreferences.waitSeconds = seconds; refreshSettings()
                 }
             }
-            settingsToggle(playback, "Auto-play limit", "Auto-play skips links above your bitrate limit (file size over the title's runtime). When the runtime is unknown, the movie or episode size limit applies. Links of unknown size can still play, and you can still choose any link yourself.",
+            settingsToggle(playback, getString(R.string.t_auto_play_limit), getString(R.string.t_auto_play_skips_links_above_your),
                 store.get(AUTOPLAY_LIMIT_ON) == "true") { on -> store.put(AUTOPLAY_LIMIT_ON, on.toString()); refreshSettings() }
             if (store.get(AUTOPLAY_LIMIT_ON) == "true") {
-                settingsRow(playback, "Highest bitrate", "${autoplayMaxMbps()} Mbps", "For movies and episodes. Pick it from your internet speed, e.g. 25 Mbps on a 40 Mbps connection.") {
-                    NumberStepper.show(this, "Highest bitrate", "Auto-play picks links up to this bitrate. Hold ▲ or ▼ to go faster.", autoplayMaxMbps(), 1..500, { "$it Mbps" }) { mbps ->
+                settingsRow(playback, getString(R.string.t_highest_bitrate), getString(R.string.t_x_mbps, autoplayMaxMbps()), getString(R.string.t_for_movies_and_episodes_pick_it)) {
+                    NumberStepper.show(this, getString(R.string.t_highest_bitrate), getString(R.string.t_auto_play_picks_links_up_to), autoplayMaxMbps(), 1..500, { getString(R.string.t_x_mbps, it) }) { mbps ->
                         store.put(AUTOPLAY_MAX_MBPS, mbps.toString()); refreshSettings()
                     }
                 }
-                listOf(false to "Movie", true to "Episode").forEach { (episode, kind) ->
-                    settingsRow(playback, "$kind size fallback", "${autoplayLimitGb(episode)} GB", "Used when the ${kind.lowercase()}'s runtime is unknown.") {
-                        NumberStepper.show(this, "$kind size fallback", "Largest ${kind.lowercase()} file when its runtime is unknown. Hold ▲ or ▼ to go faster.", autoplayLimitGb(episode), 1..1000, { "$it GB" }) { gb ->
+                listOf(false to getString(R.string.t_movie), true to getString(R.string.t_episode)).forEach { (episode, kind) ->
+                    settingsRow(playback, getString(R.string.t_x_size_fallback, kind), "${autoplayLimitGb(episode)} GB", getString(R.string.t_used_when_the_x_s_runtime, kind.lowercase())) {
+                        NumberStepper.show(this, getString(R.string.t_x_size_fallback, kind), getString(R.string.t_largest_x_file_when_its_runtime, kind.lowercase()), autoplayLimitGb(episode), 1..1000, { "$it GB" }) { gb ->
                             store.put(if (episode) AUTOPLAY_MAX_GB_EPISODE else AUTOPLAY_MAX_GB, gb.toString()); refreshSettings()
                         }
                     }
                 }
             }
-            settingsToggle(playback, "Auto-play next episode", "When an episode's credits start, Next Episode counts down from 10 and then plays the next episode " +
-                "(in the last 12 seconds when the credits aren't known). Press OK on it to start at once, or rewind to cancel.",
+            settingsToggle(playback, getString(R.string.t_auto_play_next_episode), getString(R.string.t_when_an_episode_s_credits_start) +
+                getString(R.string.t_in_the_last_12_seconds_when),
                 SkipButtonPreferences(this).autoNext) { on -> SkipButtonPreferences(this).autoNext = on }
             }
             else -> {
             val readAhead = ReadAheadPreferences(this)
-            settingsRow(playback, "Read-ahead", readAhead.mode.label,
-                "How far ahead the player downloads, to ride out slow connections. Applies to the next video.") {
-                AlertDialog.Builder(this).setTitle("Read-ahead")
+            settingsRow(playback, getString(R.string.t_read_ahead), readAhead.mode.label,
+                getString(R.string.t_how_far_ahead_the_player_downloads)) {
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_read_ahead))
                     .setSingleChoiceItems(ReadAhead.entries.map { it.label }.toTypedArray(), readAhead.mode.ordinal) { dialog, index ->
                         readAhead.mode = ReadAhead.entries[index]; dialog.dismiss(); refreshSettings()
-                    }.setNegativeButton("Cancel", null).show()
+                    }.setNegativeButton(getString(R.string.t_cancel), null).show()
             }
             val videoPreferences = VideoCompatibilityPreferences(this)
-            settingsRow(playback, "Dolby Vision", videoPreferences.mode.label,
-                "Applies to the next video. Uses a verified Profile 7/8 HDR10 or HLG base picture when supported. Profile 5 needs compatible Dolby Vision decoding.") {
-                AlertDialog.Builder(this).setTitle("Dolby Vision compatibility")
+            settingsRow(playback, getString(R.string.t_dolby_vision), videoPreferences.mode.label,
+                getString(R.string.t_applies_to_the_next_video_uses)) {
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_dolby_vision_compatibility))
                     .setSingleChoiceItems(DolbyVisionMode.entries.map { it.label }.toTypedArray(), videoPreferences.mode.ordinal) { dialog, index ->
                         videoPreferences.mode = DolbyVisionMode.entries[index]; dialog.dismiss(); refreshSettings()
-                    }.setNegativeButton("Cancel", null).show()
+                    }.setNegativeButton(getString(R.string.t_cancel), null).show()
             }
 
-            settingsToggle(playback, "Mini player", "Leaving the player keeps the video going in a small window while you browse. Turn it off to stop the video instead when you leave (your progress is saved).",
+            settingsToggle(playback, getString(R.string.t_mini_player), getString(R.string.t_leaving_the_player_keeps_the_video),
                 MiniPlayerPreferences(this).enabled) { on -> MiniPlayerPreferences(this).enabled = on }
-            settingsToggle(playback, "Skip buttons", "Skip intro, Skip recap and Skip credits buttons, and Next episode when an episode's credits start. " +
-                "Times come from TheIntroDB, and AniSkip for anime; titles they don't know show no button.",
+            settingsToggle(playback, getString(R.string.t_skip_buttons_2), getString(R.string.t_skip_intro_skip_recap_and_skip) +
+                getString(R.string.t_times_come_from_theintrodb_and_aniskip),
                 SkipButtonPreferences(this).enabled) { on -> SkipButtonPreferences(this).enabled = on }
-            settingsToggle(playback, "Seek previews (Seekr)", "Shows a thumbnail of the scene above the seek bar while you seek. Previews come from Seekr, which has them ready for many movies and shows. Needs your Seekr API key below.",
+            settingsToggle(playback, getString(R.string.t_seek_previews_seekr), getString(R.string.t_shows_a_thumbnail_of_the_scene),
                 SeekrPreferences(this).enabled) { on -> SeekrPreferences(this).enabled = on }
             seekrInfo(playback)
             val seekr = store.get(SeekrPreferences.KEY)
             val seekrBuilt = BuildConfig.SEEKR_KEY.isNotBlank()
-            settingsRow(playback, "Seekr API key", if (seekr.isNotBlank()) "Connected" else if (seekrBuilt) "Built in" else "Not set",
-                "Put your API key from seekr.tv here to get thumbnail previews while seeking. Sign up at seekr.tv, copy your key (it starts with sk_live_) and paste it here. Titles Seekr doesn't have simply show no preview.",
+            settingsRow(playback, getString(R.string.t_seekr_api_key), if (seekr.isNotBlank()) getString(R.string.t_connected) else if (seekrBuilt) getString(R.string.t_built_in) else getString(R.string.t_not_set),
+                getString(R.string.t_put_your_api_key_from_seekr),
                 status = seekr.isNotBlank() || seekrBuilt) {
-                inputSetting("Seekr API key", "Paste your key from seekr.tv (sk_live_...)", "", secret = true) { key ->
+                inputSetting(getString(R.string.t_seekr_api_key), getString(R.string.t_paste_your_key_from_seekr_tv), "", secret = true) { key ->
                     store.put(SeekrPreferences.KEY, key.trim()); refreshSettings()
                     // Ask Seekr whether it accepts the key, so a typo is caught here rather than as missing previews later.
                     Thread {
                         val ok = runCatching { kotlinx.coroutines.runBlocking { tv.seekr.previews.android.Seekr.create(key.trim()).validateKey() } }.getOrNull()
-                        runOnUiThread { toast(when (ok) { true -> "Seekr key saved · ✓ Seekr accepts the key"; false -> "Seekr key saved, but Seekr doesn't accept it. Check the key."; null -> "Seekr key saved (couldn't reach Seekr to check it)" }) }
+                        runOnUiThread { toast(when (ok) { true -> getString(R.string.t_seekr_key_saved_seekr_accepts_the); false -> getString(R.string.t_seekr_key_saved_but_seekr_doesn); null -> getString(R.string.t_seekr_key_saved_couldn_t_reach) }) }
                     }.start()
                 }
             }
-            if (seekr.isNotBlank()) settingsRow(playback, "Remove Seekr key", danger = true) {
-                confirm("Remove your Seekr key?") { store.remove(SeekrPreferences.KEY); refreshSettings() }
+            if (seekr.isNotBlank()) settingsRow(playback, getString(R.string.t_remove_seekr_key), danger = true) {
+                confirm(getString(R.string.t_remove_your_seekr_key)) { store.remove(SeekrPreferences.KEY); refreshSettings() }
             }
             }
         }
@@ -6271,20 +6372,20 @@ class MainActivity : Activity() {
         current = { maxSearchTimePage() }
         destination = "settings"; refreshNavigation()
         val search = SourceSearchPreferences(this)
-        val global = if (search.timeLimitSeconds == 0) "no limit" else "${search.timeLimitSeconds} s"
-        page("Max search time", "How long the search waits for add-ons. Links show as they answer; add-ons that haven't answered in time are left out of that search.")
-        val overall = settingsGroup("All add-ons", "library", heading = false)
-        settingsRow(overall, "All add-ons", search.timeLimitLabel, "The time for every add-on without its own. 0 = no limit: wait for every add-on.") {
-            NumberStepper.show(this, "Max search time", "0 = no limit: wait for every add-on.", search.timeLimitSeconds,
-                SourceSearchPreferences.TIME_LIMIT_RANGE, { if (it == 0) "No limit" else "$it seconds" }) { seconds -> search.timeLimitSeconds = seconds; refreshSettings() }
+        val global = if (search.timeLimitSeconds == 0) getString(R.string.t_no_limit) else "${search.timeLimitSeconds} s"
+        page(getString(R.string.t_max_search_time), getString(R.string.t_how_long_the_search_waits_for_2))
+        val overall = settingsGroup(getString(R.string.t_all_add_ons), "library", heading = false)
+        settingsRow(overall, getString(R.string.t_all_add_ons), search.timeLimitLabel, getString(R.string.t_the_time_for_every_add_on)) {
+            NumberStepper.show(this, getString(R.string.t_max_search_time), getString(R.string.t_0_no_limit_wait_for_every), search.timeLimitSeconds,
+                SourceSearchPreferences.TIME_LIMIT_RANGE, { if (it == 0) getString(R.string.t_no_limit_2) else "$it seconds" }) { seconds -> search.timeLimitSeconds = seconds; refreshSettings() }
         }
-        val card = settingsGroup("Per add-on · shorter or longer than all add-ons ($global)", null)
-        val providers = SourceProviders(store).load().map { it.id to it.name } + (if (Easynews.active(store)) listOf("easynews" to "Easynews") else emptyList())
+        val card = settingsGroup(getString(R.string.t_per_add_on_shorter_or_longer, global), null)
+        val providers = SourceProviders(store).load().map { it.id to it.name } + (if (Easynews.active(store)) listOf("easynews" to getString(R.string.t_easynews)) else emptyList())
         providers.forEach { (id, name) ->
             val own = search.ownLimit(id)
-            settingsRow(card, name, if (own == 0) "Follows max search time" else "$own seconds", search.speedLabel(id).ifBlank { "No searches timed yet" }) {
-                NumberStepper.show(this, "$name time limit", "0 = follow the max search time ($global).", own, SourceSearchPreferences.OWN_LIMIT_RANGE,
-                    { if (it == 0) "Follow" else "$it seconds" }) { seconds -> search.setOwnLimit(id, seconds); refreshSettings() }
+            settingsRow(card, name, if (own == 0) getString(R.string.t_follows_max_search_time) else "$own seconds", search.speedLabel(id).ifBlank { getString(R.string.t_no_searches_timed_yet) }) {
+                NumberStepper.show(this, getString(R.string.t_x_time_limit, name), getString(R.string.t_0_follow_the_max_search_time, global), own, SourceSearchPreferences.OWN_LIMIT_RANGE,
+                    { if (it == 0) getString(R.string.t_follow) else "$it seconds" }) { seconds -> search.setOwnLimit(id, seconds); refreshSettings() }
             }
         }
     }
@@ -6293,14 +6394,14 @@ class MainActivity : Activity() {
     private fun subtitleStylePage() {
         current = { subtitleStylePage() }
         destination = "settings"; refreshNavigation()
-        page("Subtitle style", "How subtitles look in the player. The sample below changes as you go.")
+        page(getString(R.string.t_subtitle_style), getString(R.string.t_how_subtitles_look_in_the_player))
         val preferences = SubtitlePreferences(this)
         body.addView(preferences.preview(), margin(-1, if (DeviceLayout.phone) 110 else 130, bottom = 12))
         fun changed() { InAppPlaybackSession.refreshSubtitleStyle(); refreshSettings() }
         fun choose(title: String, labels: List<String>, selected: Int, picked: (Int) -> Unit) {
             AlertDialog.Builder(this).setTitle(title).setSingleChoiceItems(labels.toTypedArray(), selected) { dialog, index ->
                 picked(index); dialog.dismiss(); changed()
-            }.setNegativeButton("Cancel", null).show()
+            }.setNegativeButton(getString(R.string.t_cancel), null).show()
         }
         fun sample(view: TextView, font: String, bold: Boolean, color: Int, edge: Int, edgeColor: Int, box: Int) {
             view.typeface = if (font.isEmpty()) android.graphics.Typeface.DEFAULT_BOLD else SubtitlePreferences.typeface(this, font, bold)
@@ -6312,27 +6413,27 @@ class MainActivity : Activity() {
             }
             if (box != 0) { view.background = rounded(box, 3); view.setPadding(dp(5), dp(1), dp(5), dp(1)) }
         }
-        val presets = settingsGroup("Presets · one tap sets font, colors and outline", null)
+        val presets = settingsGroup(getString(R.string.t_presets_one_tap_sets_font_colors), null)
         data class Look(val id: String, val name: String, val font: String, val bold: Boolean, val color: Int, val edge: Int, val edgeColor: Int, val box: Int)
         val looks = listOf(
-            Look("default", "App default", "lato", true, Color.WHITE, androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW, Color.BLACK, 0),
-            Look("netflix", "Netflix-style", "inter", false, Color.WHITE, androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW, Color.BLACK, 0),
-            Look("prime", "Prime-style", "arimo", true, Color.WHITE, androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE, 0xFF1A1A1A.toInt(), 0),
-            Look("youtube", "YouTube-style", "roboto", false, Color.WHITE, androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE, Color.BLACK, 0xBF000000.toInt()),
-            Look("classic", "Classic yellow", "open-sans", true, 0xFFFFE600.toInt(), androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE, Color.BLACK, 0),
+            Look("default", getString(R.string.t_app_default), "lato", true, Color.WHITE, androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW, Color.BLACK, 0),
+            Look("netflix", getString(R.string.t_netflix_style), "inter", false, Color.WHITE, androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW, Color.BLACK, 0),
+            Look("prime", getString(R.string.t_prime_style), "arimo", true, Color.WHITE, androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE, 0xFF1A1A1A.toInt(), 0),
+            Look("youtube", getString(R.string.t_youtube_style), "roboto", false, Color.WHITE, androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE, Color.BLACK, 0xBF000000.toInt()),
+            Look("classic", getString(R.string.t_classic_yellow), "open-sans", true, 0xFFFFE600.toInt(), androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE, Color.BLACK, 0),
         )
         gridRows(presets, looks.map { look ->
             choiceTile("preset:${look.id}", look.name, false, 74, { box ->
                 val stage = FrameLayout(this).apply { background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF3A5A78.toInt(), 0xFF8C7A5B.toInt())).apply { cornerRadius = dp(6).toFloat() } }
-                stage.addView(text("Sample", 14, Color.WHITE).apply { sample(this, look.font, look.bold, look.color, look.edge, look.edgeColor, look.box) },
+                stage.addView(text(getString(R.string.t_sample), 14, Color.WHITE).apply { sample(this, look.font, look.bold, look.color, look.edge, look.edgeColor, look.box) },
                     FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
                 box.addView(stage, margin(-1, 36))
                 box.addView(text(look.name, 12, ink, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 6))
             }) { preferences.applyPreset(look.id); changed() }
         }, if (DeviceLayout.phone) 3 else 5)
 
-        val fontCard = settingsGroup("Font", null)
-        val fonts = listOf(SubtitlePreferences.Companion.Font("", "Device default", "Your TV's caption font")) + SubtitlePreferences.FONTS
+        val fontCard = settingsGroup(getString(R.string.t_font), null)
+        val fonts = listOf(SubtitlePreferences.Companion.Font("", getString(R.string.t_device_default), getString(R.string.t_your_tv_s_caption_font))) + SubtitlePreferences.FONTS
         gridRows(fontCard, fonts.map { font ->
             choiceTile("font:${font.id}", font.label, font.id == preferences.font, 52, { box ->
                 box.addView(text(font.label, 15, ink).apply {
@@ -6353,39 +6454,39 @@ class MainActivity : Activity() {
                 }) { pick(color); changed() }
             }, if (DeviceLayout.phone) 4 else 10, gap = 6)
         }
-        val palette: List<Pair<Int?, String>> = listOf<Pair<Int?, String>>(null to "Device") + SubtitlePreferences.COLORS.map { it.first to it.second }
-        swatches("Text color", palette, preferences.textColor) { preferences.textColor = it }
-        val outline = settingsGroup("Outline", null)
-        val edges = listOf(-1 to "Device default") + SubtitlePreferences.EDGE_TYPES
+        val palette: List<Pair<Int?, String>> = listOf<Pair<Int?, String>>(null to getString(R.string.t_device)) + SubtitlePreferences.COLORS.map { it.first to it.second }
+        swatches(getString(R.string.t_text_color), palette, preferences.textColor) { preferences.textColor = it }
+        val outline = settingsGroup(getString(R.string.t_outline), null)
+        val edges = listOf(-1 to getString(R.string.t_device_default)) + SubtitlePreferences.EDGE_TYPES
         gridRows(outline, edges.map { (type, name) ->
             choiceTile("edge:$type", name, type == preferences.edgeType, 44, { box ->
                 box.addView(text(name, 13, ink, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
             }) { preferences.edgeType = type; changed() }
         }, tileColumns())
-        if (preferences.edgeType != androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE) swatches("Outline color", palette, preferences.edgeColor) { preferences.edgeColor = it }
-        val boxCard = settingsGroup("Box behind text", null)
+        if (preferences.edgeType != androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE) swatches(getString(R.string.t_outline_color), palette, preferences.edgeColor) { preferences.edgeColor = it }
+        val boxCard = settingsGroup(getString(R.string.t_box_behind_text), null)
         val opacities = listOf(-1) + SubtitlePreferences.OPACITIES
         gridRows(boxCard, opacities.map { value ->
-            val name = when (value) { -1 -> "Device default"; 0 -> "None"; 100 -> "Solid"; else -> "$value%" }
-            choiceTile("box:$value", "Box $name", value == preferences.backgroundOpacity, 44, { box ->
+            val name = when (value) { -1 -> getString(R.string.t_device_default); 0 -> getString(R.string.t_none); 100 -> getString(R.string.t_solid); else -> "$value%" }
+            choiceTile("box:$value", getString(R.string.t_box_x, name), value == preferences.backgroundOpacity, 44, { box ->
                 box.addView(text(name, 13, ink, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
             }) { preferences.backgroundOpacity = value; changed() }
         }, tileColumns())
-        if (preferences.backgroundOpacity > 0) swatches("Box color", SubtitlePreferences.COLORS.map { it.first to it.second }, preferences.backgroundColor) { preferences.backgroundColor = it ?: Color.BLACK }
-        val sizeCard = settingsGroup("Size", null)
+        if (preferences.backgroundOpacity > 0) swatches(getString(R.string.t_box_color), SubtitlePreferences.COLORS.map { it.first to it.second }, preferences.backgroundColor) { preferences.backgroundColor = it ?: Color.BLACK }
+        val sizeCard = settingsGroup(getString(R.string.t_size), null)
         gridRows(sizeCard, SubtitlePreferences.SIZES.mapIndexed { index, size ->
             choiceTile("size:$size", SubtitlePreferences.SIZE_LABELS[index], size == preferences.sizePercent, 56, { box ->
-                box.addView(text("Aa", (12 * size / 100f).toInt().coerceAtLeast(10) + 4, ink, true).apply { gravity = Gravity.CENTER })
+                box.addView(text(getString(R.string.t_aa), (12 * size / 100f).toInt().coerceAtLeast(10) + 4, ink, true).apply { gravity = Gravity.CENTER })
                 box.addView(text(SubtitlePreferences.SIZE_LABELS[index], 11, muted).apply { gravity = Gravity.CENTER }, margin(-1, -2, top = 2))
             }) { preferences.sizePercent = size; changed() }
-        } + switchTile(Tile("subtitle_bold", "Bold text", "Reads better from the sofa", preferences.boldText) { on ->
+        } + switchTile(Tile("subtitle_bold", getString(R.string.t_bold_text), getString(R.string.t_reads_better_from_the_sofa), preferences.boldText) { on ->
             preferences.boldText = on; InAppPlaybackSession.refreshSubtitleStyle(); refreshSettings()
         }), tileColumns())
-        val looks2 = settingsGroup("Position", null)
-        settingsRow(looks2, "Position", preferences.positionLabel) {
+        val looks2 = settingsGroup(getString(R.string.t_position), null)
+        settingsRow(looks2, getString(R.string.t_position), preferences.positionLabel) {
             SubtitlePositionPicker.show(this, liveVideo = false, changed = { InAppPlaybackSession.refreshSubtitleStyle() }, dismissed = { refreshSettings() })
         }
-        settingsRow(looks2, "Reset subtitle style", "", "Back to the app's default: bold white Lato, medium, black drop shadow, no box.", danger = true) {
+        settingsRow(looks2, getString(R.string.t_reset_subtitle_style), "", getString(R.string.t_back_to_the_app_s_default), danger = true) {
             preferences.applyPreset("default"); changed()
         }
     }
@@ -6417,7 +6518,7 @@ class MainActivity : Activity() {
             if (selected) selectedRow = row
         }
         val scroll = ScrollView(this).apply { addView(list); scrollBarStyle = View.SCROLLBARS_OUTSIDE_OVERLAY }
-        val shown = AlertDialog.Builder(this).setTitle("Subtitle font").setView(scroll).setNegativeButton("Cancel", null).show()
+        val shown = AlertDialog.Builder(this).setTitle(getString(R.string.t_subtitle_font)).setView(scroll).setNegativeButton(getString(R.string.t_cancel), null).show()
         dialog = shown
         // A fixed height: the list scrolls inside it, the title and Cancel never move.
         shown.window?.setLayout(minOf(dp(620), resources.displayMetrics.widthPixels - dp(32)), (resources.displayMetrics.heightPixels * 0.82).toInt())
@@ -6451,7 +6552,7 @@ class MainActivity : Activity() {
         fun change(edit: (LinkRules.Rules) -> LinkRules.Rules) { sort.rules = edit(sort.rules) }
         fun saveList(list: List<String>) { change { it.copy(customGroups = it.customGroups + (id to list.map(String::trim).filter(String::isNotBlank).distinctBy { name -> name.lowercase() }.take(80))) }; refreshSettings() }
         val groups = rules.groups(set)
-        val hold = if (DeviceLayout.tv) "Hold OK" else "Press and hold"
+        val hold = if (DeviceLayout.tv) getString(R.string.t_hold_ok) else getString(R.string.t_press_and_hold)
         // Hidden groups have no order, so they are tiles: a name and a switch each; hold for Remove.
         if (!trusted) {
             val tiles = groups.map { group ->
@@ -6462,19 +6563,19 @@ class MainActivity : Activity() {
                     }
                 }).apply {
                     setOnLongClickListener {
-                        AlertDialog.Builder(this@MainActivity).setTitle(group).setItems(arrayOf("Remove")) { _, _ -> saveList(groups.filterNot { it == group }) }
-                            .setNegativeButton("Cancel", null).show()
+                        AlertDialog.Builder(this@MainActivity).setTitle(group).setItems(arrayOf(getString(R.string.t_remove))) { _, _ -> saveList(groups.filterNot { it == group }) }
+                            .setNegativeButton(getString(R.string.t_cancel), null).show()
                         true
                     }
                 }
             }
-            card.addView(text("${rules.activeGroups(set).size} of ${groups.size} on · links from groups that are on are hidden · $hold a tile to remove it.", 11, muted),
+            card.addView(text(getString(R.string.t_x_of_x_on_links_from, rules.activeGroups(set).size, groups.size, hold), 11, muted),
                 margin(-1, -2, top = 6).apply { leftMargin = dp(10); rightMargin = dp(10) })
             gridRows(card, tiles, tileColumns())
         }
         if (trusted) groups.forEachIndexed { index, group ->
             settingsDivider(card)
-            val row = toggleRow(if (trusted) "${index + 1}.  $group" else group, "$hold to move or remove.", rules.groupOn(set, group)) { on ->
+            val row = toggleRow(if (trusted) "${index + 1}.  $group" else group, getString(R.string.t_x_to_move_or_remove, hold), rules.groupOn(set, group)) { on ->
                 change { current ->
                     val off = current.disabledGroups[id].orEmpty().let { names -> if (on) names - group.lowercase() else names + group.lowercase() }
                     current.copy(disabledGroups = current.disabledGroups + (id to off))
@@ -6482,20 +6583,20 @@ class MainActivity : Activity() {
             }
             row.setOnLongClickListener {
                 val actions = listOfNotNull(
-                    ("Move up" to { saveList(groups.toMutableList().apply { add(index - 1, removeAt(index)) }) }).takeIf { index > 0 },
-                    ("Move down" to { saveList(groups.toMutableList().apply { add(index + 1, removeAt(index)) }) }).takeIf { index < groups.lastIndex },
-                    ("Remove" to { saveList(groups.filterIndexed { position, _ -> position != index }) }),
+                    (getString(R.string.t_move_up) to { saveList(groups.toMutableList().apply { add(index - 1, removeAt(index)) }) }).takeIf { index > 0 },
+                    (getString(R.string.t_move_down) to { saveList(groups.toMutableList().apply { add(index + 1, removeAt(index)) }) }).takeIf { index < groups.lastIndex },
+                    (getString(R.string.t_remove) to { saveList(groups.filterIndexed { position, _ -> position != index }) }),
                 )
                 AlertDialog.Builder(this).setTitle(group).setItems(actions.map { it.first }.toTypedArray()) { _, which -> actions[which].second() }
-                    .setNegativeButton("Cancel", null).show()
+                    .setNegativeButton(getString(R.string.t_cancel), null).show()
                 true
             }
             card.addView(row, margin(-1, -2))
         }
-        settingsRow(card, "Add a group", "", "One release group name, as it appears at the end of a link name (…-FLUX.mkv → FLUX).") {
-            inputSetting("Add a group to ${set.label}", "e.g. FLUX", "") { value -> saveList(groups + value) }
+        settingsRow(card, getString(R.string.t_add_a_group), "", getString(R.string.t_one_release_group_name_as_it)) {
+            inputSetting(getString(R.string.t_add_a_group_to_x, set.label), getString(R.string.t_e_g_flux), "") { value -> saveList(groups + value) }
         }
-        if (id in rules.customGroups || rules.disabledGroups[id].orEmpty().isNotEmpty()) settingsRow(card, "Reset to the built-in list", "", "", danger = true) {
+        if (id in rules.customGroups || rules.disabledGroups[id].orEmpty().isNotEmpty()) settingsRow(card, getString(R.string.t_reset_to_the_built_in_list), "", "", danger = true) {
             change { it.copy(customGroups = it.customGroups - id, disabledGroups = it.disabledGroups - id) }; refreshSettings()
         }
     }
@@ -6512,58 +6613,58 @@ class MainActivity : Activity() {
         fun preferPreset(id: String, on: Boolean) = change { it.copy(preferPresets = if (on) it.preferPresets + id else it.preferPresets - id, touched = it.touched + "prefer:$id") }
         val device = if (DeviceLayout.tv) "TV" else "device"
 
-        val qualities = settingsGroup("Qualities to show · off = those links are hidden", null)
+        val qualities = settingsGroup(getString(R.string.t_qualities_to_show_off_those_links), null)
         tileGrid(qualities, LinkRules.QUALITIES.map { (key, label) ->
-            val short = when (key) { "4k" -> "4K"; "sd" -> "SD"; "unknown" -> "Unknown"; else -> label }
-            val hint = when (key) { "4k" -> "2160p"; "1080" -> "Full HD"; "720" -> "HD"; "sd" -> "576p, 480p, lower"; else -> "No quality in name" }
+            val short = when (key) { "4k" -> "4K"; "sd" -> "SD"; "unknown" -> getString(R.string.t_unknown); else -> label }
+            val hint = when (key) { "4k" -> "2160p"; "1080" -> getString(R.string.t_full_hd); "720" -> "HD"; "sd" -> getString(R.string.t_576p_480p_lower); else -> getString(R.string.t_no_quality_in_name) }
             Tile("quality:$key", short, hint, key !in rules.hiddenQualities) { on ->
                 change { it.copy(hiddenQualities = if (on) it.hiddenQualities - key else it.hiddenQualities + key) }
             }
         })
 
-        val hide = settingsGroup("Hide · on = links with these are left out", null)
-        val hideLabels = mapOf("sample" to "Samples & trailers", "threed" to "3D", "upscale" to "Upscales", "hardsub" to "Hardcoded subs",
-            "dubbed" to "Dubbed", "hdtv" to "TV recordings", "remux" to "Remux", "av1" to "AV1", "x264" to "x264 / AVC")
-        val hideHints = mapOf("sample" to "Sample, Trailer, Extras", "remux" to "Very large files", "av1" to "Older TVs can't decode", "x264" to "Bigger than HEVC")
+        val hide = settingsGroup(getString(R.string.t_hide_on_links_with_these_are), null)
+        val hideLabels = mapOf("sample" to getString(R.string.t_samples_trailers), "threed" to "3D", "upscale" to getString(R.string.t_upscales), "hardsub" to getString(R.string.t_hardcoded_subs),
+            "dubbed" to getString(R.string.t_dubbed), "hdtv" to getString(R.string.t_tv_recordings), "remux" to getString(R.string.t_remux), "av1" to "AV1", "x264" to getString(R.string.t_x264_avc))
+        val hideHints = mapOf("sample" to getString(R.string.t_sample_trailer_extras), "remux" to getString(R.string.t_very_large_files), "av1" to getString(R.string.t_older_tvs_can_t_decode), "x264" to getString(R.string.t_bigger_than_hevc))
         val hideTiles = mutableListOf(
-            Tile("hide:badcopies", "Bad copies", "CAM, TS, screeners", LowQualityReleases.hidden(store)) { on -> store.put(LowQualityReleases.KEY, on.toString()) })
+            Tile("hide:badcopies", getString(R.string.t_bad_copies), getString(R.string.t_cam_ts_screeners), LowQualityReleases.hidden(store)) { on -> store.put(LowQualityReleases.KEY, on.toString()) })
         hideTiles += hideLabels.keys.mapNotNull { id -> LinkRules.HIDE.firstOrNull { it.id == id } }.map { preset ->
             Tile("hide:${preset.id}", hideLabels[preset.id] ?: preset.label, hideHints[preset.id] ?: preset.example, preset.id in rules.hidePresets) { on -> hidePreset(preset.id, on) }
         }
-        hideTiles += Tile("hide:${LinkRules.HIDE_DV_ONLY}", "Dolby Vision only", "When this $device can't play DV", LinkRules.HIDE_DV_ONLY in rules.hidePresets) { on -> hidePreset(LinkRules.HIDE_DV_ONLY, on) }
-        hideTiles += Tile("hide:years", "Other years", "Movies · another film, same name", rules.hideOtherYears) { on -> change { it.copy(hideOtherYears = on) } }
-        hideTiles += Tile("hide:${LinkRules.HIDE_GROUPS}", "Release groups", "Low-quality encoders", LinkRules.HIDE_GROUPS in rules.hidePresets) { on -> hidePreset(LinkRules.HIDE_GROUPS, on) }
+        hideTiles += Tile("hide:${LinkRules.HIDE_DV_ONLY}", getString(R.string.t_dolby_vision_only), getString(R.string.t_when_this_x_can_t_play, device), LinkRules.HIDE_DV_ONLY in rules.hidePresets) { on -> hidePreset(LinkRules.HIDE_DV_ONLY, on) }
+        hideTiles += Tile("hide:years", getString(R.string.t_other_years), getString(R.string.t_movies_another_film_same_name), rules.hideOtherYears) { on -> change { it.copy(hideOtherYears = on) } }
+        hideTiles += Tile("hide:${LinkRules.HIDE_GROUPS}", getString(R.string.t_release_groups), getString(R.string.t_low_quality_encoders), LinkRules.HIDE_GROUPS in rules.hidePresets) { on -> hidePreset(LinkRules.HIDE_GROUPS, on) }
         tileGrid(hide, hideTiles)
 
-        val prefer = settingsGroup("Prefer · moves links up in Link sorting and auto-play", null)
-        val preferLabels = mapOf("dv" to "Dolby Vision", "hdr" to "HDR", "atmos" to "Atmos", "lossless" to "Lossless audio", "remux" to "Remux / Blu-ray",
-            "webdl" to "WEB-DL", "hevc" to "HEVC / x265", "tenbit" to "10-bit", "proper" to "Proper / Repack")
+        val prefer = settingsGroup(getString(R.string.t_prefer_moves_links_up_in_link), null)
+        val preferLabels = mapOf("dv" to getString(R.string.t_dolby_vision), "hdr" to "HDR", "atmos" to getString(R.string.t_atmos), "lossless" to getString(R.string.t_lossless_audio), "remux" to getString(R.string.t_remux_blu_ray),
+            "webdl" to "WEB-DL", "hevc" to getString(R.string.t_hevc_x265), "tenbit" to "10-bit", "proper" to getString(R.string.t_proper_repack))
         val preferTiles = preferLabels.keys.mapNotNull { id -> LinkRules.PREFER.firstOrNull { it.id == id } }.map { preset ->
-            val hint = if (preset.id in LinkRules.unsupportedPrefer) "Not on this $device · ignored" else preset.example
+            val hint = if (preset.id in LinkRules.unsupportedPrefer) getString(R.string.t_not_on_this_x_ignored, device) else preset.example
             Tile("prefer:${preset.id}", preferLabels[preset.id] ?: preset.label, hint, preset.id in rules.preferPresets) { on -> preferPreset(preset.id, on) }
-        } + Tile("prefer:${LinkRules.GROUPS}", "Trusted groups", "FLUX, NTb, PSA…", LinkRules.GROUPS in rules.preferPresets) { on -> preferPreset(LinkRules.GROUPS, on) }
+        } + Tile("prefer:${LinkRules.GROUPS}", getString(R.string.t_trusted_groups), getString(R.string.t_flux_ntb_psa), LinkRules.GROUPS in rules.preferPresets) { on -> preferPreset(LinkRules.GROUPS, on) }
         tileGrid(prefer, preferTiles)
 
-        val more = settingsGroup("More rules", null)
-        settingsToggle(more, "Use Prefer", "Switch off to keep the Prefer rules but stop them moving links.", sort.preferredFirst) { on -> sort.preferredFirst = on }
-        settingsRow(more, "Link sorting", sort.label, "Where Preferred sits among Library, Language, Quality and File size. Above Quality, a preferred 1080p link beats a 4K one.") {
+        val more = settingsGroup(getString(R.string.t_more_rules), null)
+        settingsToggle(more, getString(R.string.t_use_prefer), getString(R.string.t_switch_off_to_keep_the_prefer), sort.preferredFirst) { on -> sort.preferredFirst = on }
+        settingsRow(more, getString(R.string.t_link_sorting), sort.label, getString(R.string.t_where_preferred_sits_among_library_language)) {
             SourceSortPreferences.show(this, { refreshSettings() })
         }
-        settingsRow(more, "Your words to prefer", rules.preferWords.take(3).joinToString(", ").ifEmpty { "None" } + if (rules.preferWords.size > 3) "…" else "",
-            "Your own keywords, ranked first in their order, e.g. PSA, FLUX.") { navigate { playbackPage("words:prefer") } }
-        settingsToggle(more, "Your words beat cached links", "A link with one of your words keeps its place among the links that play at once, even when it isn't cached (it may need a transfer). Auto-play still only picks links that play at once.",
+        settingsRow(more, getString(R.string.t_your_words_to_prefer), rules.preferWords.take(3).joinToString(", ").ifEmpty { getString(R.string.t_none) } + if (rules.preferWords.size > 3) "…" else "",
+            getString(R.string.t_your_own_keywords_ranked_first_in)) { navigate { playbackPage("words:prefer") } }
+        settingsToggle(more, getString(R.string.t_your_words_beat_cached_links), getString(R.string.t_a_link_with_one_of_your),
             sort.wordsBeatCached) { on -> sort.wordsBeatCached = on }
-        settingsRow(more, "Your words to hide", rules.hideWords.take(3).joinToString(", ").ifEmpty { "None" } + if (rules.hideWords.size > 3) "…" else "",
-            "Links with any of these words are left out, e.g. YIFY.") { navigate { playbackPage("words:hide") } }
-        settingsRow(more, "Trusted release groups", "${LinkRules.GROUP_SETS.count { it.id in rules.groupSets }} of ${LinkRules.GROUP_SETS.size} lists on",
-            "Well-known groups, best first. Only a name's release tag counts (…x265-PSA.mkv, [SubsPlease] …).") { navigate { playbackPage("groups") } }
+        settingsRow(more, getString(R.string.t_your_words_to_hide), rules.hideWords.take(3).joinToString(", ").ifEmpty { getString(R.string.t_none) } + if (rules.hideWords.size > 3) "…" else "",
+            getString(R.string.t_links_with_any_of_these_words_2)) { navigate { playbackPage("words:hide") } }
+        settingsRow(more, getString(R.string.t_trusted_release_groups), getString(R.string.t_x_of_x_lists_on, LinkRules.GROUP_SETS.count { it.id in rules.groupSets }, LinkRules.GROUP_SETS.size),
+            getString(R.string.t_well_known_groups_best_first_only)) { navigate { playbackPage("groups") } }
         LinkRules.HIDE_GROUP_SETS.forEach { set ->
-            settingsRow(more, "Hide release groups", "${rules.activeGroups(set).size} of ${rules.groups(set).size} on", "${set.label}: switch single groups on or off, add or remove them.") {
+            settingsRow(more, getString(R.string.t_hide_release_groups), getString(R.string.t_x_of_x_on, rules.activeGroups(set).size, rules.groups(set).size), getString(R.string.t_x_switch_single_groups_on_or, set.label)) {
                 navigate { playbackPage("group:${set.id}") }
             }
         }
-        patternRow(more, "Prefer pattern", rules.preferPattern) { value -> change { it.copy(preferPattern = value) } }
-        patternRow(more, "Hide pattern", rules.hidePattern) { value -> change { it.copy(hidePattern = value) } }
+        patternRow(more, getString(R.string.t_prefer_pattern), rules.preferPattern) { value -> change { it.copy(preferPattern = value) } }
+        patternRow(more, getString(R.string.t_hide_pattern), rules.hidePattern) { value -> change { it.copy(hidePattern = value) } }
     }
 
     /** One row per word (OK opens Edit / Move up / Move down / Remove), then "Add a …". */
@@ -6572,25 +6673,25 @@ class MainActivity : Activity() {
         words.forEachIndexed { index, word ->
             settingsRow(card, "${index + 1}.  $word", "", "") {
                 val actions = listOfNotNull(
-                    ("Edit" to { inputSetting("Edit $noun", "e.g. $example", word) { value -> save(clean(words.toMutableList().apply { set(index, value) })); refreshSettings() } }),
-                    ("Move up" to { save(words.toMutableList().apply { add(index - 1, removeAt(index)) }); refreshSettings() }).takeIf { index > 0 },
-                    ("Move down" to { save(words.toMutableList().apply { add(index + 1, removeAt(index)) }); refreshSettings() }).takeIf { index < words.lastIndex },
-                    ("Remove" to { save(words.filterIndexed { position, _ -> position != index }); refreshSettings() }),
+                    (getString(R.string.t_edit) to { inputSetting(getString(R.string.t_edit_x, noun), "e.g. $example", word) { value -> save(clean(words.toMutableList().apply { set(index, value) })); refreshSettings() } }),
+                    (getString(R.string.t_move_up) to { save(words.toMutableList().apply { add(index - 1, removeAt(index)) }); refreshSettings() }).takeIf { index > 0 },
+                    (getString(R.string.t_move_down) to { save(words.toMutableList().apply { add(index + 1, removeAt(index)) }); refreshSettings() }).takeIf { index < words.lastIndex },
+                    (getString(R.string.t_remove) to { save(words.filterIndexed { position, _ -> position != index }); refreshSettings() }),
                 )
                 AlertDialog.Builder(this).setTitle(word).setItems(actions.map { it.first }.toTypedArray()) { _, which -> actions[which].second() }
-                    .setNegativeButton("Cancel", null).show()
+                    .setNegativeButton(getString(R.string.t_cancel), null).show()
             }
         }
-        if (words.size < LinkRules.MAX_WORDS) settingsRow(card, "Add a $noun", "", "One word or phrase per field, e.g. $example. Matches whole words in any case: $example matches “x265-$example” but not longer words.") {
-            inputSetting("Add a $noun", "e.g. $example", "") { value -> save(clean(words + value)); refreshSettings() }
+        if (words.size < LinkRules.MAX_WORDS) settingsRow(card, getString(R.string.t_add_a_x, noun), "", getString(R.string.t_one_word_or_phrase_per_field, example, example, example)) {
+            inputSetting(getString(R.string.t_add_a_x, noun), "e.g. $example", "") { value -> save(clean(words + value)); refreshSettings() }
         }
     }
 
     /** A regular-expression setting: checked as it is typed, with how many of the last link list's links it matches. */
     private fun patternRow(card: LinearLayout, label: String, currentValue: String, save: (String) -> Unit) {
-        settingsRow(card, label, currentValue.ifBlank { "Not set" }, "For people who know regular expressions, e.g. x265.*10bit (any case). While you type it shows how many links of the last title you opened match.") {
+        settingsRow(card, label, currentValue.ifBlank { getString(R.string.t_not_set) }, getString(R.string.t_for_people_who_know_regular_expressions)) {
             val sample = StreamChoices.items.orEmpty()
-            val input = TvEditText(this).apply { setText(currentValue); setSingleLine(); hint = "e.g. x265.*10bit"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD }
+            val input = TvEditText(this).apply { setText(currentValue); setSingleLine(); hint = getString(R.string.t_e_g_x265_10bit); inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD }
             val result = text("", 12, muted)
             val box = column().apply { setPadding(dp(20), dp(8), dp(20), 0); addView(input); addView(result, margin(-1, -2, top = 8)) }
             fun check(): Boolean {
@@ -6598,9 +6699,9 @@ class MainActivity : Activity() {
                 parsed.exceptionOrNull()?.let { result.text = it.message; result.setTextColor(0xFFFF8A80.toInt()); return false }
                 val regex = parsed.getOrNull(); result.setTextColor(muted)
                 result.text = when {
-                    regex == null -> "Empty: no pattern."
-                    sample.isEmpty() -> "Valid. Open a title's links to see how many would match."
-                    else -> "Matches ${sample.count { regex.containsMatchIn(it.title) }} of ${sample.size} links for the last title you opened."
+                    regex == null -> getString(R.string.t_empty_no_pattern)
+                    sample.isEmpty() -> getString(R.string.t_valid_open_a_title_s_links)
+                    else -> getString(R.string.t_matches_x_of_x_links_for, sample.count { regex.containsMatchIn(it.title) }, sample.size)
                 }
                 return true
             }
@@ -6611,7 +6712,7 @@ class MainActivity : Activity() {
             })
             check()
             val dialog = AlertDialog.Builder(this).setTitle(label).setView(box)
-                .setPositiveButton("Save", null).setNeutralButton("Clear", null).setNegativeButton("Cancel", null).show()
+                .setPositiveButton(getString(R.string.t_save), null).setNeutralButton(getString(R.string.t_clear), null).setNegativeButton(getString(R.string.t_cancel), null).show()
             dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener { if (check()) { save(input.text.toString().trim()); dialog.dismiss(); refreshSettings() } }
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener { save(""); dialog.dismiss(); refreshSettings() }
         }
@@ -6630,12 +6731,12 @@ class MainActivity : Activity() {
     private fun seekrInfo(card: LinearLayout) {
         settingsDivider(card)
         val box = column().apply { setPadding(dp(14), dp(11), dp(12), dp(11)) }
-        box.addView(text("Seekr (seekr.tv) serves ready-made seek-preview thumbnails for movies and shows, so the player downloads nothing extra for them. " +
-            "Get your own free key at seekr.tv/join and paste it below. Seekr is run by an independent developer: if it works well for you, " +
-            "consider supporting its running costs at buymeacoffee.com/seekrtvdev.", 11, muted).apply { setLineSpacing(dp(1).toFloat(), 1f) })
+        box.addView(text(getString(R.string.t_seekr_seekr_tv_serves_ready_made) +
+            getString(R.string.t_get_your_own_free_key_at) +
+            getString(R.string.t_consider_supporting_its_running_costs_at), 11, muted).apply { setLineSpacing(dp(1).toFloat(), 1f) })
         val codes = LinearLayout(this).apply { gravity = Gravity.START }
-        listOf(Triple("Get a key", "seekr.tv/join", "https://seekr.tv/join"),
-            Triple("Support Seekr", "buymeacoffee.com/seekrtvdev", "https://buymeacoffee.com/seekrtvdev")).forEach { (title, shown, link) ->
+        listOf(Triple(getString(R.string.t_get_a_key), "seekr.tv/join", "https://seekr.tv/join"),
+            Triple(getString(R.string.t_support_seekr), "buymeacoffee.com/seekrtvdev", "https://buymeacoffee.com/seekrtvdev")).forEach { (title, shown, link) ->
             val tile = column().apply {
                 gravity = Gravity.CENTER_HORIZONTAL; setPadding(dp(10), dp(10), dp(10), dp(8))
                 background = rounded(withAlpha(Color.WHITE, 14), 12)
@@ -6750,7 +6851,7 @@ class MainActivity : Activity() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(dp(8), dp(6), dp(8), dp(6)); minimumHeight = dp(height)
             isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true; tag = "tile:$key"
-            contentDescription = description + if (selected) " · selected" else ""
+            contentDescription = description + if (selected) getString(R.string.t_selected) else ""
         }
         fill(box)
         tileFocus(box, selected = { selected })
@@ -6770,13 +6871,13 @@ class MainActivity : Activity() {
         copy.addView(text(description, 11, muted).apply { setLineSpacing(dp(1).toFloat(), 1f) }, margin(-1, -2, top = 4))
         row.addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
         val state = text("", 12, muted, true).apply { gravity = Gravity.END }
-        row.addView(state, margin(40, -2, right = 10))
+        row.addView(state.apply { minWidth = dp(40); maxLines = 1 }, margin(-2, -2, right = 10))
         val track = FrameLayout(this)
         val knob = View(this).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) } }
         track.addView(knob, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER_VERTICAL).apply { leftMargin = dp(3) })
         row.addView(track, margin(44, 24))
         fun paint(animate: Boolean) {
-            state.text = if (on) "On" else "Off"; state.setTextColor(if (on) ink else muted)
+            state.text = if (on) getString(R.string.t_on) else getString(R.string.t_off); state.setTextColor(if (on) ink else muted)
             track.background = rounded(if (on) accent else withAlpha(Color.WHITE, 60), 12)
             val offset = if (on) dp(20).toFloat() else 0f
             if (animate) knob.animate().translationX(offset).setDuration(140).start() else knob.translationX = offset
@@ -6822,14 +6923,14 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(11), dp(12), dp(11))
             isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true; isLongClickable = true
             tag = "$tagName:$label"
-            contentDescription = "$label, ${if (on) "On" else "Off"}. Press to turn ${if (on) "off" else "on"}; hold for more."
+            contentDescription = getString(R.string.t_x_x_press_to_turn_x, label, if (on) L10n.tr(R.string.t_on, "On") else L10n.tr(R.string.t_off, "Off"), if (on) "off" else "on")
         }
         val copy = column()
         copy.addView(text(label, 14, if (on) ink else muted, true))
         val detail = listOf(value, description).filter { it.isNotBlank() }.joinToString(" \u00b7 ")
         if (detail.isNotBlank()) copy.addView(text(detail, 11, muted).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 4))
         row.addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(text(if (on) "On" else "Off", 13, if (on) 0xFF46D369.toInt() else muted, true), margin(-2, -2).apply { leftMargin = dp(16) })
+        row.addView(text(if (on) getString(R.string.t_on) else getString(R.string.t_off), 13, if (on) 0xFF46D369.toInt() else muted, true), margin(-2, -2).apply { leftMargin = dp(16) })
         row.setOnFocusChangeListener { view, focused ->
             view.background = if (focused) rounded(withAlpha(Color.WHITE, if (flix) 34 else 24), 9) else null
             view.foreground = if (focused) FocusRingDrawable(if (flix) Color.WHITE else accent, dp(9).toFloat(), true, dp(1).toFloat()) else null
@@ -6843,8 +6944,8 @@ class MainActivity : Activity() {
 
     /** The one line that tells a list of [switchSettingsRow]s how they work. */
     private fun holdHint(card: LinearLayout, what: String) {
-        card.addView(text(if (DeviceLayout.tv) "OK turns $what on or off \u00b7 Hold OK for Edit, Test, Remove"
-            else "Tap turns $what on or off \u00b7 Press and hold for Edit, Test, Remove", 11, muted),
+        card.addView(text(if (DeviceLayout.tv) getString(R.string.t_ok_turns_x_on_or_off, what)
+            else getString(R.string.t_tap_turns_x_on_or_off, what), 11, muted),
             margin(-1, -2).apply { setMargins(dp(14), dp(2), dp(14), dp(6)) })
     }
 
@@ -6852,26 +6953,26 @@ class MainActivity : Activity() {
         val keepScroll = scroller.scrollY
         current = { sourceProvidersPage() }
         destination = "settings"; refreshNavigation()
-        page("Source providers", "Stremio add-ons such as Torrentio. Links from every provider that's on are merged into one list.")
+        page(getString(R.string.t_source_providers), getString(R.string.t_stremio_add_ons_such_as_torrentio))
         val config = SourceProviders(store)
         val providers = try { config.load() } catch (error: Exception) { body.addView(text(uiErrorMessage(error), 15, muted)); emptyList() }
-        val list = settingsGroup("Providers", "library")
+        val list = settingsGroup(getString(R.string.t_providers), "library")
         if (providers.size > 1) {
             // Every add-on on or off in one press, instead of one by one.
             val all = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(8), dp(8)) }
             val onCount = providers.count { it.enabled }
-            all.addView(text("$onCount of ${providers.size} on", 13, muted, true), LinearLayout.LayoutParams(0, -2, 1f))
+            all.addView(text(getString(R.string.t_x_of_x_on, onCount, providers.size), 13, muted, true), LinearLayout.LayoutParams(0, -2, 1f))
             fun setAll(enabled: Boolean, tagName: String) {
                 try {
                     config.save(providers.map { it.copy(enabled = enabled) })
-                    toast(if (enabled) "All source providers on" else "All source providers off")
+                    toast(if (enabled) getString(R.string.t_all_source_providers_on) else getString(R.string.t_all_source_providers_off))
                     sourceProvidersPage(tagName)
                 } catch (error: Exception) { toast(uiErrorMessage(error)) }
             }
-            all.addView(button("Turn all on") { setAll(true, "providers-all-on") }.apply {
+            all.addView(button(getString(R.string.t_turn_all_on)) { setAll(true, "providers-all-on") }.apply {
                 gravity = Gravity.CENTER; tag = "providers-all-on"; alpha = if (onCount == providers.size) 0.4f else 1f
             }, margin(-2, 38).apply { leftMargin = dp(6) })
-            all.addView(button("Turn all off") { setAll(false, "providers-all-off") }.apply {
+            all.addView(button(getString(R.string.t_turn_all_off)) { setAll(false, "providers-all-off") }.apply {
                 gravity = Gravity.CENTER; tag = "providers-all-off"; alpha = if (onCount == 0) 0.4f else 1f
             }, margin(-2, 38).apply { leftMargin = dp(6) })
             list.addView(all, margin(-1, -2))
@@ -6886,7 +6987,7 @@ class MainActivity : Activity() {
             copy.addView(text(provider.name, 14, if (on) ink else muted, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
             val host = runCatching { java.net.URI(provider.address).host }.getOrNull().orEmpty()
             val speed = SourceSearchPreferences(this).speedLabel(provider.id)
-            copy.addView(text(listOf(if (on) "On" else "Off", host, speed).filter(String::isNotBlank).joinToString(" · "), 11, if (on) 0xFF46D369.toInt() else muted).apply {
+            copy.addView(text(listOf(if (on) getString(R.string.t_on) else getString(R.string.t_off), host, speed).filter(String::isNotBlank).joinToString(" · "), 11, if (on) 0xFF46D369.toInt() else muted).apply {
                 maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, margin(-1, -2, top = 2))
             line.addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
             var slot = 0
@@ -6901,21 +7002,21 @@ class MainActivity : Activity() {
             fun save(updated: List<SourceProvider>, tagName: String) {
                 try { config.save(updated); sourceProvidersPage("$tagName:${provider.id}") } catch (error: Exception) { toast(uiErrorMessage(error)) }
             }
-            control("▲", "provider-up", "Move ${provider.name} up", 46, index > 0) {
+            control("▲", "provider-up", getString(R.string.t_move_x_up, provider.name), 46, index > 0) {
                 save(providers.toMutableList().apply { add(index - 1, removeAt(index)) }, "provider-up")
             }
-            control("▼", "provider-down", "Move ${provider.name} down", 46, index < providers.lastIndex) {
+            control("▼", "provider-down", getString(R.string.t_move_x_down, provider.name), 46, index < providers.lastIndex) {
                 save(providers.toMutableList().apply { add(index + 1, removeAt(index)) }, "provider-down")
             }
-            control(if (on) "On" else "Off", "provider-on", "${provider.name} · ${if (on) "On" else "Off"}", 56) {
+            control(if (on) getString(R.string.t_on) else getString(R.string.t_off), "provider-on", "${provider.name} · ${if (on) "On" else "Off"}", 56) {
                 save(providers.map { if (it.id == provider.id) it.copy(enabled = !on) else it }, "provider-on")
             }
-            control("Manage", "provider-manage", "Manage ${provider.name}", 84) { sourceProviderActions(provider) }
+            control(getString(R.string.t_manage_2), "provider-manage", getString(R.string.t_manage_x, provider.name), 84) { sourceProviderActions(provider) }
             list.addView(line, margin(-1, -2))
             columns += controls.toList()
         }
         linkColumns(columns)
-        settingsRow(list, "Add source provider", "", "Paste an HTTPS Stremio add-on or manifest URL, for example your Torrentio or Deepbrid add-on.") { editSourceProvider(null) }
+        settingsRow(list, getString(R.string.t_add_source_provider), "", getString(R.string.t_paste_an_https_stremio_add_on)) { editSourceProvider(null) }
         body.addView(View(this), margin(-1, 24))
         if (focusTag != null) keepPlace(generation, focusTag, keepScroll) else focusAfterRender(generation)
     }
@@ -6934,34 +7035,34 @@ class MainActivity : Activity() {
             val manifest = Net.json("$base/manifest.json")
             MetadataSource.inspect(name ?: manifest.optString("name").take(50).ifBlank { "Add-on" }, base, manifest)
         }) { source ->
-            if (source == null) { toast("That add-on offers no search or title details."); return@load }
+            if (source == null) { toast(getString(R.string.t_that_add_on_offers_no_search)); return@load }
             store.put(MetadataSource.KEY, source.toJson()); store.put(METADATA_ON, "true"); metadataSource = source; forgetDetails()
-            toast("Search ${if (source.searches.isEmpty()) "stays on Cinemeta" else "from ${source.name}"}${if (source.details) ", title details from ${source.name}" else ""}")
+            toast(getString(R.string.t_search_x_x, if (source.searches.isEmpty()) L10n.tr(R.string.t_stays_on_cinemeta, "stays on Cinemeta") else L10n.tr(R.string.t_from_x, "from %1\$s", source.name), if (source.details) L10n.tr(R.string.t_title_details_from_x, ", title details from %1\$s", source.name) else ""))
             refreshSettings()
         }
         val choices = buildList {
-            add(Choice("Cinemeta (default)") {
+            add(Choice(getString(R.string.t_cinemeta_default)) {
                 store.put(METADATA_ON, "false"); metadataSource = null; forgetDetails()
-                toast(if (saved != null) "Search and details from Cinemeta. ${saved.name} is kept: pick it to turn it back on." else "Search and details from Cinemeta")
+                toast(if (saved != null) getString(R.string.t_search_and_details_from_cinemeta_x, saved.name) else getString(R.string.t_search_and_details_from_cinemeta))
                 refreshSettings()
             })
             if (saved != null) add(Choice(saved.name) {
-                store.put(METADATA_ON, "true"); metadataSource = saved; forgetDetails(); toast("Search and details from ${saved.name}"); refreshSettings()
+                store.put(METADATA_ON, "true"); metadataSource = saved; forgetDetails(); toast(getString(R.string.t_search_and_details_from_x, saved.name)); refreshSettings()
             })
             others.forEach { addon -> add(Choice(addon.name) { use(addon.name, addon.address) }) }
-            add(Choice("Paste an add-on link…") {
-                inputSetting("Search and details add-on", "Add-on manifest link", saved?.address?.let { "$it/manifest.json" }.orEmpty()) { link -> use(null, link) }
+            add(Choice(getString(R.string.t_paste_an_add_on_link)) {
+                inputSetting(getString(R.string.t_search_and_details_add_on), getString(R.string.t_add_on_manifest_link), saved?.address?.let { "$it/manifest.json" }.orEmpty()) { link -> use(null, link) }
             })
-            if (saved != null) add(Choice("Remove ${saved.name}") {
-                confirm("Remove ${saved.name} from search and details? Cinemeta is used instead.") {
+            if (saved != null) add(Choice(getString(R.string.t_remove_x, saved.name)) {
+                confirm(getString(R.string.t_remove_x_from_search_and_details, saved.name)) {
                     store.remove(MetadataSource.KEY); store.remove(METADATA_ON); metadataSource = null; forgetDetails(); refreshSettings()
                 }
             })
         }
-        AlertDialog.Builder(this).setTitle("Search and details")
+        AlertDialog.Builder(this).setTitle(getString(R.string.t_search_and_details))
             .setSingleChoiceItems(choices.map { it.label }.toTypedArray(), if (on) 1 else 0) { dialog, index ->
                 dialog.dismiss(); choices[index].action()
-            }.setNegativeButton("Cancel", null).show()
+            }.setNegativeButton(getString(R.string.t_cancel), null).show()
     }
 
     /**
@@ -6971,9 +7072,9 @@ class MainActivity : Activity() {
     private fun chooseBadgeStyle() {
         val current = BadgeStyle.current(this)
         val list = column().apply { setPadding(dp(18), dp(6), dp(18), dp(6)) }
-        val sample = SourceItem("Sample.2160p.BluRay.REMUX.DV.HDR10+.HEVC.TrueHD.7.1.Atmos.English.Hindi.mkv", "sample",
+        val sample = SourceItem(getString(R.string.t_sample_2160p_bluray_remux_dv_hdr10), "sample",
             sizeBytes = 40_000_000_000L, qualityHeight = 2160)
-        val dialog = AlertDialog.Builder(this).setTitle("Badge style").setView(list).setNegativeButton("Cancel", null).create()
+        val dialog = AlertDialog.Builder(this).setTitle(getString(R.string.t_badge_style)).setView(list).setNegativeButton(getString(R.string.t_cancel), null).create()
         BadgeStyle.entries.forEach { style ->
             val row = column().apply {
                 setPadding(dp(14), dp(7), dp(14), dp(7)); isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true
@@ -6999,31 +7100,31 @@ class MainActivity : Activity() {
         val signedIn = library != null && streamNzbToken(library.origin) != null
         val altLibrary = if (isAltMount(provider)) altMountLibraries(listOf(provider.copy(enabled = true))).firstOrNull() else null
         val altConnected = altLibrary != null && altMountLogin(altLibrary.origin) != null
-        val options = listOfNotNull("Edit name and address", "Usenet news provider",
-            library?.let { if (signedIn) "Sign out of the StreamNZB library" else "Sign in to the StreamNZB library" },
-            altLibrary?.let { if (altConnected) "Disconnect the AltMount library" else "Connect the AltMount library" }, "Remove")
+        val options = listOfNotNull(getString(R.string.t_edit_name_and_address), getString(R.string.t_usenet_news_provider),
+            library?.let { if (signedIn) getString(R.string.t_sign_out_of_the_streamnzb_library) else getString(R.string.t_sign_in_to_the_streamnzb_library_2) },
+            altLibrary?.let { if (altConnected) getString(R.string.t_disconnect_the_altmount_library) else getString(R.string.t_connect_the_altmount_library_2) }, getString(R.string.t_remove))
         AlertDialog.Builder(this).setTitle(provider.name)
             .setItems(options.toTypedArray()) { _, index ->
                 when (options[index]) {
-                    "Edit name and address" -> editSourceProvider(provider)
-                    "Usenet news provider" -> chooseNewsProvider(provider)
-                    "Sign in to the StreamNZB library" -> library?.let { signInStreamNzb(it) { sourceProvidersPage() } }
-                    "Connect the AltMount library" -> altLibrary?.let { signInAltMount(it) { sourceProvidersPage() } }
-                    "Disconnect the AltMount library" -> {
+                    getString(R.string.t_edit_name_and_address) -> editSourceProvider(provider)
+                    getString(R.string.t_usenet_news_provider) -> chooseNewsProvider(provider)
+                    getString(R.string.t_sign_in_to_the_streamnzb_library_2) -> library?.let { signInStreamNzb(it) { sourceProvidersPage() } }
+                    getString(R.string.t_connect_the_altmount_library_2) -> altLibrary?.let { signInAltMount(it) { sourceProvidersPage() } }
+                    getString(R.string.t_disconnect_the_altmount_library) -> {
                         store.putAll(mapOf(AltMountLibrary.ORIGIN to "", AltMountLibrary.USER to "", AltMountLibrary.PASSWORD to ""))
-                        toast("AltMount library disconnected on this device"); sourceProvidersPage()
+                        toast(getString(R.string.t_altmount_library_disconnected_on_this_device)); sourceProvidersPage()
                     }
-                    "Sign out of the StreamNZB library" -> {
+                    getString(R.string.t_sign_out_of_the_streamnzb_library) -> {
                         store.putAll(mapOf(StreamNzbLibrary.TOKEN to "", StreamNzbLibrary.ORIGIN to ""))
-                        toast("Signed out of the StreamNZB library on this device"); sourceProvidersPage()
+                        toast(getString(R.string.t_signed_out_of_the_streamnzb_library)); sourceProvidersPage()
                     }
-                    "Remove" -> confirm("Remove ${provider.name} from source providers?") {
+                    getString(R.string.t_remove) -> confirm(getString(R.string.t_remove_x_from_source_providers, provider.name)) {
                         try {
                             val config = SourceProviders(store); config.save(config.load().filterNot { it.id == provider.id }); sourceProvidersPage()
                         } catch (error: Exception) { toast(uiErrorMessage(error)) }
                     }
                 }
-            }.setNegativeButton("Cancel", null).show()
+            }.setNegativeButton(getString(R.string.t_cancel), null).show()
     }
 
     /**
@@ -7032,30 +7133,30 @@ class MainActivity : Activity() {
      */
     private fun chooseNewsProvider(provider: SourceProvider) {
         val choices = AddonBadges.NEWS_PROVIDERS
-        AlertDialog.Builder(this).setTitle("${provider.name} · Usenet news provider")
+        AlertDialog.Builder(this).setTitle(getString(R.string.t_x_usenet_news_provider, provider.name))
             .setSingleChoiceItems(choices.map { it.second }.toTypedArray(), choices.indexOfFirst { it.first == provider.newsProvider }.coerceAtLeast(0)) { dialog, index ->
                 try {
                     val config = SourceProviders(store)
                     config.save(config.load().map { if (it.id == provider.id) it.copy(newsProvider = choices[index].first) else it })
-                    dialog.dismiss(); toast(if (index > 0) "${provider.name}: Usenet links show the ${choices[index].second} logo." else "${provider.name}: no news-provider logo."); sourceProvidersPage()
+                    dialog.dismiss(); toast(if (index > 0) getString(R.string.t_x_usenet_links_show_the_x, provider.name, choices[index].second) else getString(R.string.t_x_no_news_provider_logo, provider.name)); sourceProvidersPage()
                 } catch (error: Exception) { toast(uiErrorMessage(error)) }
-            }.setNegativeButton("Cancel", null).show()
+            }.setNegativeButton(getString(R.string.t_cancel), null).show()
     }
 
     private fun editSourceProvider(provider: SourceProvider?, prefill: String? = null) {
         val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
-        val name = TvEditText(this).apply { hint = "Provider name"; setSingleLine(); setText(provider?.name.orEmpty()) }
+        val name = TvEditText(this).apply { hint = getString(R.string.t_provider_name); setSingleLine(); setText(provider?.name.orEmpty()) }
         val address = TvEditText(this).apply {
-            hint = "HTTPS Stremio-compatible add-on URL"; setSingleLine()
+            hint = getString(R.string.t_https_stremio_compatible_add_on_url); setSingleLine()
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             setText(provider?.address.orEmpty())
         }
         val status = text("", 14, muted)
         content.addView(name, margin(-1, -2)); content.addView(address, margin(-1, -2, top = 8)); content.addView(status, margin(-1, -2, top = 8))
-        val builder = AlertDialog.Builder(this).setTitle(if (provider == null) "Add source provider" else "Edit source provider")
-            .setView(content).setPositiveButton("Save", null).setNegativeButton("Cancel", null)
+        val builder = AlertDialog.Builder(this).setTitle(if (provider == null) getString(R.string.t_add_source_provider) else getString(R.string.t_edit_source_provider))
+            .setView(content).setPositiveButton(getString(R.string.t_save), null).setNegativeButton(getString(R.string.t_cancel), null)
         // Long add-on links are hard to type with a remote: paste them on the phone instead.
-        if (DeviceLayout.tv && !publicPreview) builder.setNeutralButton("Use phone", null)
+        if (DeviceLayout.tv && !publicPreview) builder.setNeutralButton(getString(R.string.t_use_phone), null)
         val dialog = builder.create()
         dialog.show(); dialog.submitOnEnter(name, address)
         val save = dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE)
@@ -7065,14 +7166,14 @@ class MainActivity : Activity() {
             val typed = AddonLinks.https(link)
             address.setText(typed)
             if (sentName.isNotBlank()) name.setText(sentName)
-            if (!name.text.isNullOrBlank()) { status.text = "Check it, then Save."; save.requestFocus(); return }
-            status.text = "Reading the add-on's name…"
+            if (!name.text.isNullOrBlank()) { status.text = getString(R.string.t_check_it_then_save); save.requestFocus(); return }
+            status.text = getString(R.string.t_reading_the_add_on_s_name)
             worker.execute {
                 val found = runCatching { Net.json(AddonLinks.manifest(typed)).optString("name").trim().take(60) }.getOrDefault("")
                 runOnUiThread {
                     if (!dialog.isShowing) return@runOnUiThread
                     if (found.isNotBlank() && name.text.isNullOrBlank()) name.setText(found)
-                    status.text = if (name.text.isNullOrBlank()) "Give it a name, then Save." else "Check it, then Save."
+                    status.text = if (name.text.isNullOrBlank()) getString(R.string.t_give_it_a_name_then_save) else getString(R.string.t_check_it_then_save)
                     save.requestFocus()
                 }
             }
@@ -7084,7 +7185,7 @@ class MainActivity : Activity() {
             try { SourceProviders.name(typedName); SourceProviders.endpoint(typedAddress) }
             catch (error: Exception) { status.text = uiErrorMessage(error); return@setOnClickListener }
             // A bare StremThru server address becomes its Torz torrent search; this needs a quick look at the server.
-            status.text = "Checking the address…"; save.isEnabled = false
+            status.text = getString(R.string.t_checking_the_address); save.isEnabled = false
             worker.execute {
                 val resolved = SourceProviders.resolveServer(typedAddress) { Net.json(it) }
                 runOnUiThread {
@@ -7096,7 +7197,7 @@ class MainActivity : Activity() {
                             else provider.copy(name = SourceProviders.name(typedName), address = SourceProviders.endpoint(resolved))
                         val existing = config.load()
                         config.save(if (provider == null) existing + updated else existing.map { if (it.id == provider.id) updated else it })
-                        if (resolved.contains("/stremio/torz/")) toast("StremThru found · set up automatically")
+                        if (resolved.contains("/stremio/torz/")) toast(getString(R.string.t_stremthru_found_set_up_automatically))
                         dialog.dismiss(); sourceProvidersPage()
                     } catch (error: Exception) { status.text = uiErrorMessage(error) }
                 }
@@ -7107,22 +7208,22 @@ class MainActivity : Activity() {
     private fun connectOffcloud() {
         val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
         val input = TvEditText(this).apply {
-            hint = "Paste your own Offcloud API key"; setSingleLine()
+            hint = getString(R.string.t_paste_your_own_offcloud_api_key); setSingleLine()
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         }
         val status = text("", 14, muted)
         content.addView(input, margin(-1, -2)); content.addView(status, margin(-1, -2, top = 8))
         val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
-        val dialog = AlertDialog.Builder(this).setTitle("Offcloud API key").setView(content)
-            .setPositiveButton("Connect", null).setNegativeButton("Cancel", null).create()
+        val dialog = AlertDialog.Builder(this).setTitle(getString(R.string.t_offcloud_api_key)).setView(content)
+            .setPositiveButton(getString(R.string.t_connect), null).setNegativeButton(getString(R.string.t_cancel), null).create()
         dialog.setOnDismissListener { cancelled.set(true); input.setText("") }
         dialog.show(); dialog.submitOnEnter(input)
         dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
             val key = input.text.toString().trim()
-            if (key.isBlank()) { input.error = "Enter your Offcloud API key"; return@setOnClickListener }
+            if (key.isBlank()) { input.error = getString(R.string.t_enter_your_offcloud_api_key); return@setOnClickListener }
             val request = generation
             val connect = dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE)
-            connect.isEnabled = false; status.text = "Checking your Offcloud account…"
+            connect.isEnabled = false; status.text = getString(R.string.t_checking_your_offcloud_account)
             worker.execute {
                 try {
                     OffcloudApi(store).setApiKey(key) { cancelled.get() }
@@ -7130,7 +7231,7 @@ class MainActivity : Activity() {
                         if (dialog.isShowing && request == generation && !isFinishing && !isDestroyed) {
                             if (store.get("playback.priority").isBlank() && !store.has("torbox.token")) store.put("playback.service", "offcloud")
                             dialog.dismiss()
-                            toast("Offcloud connected"); refreshSettings()
+                            toast(getString(R.string.t_offcloud_connected)); refreshSettings()
                         }
                     }
                 } catch (error: Exception) {
@@ -7153,8 +7254,8 @@ class MainActivity : Activity() {
     /** WeTrakr or Simkl. The menu, Home rows and Settings follow the choice; each keeps its own sign-in. */
     private fun chooseTracker() {
         val ids = listOf(Trackers.WETRAKR, Trackers.SIMKL)
-        AlertDialog.Builder(this).setTitle("Tracking service")
-            .setSingleChoiceItems(arrayOf("WeTrakr", "Simkl"), ids.indexOf(Trackers.selected(store))) { dialog, index ->
+        AlertDialog.Builder(this).setTitle(getString(R.string.t_tracking_service))
+            .setSingleChoiceItems(arrayOf(getString(R.string.t_wetrakr), getString(R.string.t_simkl)), ids.indexOf(Trackers.selected(store))) { dialog, index ->
                 dialog.dismiss()
                 if (ids[index] == Trackers.selected(store)) return@setSingleChoiceItems
                 Trackers.select(store, ids[index]); simklChosen = ids[index] == Trackers.SIMKL; remoteProgress.clear(); retainedHome = null
@@ -7165,10 +7266,10 @@ class MainActivity : Activity() {
                 destination = "settings"; backStack.clear(); current = { settings() }; shell(); settings()
                 body.post { if (!isDestroyed && destination == "settings") focusController.restoreIndex(index, scroll) }
                 if (!wetrakr.signedIn()) startWeTrakr()
-            }.setNegativeButton("Cancel", null).show()
+            }.setNegativeButton(getString(R.string.t_cancel), null).show()
     }
 
-    private fun startTorBox() { authorize("TorBox", { torbox.startDeviceAuth() }, { torbox.pollDeviceAuth(it) }, cancel = { torbox.cancelDeviceAuth(it) }) }
+    private fun startTorBox() { authorize(getString(R.string.t_torbox), { torbox.startDeviceAuth() }, { torbox.pollDeviceAuth(it) }, cancel = { torbox.cancelDeviceAuth(it) }) }
     private fun authorize(name: String, start: () -> DeviceAuth, poll: (DeviceAuth) -> Boolean,
                           cancel: (DeviceAuth?) -> Unit = {}, configure: (() -> Unit)? = null) {
         if (authorization?.isShowing == true) return
@@ -7198,7 +7299,7 @@ class MainActivity : Activity() {
 
     private fun inputSetting(title: String, hintText: String, initial: String, secret: Boolean = false, done: (String) -> Unit) {
         val input = TvEditText(this).apply { hint = hintText; setText(initial); setSingleLine(); inputType = InputType.TYPE_CLASS_TEXT or if (secret) InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD }
-        AlertDialog.Builder(this).setTitle(title).setView(input).setPositiveButton("Save") { _, _ -> val value = input.text.toString().trim(); if (value.isNotBlank()) done(value) }.setNegativeButton("Cancel", null).show().submitOnEnter(input)
+        AlertDialog.Builder(this).setTitle(title).setView(input).setPositiveButton(getString(R.string.t_save)) { _, _ -> val value = input.text.toString().trim(); if (value.isNotBlank()) done(value) }.setNegativeButton(getString(R.string.t_cancel), null).show().submitOnEnter(input)
     }
 
     private fun hideKeyboard(field: View) =
@@ -7208,7 +7309,7 @@ class MainActivity : Activity() {
 
     private fun <T> load(id: Int, work: () -> T, readOnly: Boolean = false, quiet: Boolean = false, done: (T) -> Unit) {
         pendingLoads[id] = pendingLoads[id].orZero() + 1
-        val progress = text("Loading…", 13, muted); body.addView(progress, margin(-1, -2, top = 12, bottom = 12))
+        val progress = text(getString(R.string.t_loading_2), 13, muted); body.addView(progress, margin(-1, -2, top = 12, bottom = 12))
         // Flix Home loads behind its splash and backdrop; a text label there only flashes in a corner.
         if (quiet || (flix && isHome)) progress.visibility = View.INVISIBLE
         worker.execute {
@@ -7221,7 +7322,7 @@ class MainActivity : Activity() {
     private fun showError(error: Exception) {
         val message = uiErrorMessage(error)
         body.addView(text(message, 14, Color.rgb(255, 185, 170)), margin(-1, -2, top = 12, bottom = 10))
-        body.addView(button("Try again") { current() }, margin(150, 40, bottom = 12))
+        body.addView(button(getString(R.string.t_try_again_2)) { current() }, margin(150, 40, bottom = 12))
     }
     /** Flix option: Continue Watching as wide resume cards (artwork plus an info panel) instead of regular cards. */
     /** Size fallback in GB when the runtime is unknown: 20 for movies (the older single limit), 5 for episodes. */
@@ -7247,7 +7348,7 @@ class MainActivity : Activity() {
 
     private fun resumeCards() = flix && store.get(RESUME_CARDS) != "false"  // on unless the viewer turns it off
     private fun continueSlot() = margin(if (resumeCards()) (if (DeviceLayout.phone) 260 else RESUME_CARD_WIDTH) else cardWidth(), theme.layout.cardHeightDp, right = theme.layout.cardGapDp)
-    private fun episodeLine(identity: PlaybackIdentity) = if (identity.type == "series") "S${identity.season} E${identity.episode}" else "Movie"
+    private fun episodeLine(identity: PlaybackIdentity) = if (identity.type == "series") "S${identity.season} E${identity.episode}" else getString(R.string.t_movie)
 
     /** Same height as every shelf, wider: artwork on the left, then title, episode, time left with a play mark, and progress. */
     private fun resumeCard(item: MediaItemData, progress: Double, detail: String, timeLeft: String, action: () -> Unit): View {
@@ -7360,7 +7461,7 @@ class MainActivity : Activity() {
         if (!imdb.matches(Regex("tt\\d+")) || publicPreview) return null
         val key = if (kind == "episode") "episode:$imdb:$season:$episode" else "$kind:$imdb"
         return text("✓", 12, Color.BLACK, true).apply {
-            gravity = Gravity.CENTER; tag = "watched-badge:$key"; contentDescription = "Watched"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            gravity = Gravity.CENTER; tag = "watched-badge:$key"; contentDescription = getString(R.string.t_watched); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE); setStroke(dp(1), 0x33000000) }
             elevation = dp(2).toFloat(); visibility = if (watchedKey(key)) View.VISIBLE else View.GONE
         }
@@ -7396,8 +7497,8 @@ class MainActivity : Activity() {
             val row = horizontalRow(host)
             if (title.contains("watchlist", ignoreCase = true)) row.setTag(R.id.pov_list_scope, "watchlist:${items.first().type}")
             items.take(20).forEach { row.addView(card(it).apply { tag = "row:$title:${it.type}:${it.imdbId}" }, margin(cardWidth(), theme.layout.cardHeightDp, right = theme.layout.cardGapDp)) }
-            row.addView(text("See all  ›", 13, ink, true).apply {
-                gravity = Gravity.CENTER; tag = "shelf:$title"; contentDescription = "See all $title"
+            row.addView(text(getString(R.string.t_see_all), 13, ink, true).apply {
+                gravity = Gravity.CENTER; tag = "shelf:$title"; contentDescription = getString(R.string.t_see_all_x, title)
                 isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true; background = rounded(withAlpha(Color.WHITE, 22), theme.layout.cornerRadiusDp)
                 setOnFocusChangeListener { view, focused ->
                     view.background = rounded(if (focused) Color.WHITE else withAlpha(Color.WHITE, 22), theme.layout.cornerRadiusDp)
@@ -7424,7 +7525,7 @@ class MainActivity : Activity() {
         retainedRoots().forEach { visit(it) }
     }
     private fun personalListGrid(listId: String, title: String) {
-        current = { personalListGrid(listId, title) }; val id = page(title, "Your ${wetrakr.name} playlist")
+        current = { personalListGrid(listId, title) }; val id = page(title, getString(R.string.t_your_x_playlist, wetrakr.name))
         val host = column().apply { setTag(R.id.pov_list_scope, "playlist:$listId") }; body.addView(host)
         read(id, { wetrakr.listItems(listId) }) { mediaGrid(it, host = host) }
     }
@@ -7434,7 +7535,7 @@ class MainActivity : Activity() {
         body.addView(host); mediaGrid(items, host = host); focusAfterRender(id)
     }
     private fun mediaGrid(items: List<MediaItemData>, showType: Boolean = false, host: LinearLayout = body) {
-        if (items.isEmpty()) { host.addView(text("No titles found. Try a different search.", 14, muted)); return }
+        if (items.isEmpty()) { host.addView(text(getString(R.string.t_no_titles_found_try_a_different), 14, muted)); return }
         val width = DeviceLayout.canvasWidth - theme.layout.railWidthDp - theme.layout.contentInsetDp * 2
         val count = if (flix) (if (DeviceLayout.phone) DeviceLayout.phoneColumns(width) else 4) else (width / (cardWidth() + theme.layout.cardGapDp)).coerceAtLeast(1)
         // Streaming grids stretch their columns to the full content width.
@@ -7443,7 +7544,7 @@ class MainActivity : Activity() {
         items.chunked(count).forEach { chunk ->
             val row = LinearLayout(this).apply { tag = "media-grid-row" }; host.addView(row, margin(-1, -2, top = 14))
             chunk.forEach { item ->
-                val view = if (showType) tile(item, caption = listOf(if (item.type == "movie") "Movie" else "TV show", item.year).filter { it.isNotBlank() }.joinToString(" · ")) { navigate { details(item) } } else card(item)
+                val view = if (showType) tile(item, caption = listOf(if (item.type == "movie") getString(R.string.t_movie) else getString(R.string.t_tv_show), item.year).filter { it.isNotBlank() }.joinToString(" · ")) { navigate { details(item) } } else card(item)
                 row.addView(view, margin(gridWidth, gridHeight, right = theme.layout.cardGapDp))
             }
         }
@@ -7542,20 +7643,20 @@ class MainActivity : Activity() {
         when {
             playable && item.type == "movie" -> {
                 val target = saved ?: PlaybackIdentity(item.imdbId, item.type, item.title)
-                options += "▶  Play" to { navigate { showSources(target) } }
-                options += "☰  Streams" to { navigate { showSources(target, manual = true) } }
+                options += getString(R.string.t_play) to { navigate { showSources(target) } }
+                options += getString(R.string.t_streams) to { navigate { showSources(target, manual = true) } }
             }
             playable && saved != null && saved.type == "series" -> {
                 val number = "S${saved.season} E${saved.episode}"
-                options += "▶  Play $number" to { navigate { showSources(saved) } }
-                options += "☰  Streams · $number" to { navigate { showSources(saved, manual = true) } }
+                options += getString(R.string.t_play_x, number) to { navigate { showSources(saved) } }
+                options += getString(R.string.t_streams_x, number) to { navigate { showSources(saved, manual = true) } }
             }
         }
-        options += "ⓘ  More Info" to open
+        options += getString(R.string.t_more_info) to open
         val tracker = weTrakrClient()
         if (playable && item.type == "movie" && tracker.connected()) {
             val identity = PlaybackIdentity(item.imdbId, item.type, item.title)
-            options += "Mark as watched" to { load(generation, { tracker.markWatched(identity) }) { markedWatched(identity); toast("${item.title} marked watched") } }
+            options += getString(R.string.t_mark_as_watched) to { load(generation, { tracker.markWatched(identity) }) { markedWatched(identity); toast(getString(R.string.t_x_marked_watched, item.title)) } }
         }
         holdMenu(item.title, options)
     }
@@ -7564,10 +7665,10 @@ class MainActivity : Activity() {
     private fun episodeMenu(identity: PlaybackIdentity, number: String) {
         val tracker = weTrakrClient()
         val options = mutableListOf<Pair<String, () -> Unit>>(
-            "▶  Play" to { navigate { showSources(identity) } },
-            "☰  Streams" to { navigate { showSources(identity, manual = true) } })
-        if (tracker.connected()) options += "Mark as watched" to {
-            load(generation, { tracker.markWatched(identity) }) { markedWatched(identity); toast("Episode marked watched") }
+            getString(R.string.t_play) to { navigate { showSources(identity) } },
+            getString(R.string.t_streams) to { navigate { showSources(identity, manual = true) } })
+        if (tracker.connected()) options += getString(R.string.t_mark_as_watched) to {
+            load(generation, { tracker.markWatched(identity) }) { markedWatched(identity); toast(getString(R.string.t_episode_marked_watched)) }
         }
         holdMenu("${identity.title} · $number", options)
     }
@@ -7818,11 +7919,11 @@ class MainActivity : Activity() {
             override fun onMeasure(widthSpec: Int, heightSpec: Int) =
                 super.onMeasure(widthSpec, View.MeasureSpec.makeMeasureSpec(cap, View.MeasureSpec.AT_MOST))
         }.apply { isFocusable = true; addView(body) }
-        AlertDialog.Builder(this).setTitle(title).setView(scroll).setPositiveButton("Close", null).show()
+        AlertDialog.Builder(this).setTitle(title).setView(scroll).setPositiveButton(getString(R.string.t_close), null).show()
     }
 
     private fun confirm(message: String, action: () -> Unit)
- { AlertDialog.Builder(this).setMessage(message).setPositiveButton("Continue") { _, _ -> action() }.setNegativeButton("Cancel", null).show() }
+ { AlertDialog.Builder(this).setMessage(message).setPositiveButton(getString(R.string.t_continue)) { _, _ -> action() }.setNegativeButton(getString(R.string.t_cancel), null).show() }
 }
 
 /**

@@ -7,8 +7,9 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.container.NalUnitUtil
 import java.nio.ByteBuffer
 
-internal enum class DolbyVisionMode(val label: String) {
-    AUTO("Automatic compatibility"), HDR_BASE("Prefer HDR10 / HLG"), STANDARD("Standard player")
+internal enum class DolbyVisionMode(private val english: String) {
+    AUTO("Automatic compatibility"), HDR_BASE("Prefer HDR10 / HLG"), STANDARD("Standard player");
+    val label: String get() = UiText.of(english)
 }
 
 internal class VideoCompatibilityPreferences(context: Context) {

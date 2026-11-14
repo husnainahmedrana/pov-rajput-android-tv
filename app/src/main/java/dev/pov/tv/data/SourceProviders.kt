@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import java.net.URI
 import java.util.UUID
 import org.json.JSONArray
@@ -20,7 +23,7 @@ internal class SourceProviders(private val get: (String) -> String, private val 
                 val item = array.getJSONObject(index)
                 SourceProvider(item.getString("id"), item.getString("name"), item.getString("address"), item.getBoolean("enabled"), item.optString("newsProvider"))
             }.also(::validate)
-        } catch (_: Exception) { throw IllegalStateException("Saved source providers could not be read. Check source providers in Settings.") }
+        } catch (_: Exception) { throw IllegalStateException(L10n.tr(R.string.t_saved_source_providers_could_not_be, "Saved source providers could not be read. Check source providers in Settings.")) }
         val legacy = get("sources.endpoint")
         return if (legacy.isBlank()) emptyList() else listOf(SourceProvider("legacy", "Source 1", legacy))
     }
@@ -58,7 +61,7 @@ internal class SourceProviders(private val get: (String) -> String, private val 
             // "providers=yts|sort=quality", raw JSON): written percent-encoded, which the add-on reads the same way.
             val candidate = value.trim().trimEnd('/').removeSuffix("/manifest.json").trimEnd('/')
                 .replace(UNSAFE) { "%" + "%02X".format(it.value[0].code) }
-            val uri = try { URI(candidate) } catch (_: Exception) { throw IllegalArgumentException("Enter a valid HTTPS Stremio-compatible add-on address.") }
+            val uri = try { URI(candidate) } catch (_: Exception) { throw IllegalArgumentException(L10n.tr(R.string.t_enter_a_valid_https_stremio_compatible, "Enter a valid HTTPS Stremio-compatible add-on address.")) }
             require(candidate.length <= 4096 && uri.scheme.equals("https", true) && !uri.host.isNullOrBlank() && uri.userInfo == null && uri.query == null && uri.fragment == null) {
                 "Use an HTTPS add-on base or manifest URL, without a query or fragment."
             }

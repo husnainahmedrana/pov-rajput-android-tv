@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import android.os.SystemClock
 import org.json.JSONArray
 import org.json.JSONObject
@@ -26,7 +29,7 @@ class TorBoxApi internal constructor(
     fun startDeviceAuth(): DeviceAuth {
         val (generation, account) = synchronized(authStateLock) { devices.clear(); ++authGeneration to credentialGeneration }
         val started = elapsedRealtime()
-        val value = objectData(call("/user/auth/device/start?app=${Net.encode("POV Rajput")}", authenticated = false))
+        val value = objectData(call("/user/auth/device/start?app=${Net.encode(dev.pov.tv.BuildConfig.APP_NAME)}", authenticated = false))
         val auth = DeviceAuth(
             required(value, "device_code"), value.optString("code", value.optString("user_code")),
             value.optString("verification_url", value.optString("friendly_verification_url")),
@@ -63,7 +66,7 @@ class TorBoxApi internal constructor(
         } ?: endedSession()
         if (now - state.started >= state.expiresSeconds.toLong() * 1000) {
             synchronized(authStateLock) { devices.remove(auth.deviceCode) }
-            throw ApiException(410, "The TorBox linking code has expired. Start linking again.")
+            throw ApiException(410, L10n.tr(R.string.t_the_torbox_linking_code_has_expired, "The TorBox linking code has expired. Start linking again."))
         }
         if (state.lastPoll != 0L && now - state.lastPoll < state.intervalSeconds.toLong() * 1000) return false
         state.lastPoll = now
@@ -72,8 +75,8 @@ class TorBoxApi internal constructor(
         } catch (e: ApiException) {
             when (e.errorKey) {
                 "DEVICE_CODE_NOT_USED", "authorization_pending" -> return false
-                "ITEM_NOT_FOUND", "expired_token" -> throw ApiException(410, "The TorBox linking code has expired. Start linking again.")
-                "DEVICE_CODE_USED" -> throw ApiException(409, "This TorBox linking code has already been used. Start linking again.")
+                "ITEM_NOT_FOUND", "expired_token" -> throw ApiException(410, L10n.tr(R.string.t_the_torbox_linking_code_has_expired, "The TorBox linking code has expired. Start linking again."))
+                "DEVICE_CODE_USED" -> throw ApiException(409, L10n.tr(R.string.t_this_torbox_linking_code_has_already, "This TorBox linking code has already been used. Start linking again."))
                 else -> throw e
             }
         }
@@ -93,13 +96,13 @@ class TorBoxApi internal constructor(
     fun setApiKey(key: String) {
         val token = key.trim()
         if (token.isBlank() || token.length > 4096 || token.any { it.isWhitespace() || it.code < 32 }) {
-            throw ApiException(0, "Enter a valid TorBox API key.")
+            throw ApiException(0, L10n.tr(R.string.t_enter_a_valid_torbox_api_key, "Enter a valid TorBox API key."))
         }
         val generation = synchronized(authStateLock) { devices.clear(); authGeneration++; ++credentialGeneration }
         verifyAccount(token)
         synchronized(authStateLock) {
             if (generation != credentialGeneration) {
-                throw ApiException(401, "The TorBox connection changed while this request was running. Try again with the current account.")
+                throw ApiException(401, L10n.tr(R.string.t_the_torbox_connection_changed_while_this, "The TorBox connection changed while this request was running. Try again with the current account."))
             }
             store.put("torbox.token", token)
         }
@@ -118,10 +121,10 @@ class TorBoxApi internal constructor(
         val hash = source.infoHash.lowercase()
         require(hash.matches(Regex("[a-f0-9]{40}"))) { "Invalid TorBox source identifier." }
         trace("cache_recheck")
-        check(hash in cached(listOf(hash))) { "This source is no longer cached. Refresh sources." }
+        check(hash in cached(listOf(hash))) { L10n.tr(R.string.t_this_source_is_no_longer_cached, "This source is no longer cached. Refresh sources.") }
         fun current() {
-            check(store.get("torbox.token") == key) { "The TorBox account changed. Select the source again." }
-            check(elapsedRealtime() < deadline) { "TorBox source preparation took too long. Refresh sources and try again." }
+            check(store.get("torbox.token") == key) { L10n.tr(R.string.t_the_torbox_account_changed_select_the, "The TorBox account changed. Select the source again.") }
+            check(elapsedRealtime() < deadline) { L10n.tr(R.string.t_torbox_source_preparation_took_too_long, "TorBox source preparation took too long. Refresh sources and try again.") }
         }
         val headers = mapOf("Authorization" to "Bearer $key")
         fun scoped(path: String, method: String = "GET", body: JSONObject? = null): Any? =
@@ -138,13 +141,13 @@ class TorBoxApi internal constructor(
             for (index in 0 until items.length()) {
                 val item = items.getJSONObject(index)
                 val itemId = item.getLong("id")
-                check(itemId >= 0) { "TorBox returned an invalid library identifier." }
+                check(itemId >= 0) { L10n.tr(R.string.t_torbox_returned_an_invalid_library_identifier, "TorBox returned an invalid library identifier.") }
                 if (seen.add(itemId)) { entries += item; added++ }
             }
             if (items.length() < 1000) break
-            check(added > 0) { "Could not verify the complete TorBox library. No cached transfer was created." }
+            check(added > 0) { L10n.tr(R.string.t_could_not_verify_the_complete_torbox, "Could not verify the complete TorBox library. No cached transfer was created.") }
             offset += items.length()
-            check(offset < 100_000) { "The TorBox library is too large to verify safely." }
+            check(offset < 100_000) { L10n.tr(R.string.t_the_torbox_library_is_too_large, "The TorBox library is too large to verify safely.") }
         }
         val existingIds = entries.map { it.getLong("id") }.toSet()
         val existing = entries.firstOrNull { it.optString("hash").equals(hash, true) }?.getLong("id")
@@ -154,7 +157,7 @@ class TorBoxApi internal constructor(
             "magnet" to "magnet:?xt=urn:btih:$hash", "seed" to "3", "allow_zip" to "false",
             "add_only_if_cached" to "true"
         ), headers))).optLong("torrent_id", -1)
-        check(id >= 0) { "TorBox did not return a torrent identifier." }
+        check(id >= 0) { L10n.tr(R.string.t_torbox_did_not_return_a_torrent, "TorBox did not return a torrent identifier.") }
         val owned = id !in existingIds && existing == null
         try {
             trace("cached_files")
@@ -163,16 +166,16 @@ class TorBoxApi internal constructor(
                 is JSONObject -> raw
                 is JSONArray -> (0 until raw.length()).mapNotNull { raw.optJSONObject(it) }.firstOrNull { it.optLong("id", -1) == id }
                 else -> null
-            } ?: throw IllegalStateException("TorBox did not return the cached entry. Check your dashboard before retrying.")
+            } ?: throw IllegalStateException(L10n.tr(R.string.t_torbox_did_not_return_the_cached, "TorBox did not return the cached entry. Check your dashboard before retrying."))
             val folder = parseFolder(item, "torrents")
-            check(folder.id == id) { "TorBox returned a different transfer." }
-            check(folder.ready) { "The cached source is not ready. Refresh sources and try again." }
+            check(folder.id == id) { L10n.tr(R.string.t_torbox_returned_a_different_transfer, "TorBox returned a different transfer.") }
+            check(folder.ready) { L10n.tr(R.string.t_the_cached_source_is_not_ready, "The cached source is not ready. Refresh sources and try again.") }
             current()
             val eligible = EpisodeFilename.choices(folder.files.map { VideoCandidate(it.id, it.name, it.size) }, source.title, identity)
             // Large packs are choices, not a batch download-link request. Resolve one selection.
             val selected = if (selectedFile != null) {
                 listOf(eligible.filter { it.name == selectedFile.name && it.size == selectedFile.size }.singleOrNull()
-                    ?: throw IllegalStateException("The selected cached file changed or is ambiguous. Refresh sources."))
+                    ?: throw IllegalStateException(L10n.tr(R.string.t_the_selected_cached_file_changed_or, "The selected cached file changed or is ambiguous. Refresh sources.")))
             } else if (eligible.size == 1) eligible else emptyList()
             val urls = selected.associate { file ->
                 current()
@@ -180,7 +183,7 @@ class TorBoxApi internal constructor(
                 val url = scoped("/torrents/requestdl?token=${Net.encode(key)}&torrent_id=$id&file_id=${file.id}&redirect=false") as? String
                     ?: malformed()
                 val uri = try { java.net.URI(url) } catch (_: Exception) { null }
-                check(uri != null && uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null) { "TorBox did not return a secure playback link." }
+                check(uri != null && uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null) { L10n.tr(R.string.t_torbox_did_not_return_a_secure, "TorBox did not return a secure playback link.") }
                 file.id to url
             }
             current()
@@ -195,7 +198,7 @@ class TorBoxApi internal constructor(
                 try { scoped("/torrents/controltorrent", "POST", body) }
                 catch (_: Exception) {
                     try { scoped("/torrents/controltorrent", "POST", body) }
-                    catch (_: Exception) { throw IllegalStateException("TorBox could not remove the temporary cached entry. Check your dashboard before retrying.") }
+                    catch (_: Exception) { throw IllegalStateException(L10n.tr(R.string.t_torbox_could_not_remove_the_temporary, "TorBox could not remove the temporary cached entry. Check your dashboard before retrying.")) }
                 }
             }
         }
@@ -220,7 +223,7 @@ class TorBoxApi internal constructor(
             }
             if (array.length() < 1000 || added == 0) break
             offset += array.length()
-            if (offset >= 100_000) throw ApiException(0, "This cloud library is too large to load at once.")
+            if (offset >= 100_000) throw ApiException(0, L10n.tr(R.string.t_this_cloud_library_is_too_large, "This cloud library is too large to load at once."))
         }
         return result
     }
@@ -233,7 +236,7 @@ class TorBoxApi internal constructor(
             is JSONObject -> data
             is JSONArray -> (0 until data.length()).mapNotNull { data.optJSONObject(it) }.firstOrNull { it.optLong("id", -1) == id }
             else -> null
-        } ?: throw ApiException(404, "This TorBox folder is unavailable.")
+        } ?: throw ApiException(404, L10n.tr(R.string.t_this_torbox_folder_is_unavailable, "This TorBox folder is unavailable."))
         return parseFolder(value, kind)
     }
 
@@ -244,14 +247,14 @@ class TorBoxApi internal constructor(
         // TorBox requires the API key in this particular endpoint's query. Never log it.
         val value = call("/$kind/requestdl?token=${Net.encode(token())}&$idKey=$folderId&file_id=$fileId&redirect=false")
         val result = (value as? String).orEmpty()
-        if (!result.startsWith("https://")) throw ApiException(0, "TorBox did not return a secure playback link.")
+        if (!result.startsWith("https://")) throw ApiException(0, L10n.tr(R.string.t_torbox_did_not_return_a_secure, "TorBox did not return a secure playback link."))
         return result
     }
 
     fun cached(hashes: List<String>): Set<String> {
         val normalized = hashes.map { it.lowercase() }.distinct()
         if (normalized.any { !it.matches(Regex("[a-f0-9]{40}|[a-f0-9]{64}")) }) {
-            throw ApiException(0, "A source contains an invalid torrent identifier.")
+            throw ApiException(0, L10n.tr(R.string.t_a_source_contains_an_invalid_torrent, "A source contains an invalid torrent identifier."))
         }
         val result = mutableSetOf<String>()
         normalized.chunked(100).forEach { batch ->
@@ -274,20 +277,20 @@ class TorBoxApi internal constructor(
     fun addMagnet(hash: String): Long {
         val value = hash.trim()
         if (!value.matches(Regex("[A-Fa-f0-9]{40}|[A-Za-z2-7]{32}"))) {
-            throw ApiException(0, "A source contains an invalid torrent identifier.")
+            throw ApiException(0, L10n.tr(R.string.t_a_source_contains_an_invalid_torrent, "A source contains an invalid torrent identifier."))
         }
         val response = multipart("$BASE/torrents/createtorrent", mapOf(
             "magnet" to "magnet:?xt=urn:btih:$value", "seed" to "3", "allow_zip" to "false"
         ), authorization())
         val data = objectData(unwrap(response))
         return data.optLong("torrent_id", -1).takeIf { it >= 0 }
-            ?: throw ApiException(0, "TorBox did not return a torrent identifier.")
+            ?: throw ApiException(0, L10n.tr(R.string.t_torbox_did_not_return_a_torrent, "TorBox did not return a torrent identifier."))
     }
 
     private fun verifyAccount(token: String): JSONObject = objectData(unwrap(transport("$BASE/user/me", "GET", mapOf("Authorization" to "Bearer $token"), null)))
 
     private fun token(): String = store.get("torbox.token").takeIf { it.isNotBlank() }
-        ?: throw ApiException(401, "Connect your TorBox account first.")
+        ?: throw ApiException(401, L10n.tr(R.string.t_connect_your_torbox_account_first, "Connect your TorBox account first."))
 
     private fun authorization(): Map<String, String> = mapOf("Authorization" to "Bearer ${token()}")
 
@@ -312,8 +315,8 @@ class TorBoxApi internal constructor(
     private fun objectData(value: Any?): JSONObject = value as? JSONObject ?: malformed()
     private fun required(value: JSONObject, key: String): String = value.optString(key).takeIf { it.isNotBlank() } ?: malformed()
     private fun checkKind(kind: String) { require(kind in setOf("torrents", "usenet", "webdl")) { "Invalid TorBox library type." } }
-    private fun malformed(): Nothing = throw ApiException(0, "TorBox returned an unreadable response.")
-    private fun endedSession(): Nothing = throw ApiException(410, "This TorBox linking session has ended. Choose Connect TorBox to get a new code.")
+    private fun malformed(): Nothing = throw ApiException(0, L10n.tr(R.string.t_torbox_returned_an_unreadable_response, "TorBox returned an unreadable response."))
+    private fun endedSession(): Nothing = throw ApiException(410, L10n.tr(R.string.t_this_torbox_linking_session_has_ended, "This TorBox linking session has ended. Choose Connect TorBox to get a new code."))
 
     internal fun parseFolder(value: JSONObject, kind: String): CloudFolder {
         val id = value.optLong("id", -1)

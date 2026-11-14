@@ -23,14 +23,14 @@ internal data class VideoCompatibilityIssue(
             if (width > 0 && height > 0) "${width}×${height}" else null).joinToString(" at ")
         val explanation = when (reason) {
             VideoCompatibilityReason.EXCEEDS_CAPABILITIES ->
-                "The video format (${format.ifBlank { "unknown" }}) exceeds this $device's reported decoder capabilities."
+                L10n.tr(R.string.t_the_video_format_x_exceeds_this, "The video format (%1\$s) exceeds this %2\$s's reported decoder capabilities.", format.ifBlank { "unknown" }, device)
             VideoCompatibilityReason.UNSUPPORTED ->
-                "This $device cannot decode the video format (${format.ifBlank { "unknown" }})."
-            VideoCompatibilityReason.NO_VIDEO -> "This copy has no video track available for playback."
-            VideoCompatibilityReason.NO_SELECTED_VIDEO -> "This copy has no video track selected for playback."
+                L10n.tr(R.string.t_this_x_cannot_decode_the_video, "This %1\$s cannot decode the video format (%2\$s).", device, format.ifBlank { "unknown" })
+            VideoCompatibilityReason.NO_VIDEO -> L10n.tr(R.string.t_this_copy_has_no_video_track, "This copy has no video track available for playback.")
+            VideoCompatibilityReason.NO_SELECTED_VIDEO -> L10n.tr(R.string.t_this_copy_has_no_video_track_2, "This copy has no video track selected for playback.")
         }
-        val detail = if (dolbyProfile == 5) " Dolby Vision Profile 5 has no HDR10 base picture; this copy requires compatible Dolby Vision decoding." else ""
-        return "$explanation$detail Playback was paused to avoid playing only audio. Choose a compatible copy, such as 1080p H.264 (AVC), or another format supported by this $device."
+        val detail = if (dolbyProfile == 5) L10n.tr(R.string.t_dolby_vision_profile_5_has_no, " Dolby Vision Profile 5 has no HDR10 base picture; this copy requires compatible Dolby Vision decoding.") else ""
+        return L10n.tr(R.string.t_x_x_playback_was_paused_to, "%1\$s%2\$s Playback was paused to avoid playing only audio. Choose a compatible copy, such as 1080p H.264 (AVC), or another format supported by this %3\$s.", explanation, detail, device)
     }
 }
 
@@ -92,6 +92,6 @@ internal object VideoPlaybackCompatibility {
         MimeTypes.VIDEO_DOLBY_VISION -> "Dolby Vision"
         "video/mpeg2" -> "MPEG-2"
         "video/mp4v-es" -> "MPEG-4"
-        else -> "video format"
+        else -> L10n.tr(R.string.t_video_format, "video format")
     }
 }

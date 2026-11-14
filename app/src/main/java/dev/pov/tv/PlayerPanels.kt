@@ -57,7 +57,7 @@ internal object PlayerPanels {
     private const val CARD = 0xFF24262B.toInt()
     private const val OPEN_MS = 260L
     private const val CLOSE_MS = 200L
-    private val DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.US)
+    private val DATE: DateTimeFormatter get() = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.getDefault())
 
     private fun logoUrl(imdbId: String) = "https://images.metahub.space/logo/medium/$imdbId/img"
 
@@ -182,9 +182,9 @@ internal object PlayerPanels {
         facts.addView(details, LinearLayout.LayoutParams(-1, -2).apply { topMargin = p.dp(14) })
         facts.addView(overview, LinearLayout.LayoutParams(-1, -2).apply { topMargin = p.dp(14) })
 
-        val peopleTitle = p.text(if (series) "Episode Cast & Crew" else "Cast & Crew", if (tv) 19f else 16f, INK, true)
+        val peopleTitle = p.text(if (series) L10n.tr(R.string.t_episode_cast_crew, "Episode Cast & Crew") else L10n.tr(R.string.t_cast_crew, "Cast & Crew"), if (tv) 19f else 16f, INK, true)
         column.addView(peopleTitle, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = p.dp(if (tv) 24 else 16); bottomMargin = p.dp(4) })
-        val peopleNote = p.text("Loading…", 14f, DIM)
+        val peopleNote = p.text(L10n.tr(R.string.t_loading_2, "Loading…"), 14f, DIM)
         column.addView(peopleNote, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = p.dp(if (tv) 24 else 16); topMargin = p.dp(8) })
         val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; setPadding(p.dp(if (tv) 16 else 10), 0, p.dp(16), 0) }
         val scroller = HorizontalScrollView(activity).apply {
@@ -240,7 +240,7 @@ internal object PlayerPanels {
                 if (line.isNotBlank()) { details.text = line; details.visibility = View.VISIBLE }
             }
             val tmdb = PlayerShowInfo.tmdb?.invoke()
-            if (tmdb == null) { p.ui { peopleNote.text = "Add a TMDB key in Settings to see the cast." }; return@worker }
+            if (tmdb == null) { p.ui { peopleNote.text = L10n.tr(R.string.t_add_a_tmdb_key_in_settings, "Add a TMDB key in Settings to see the cast.") }; return@worker }
             val people: List<TmdbCatalog.CastMember>
             var runtime = 0
             if (series) {
@@ -251,7 +251,7 @@ internal object PlayerPanels {
                 if (series && runtime > 0) {
                     details.text = meta("$runtime min", date(episode?.released.orEmpty())); details.visibility = View.VISIBLE
                 }
-                if (people.isEmpty()) { peopleNote.text = "No cast listed."; return@ui }
+                if (people.isEmpty()) { peopleNote.text = L10n.tr(R.string.t_no_cast_listed, "No cast listed."); return@ui }
                 peopleNote.visibility = View.GONE
                 val hadFocus = p.content.isFocused
                 people.forEach { row.addView(personCard(it), LinearLayout.LayoutParams(-2, -2).apply { rightMargin = p.dp(if (tv) 14 else 8) }) }
@@ -292,14 +292,14 @@ internal object PlayerPanels {
         root.addView(right, LinearLayout.LayoutParams(0, -1, 1f))
         val header = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         right.addView(header, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = p.dp(if (tv) 16 else 10); leftMargin = p.dp(6); rightMargin = p.dp(10) })
-        val seasonTitle = p.text("Episodes", if (tv) 28f else 20f, INK, true)
+        val seasonTitle = p.text(L10n.tr(R.string.t_episodes, "Episodes"), if (tv) 28f else 20f, INK, true)
         header.addView(seasonTitle, LinearLayout.LayoutParams(0, -2, 1f))
         val seasonScore = p.text("", if (tv) 17f else 14f, INK)
         header.addView(seasonScore, LinearLayout.LayoutParams(-2, -2))
         val cards = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(p.dp(4), p.dp(4), p.dp(4), p.dp(24)) }
         val cardScroll = ScrollView(activity).apply { isVerticalScrollBarEnabled = false; clipToPadding = false; addView(cards) }
         right.addView(cardScroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        val status = p.text("Loading episodes…", 16f, DIM)
+        val status = p.text(L10n.tr(R.string.t_loading_episodes, "Loading episodes…"), 16f, DIM)
         cards.addView(status)
 
         val today = LocalDate.now()
@@ -336,7 +336,7 @@ internal object PlayerPanels {
             val card = LinearLayout(activity).apply {
                 orientation = LinearLayout.HORIZONTAL; setPadding(p.dp(6), p.dp(6), p.dp(16), p.dp(6))
                 isFocusable = true; isFocusableInTouchMode = tv; isClickable = true
-                contentDescription = "Episode ${episode.episode}, ${episode.title}"
+                contentDescription = L10n.tr(R.string.t_episode_x_x, "Episode %1\$s, %2\$s", episode.episode, episode.title)
             }
             val still = FrameLayout(activity).apply { background = p.rounded(0xFF2A2D33.toInt(), 8); outlineProvider = ViewOutlineProvider.BACKGROUND; clipToOutline = true }
             val picture = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
@@ -345,7 +345,7 @@ internal object PlayerPanels {
                 background = p.rounded(0xCC000000.toInt(), 6); setPadding(p.dp(7), p.dp(4), p.dp(7), p.dp(4))
             }, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply { topMargin = p.dp(8); rightMargin = p.dp(8) })
             if (watched.episode(identity.imdbId, episode.season, episode.episode)) still.addView(p.text("✓", if (tv) 14f else 11f, Color.BLACK, true).apply {
-                gravity = Gravity.CENTER; contentDescription = "Watched"
+                gravity = Gravity.CENTER; contentDescription = L10n.tr(R.string.t_watched, "Watched")
                 background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE); setStroke(p.dp(1), 0x33000000) }
             }, FrameLayout.LayoutParams(p.dp(if (tv) 24 else 18), p.dp(if (tv) 24 else 18), Gravity.TOP or Gravity.START).apply { topMargin = p.dp(8); leftMargin = p.dp(8) })
             card.addView(still, LinearLayout.LayoutParams(stillWidth, stillWidth * 9 / 16))
@@ -353,7 +353,7 @@ internal object PlayerPanels {
 
             val textColumn = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
             card.addView(textColumn, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = p.dp(if (tv) 22 else 12); gravity = Gravity.CENTER_VERTICAL })
-            textColumn.addView(p.text(episode.title.ifBlank { "Episode ${episode.episode}" }, if (tv) 19f else 15f, INK, true)
+            textColumn.addView(p.text(episode.title.ifBlank { L10n.tr(R.string.t_episode_x, "Episode %1\$s", episode.episode) }, if (tv) 19f else 15f, INK, true)
                 .apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(-1, -2))
             val metaRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
             textColumn.addView(metaRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = p.dp(8) })
@@ -385,9 +385,9 @@ internal object PlayerPanels {
                 val (metaText, rating) = views[episode.episode] ?: return@forEach
                 val aired = seasonScores?.airDates?.get(episode.episode)
                     ?: runCatching { LocalDate.parse(episode.released.take(10)) }.getOrNull()
-                val dateLabel = aired?.let { if (it.isAfter(today)) "Airs ${it.format(DATE)}" else it.format(DATE) }.orEmpty()
+                val dateLabel = aired?.let { if (it.isAfter(today)) L10n.tr(R.string.t_airs_x, "Airs %1\$s", it.format(DATE)) else it.format(DATE) }.orEmpty()
                 val playing = episode.season == identity.season && episode.episode == identity.episode
-                metaText.text = meta(if (playing) "Now playing" else "", seasonRuntimes[episode.episode]?.let { "$it min" }.orEmpty(), dateLabel)
+                metaText.text = meta(if (playing) L10n.tr(R.string.t_now_playing, "Now playing") else "", seasonRuntimes[episode.episode]?.let { "$it min" }.orEmpty(), dateLabel)
                 rating.text = stars(seasonScores?.episodes?.get(episode.episode))
             }
             val rated = seasonScores?.episodes?.values.orEmpty()
@@ -397,7 +397,7 @@ internal object PlayerPanels {
         fun showSeason(season: Int, focus: Boolean) {
             if (season == shownSeason) return
             shownSeason = season; val token = ++generation
-            seasonTitle.text = if (season == 0) "Specials" else "Season $season"
+            seasonTitle.text = if (season == 0) L10n.tr(R.string.t_specials, "Specials") else L10n.tr(R.string.t_season_x, "Season %1\$s", season)
             cards.removeAllViews(); episodeViews.clear()
             val views = mutableMapOf<Int, Pair<TextView, TextView>>()
             all.filter { it.season == season }.forEach { episode ->
@@ -424,7 +424,7 @@ internal object PlayerPanels {
                 .sortedWith(compareBy({ if (it.season == 0) Int.MAX_VALUE else it.season }, { it.episode }))
             p.ui {
                 all = episodes
-                if (episodes.isEmpty()) { status.text = "Couldn't load the episode list."; return@ui }
+                if (episodes.isEmpty()) { status.text = L10n.tr(R.string.t_couldn_t_load_the_episode_list, "Couldn't load the episode list."); return@ui }
                 val seasons = episodes.map { it.season }.distinct()
                 val regular = seasons.count { it > 0 }
                 val count = episodes.count { it.season > 0 }
@@ -433,7 +433,7 @@ internal object PlayerPanels {
                     val size = episodes.count { it.season == season }
                     val row = p.text("", if (tv) 17f else 14f, MUTED, true).apply {
                         text = SpannableStringBuilder().apply {
-                            append(if (season == 0) "Specials" else "Season $season")
+                            append(if (season == 0) L10n.tr(R.string.t_specials, "Specials") else L10n.tr(R.string.t_season_x, "Season %1\$s", season))
                             append("   ")
                             val start = length; append("$size ${if (size == 1) "episode" else "episodes"}")
                             setSpan(ForegroundColorSpan(DIM), start, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)

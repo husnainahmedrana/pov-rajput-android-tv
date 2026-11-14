@@ -1,11 +1,16 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.UiText
+
 import android.content.Context
 import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONArray
 import org.json.JSONObject
 
-enum class SkipKind(val label: String) { INTRO("Skip Intro"), RECAP("Skip Recap"), CREDITS("Skip Credits") }
+enum class SkipKind(private val english: String) {
+    INTRO("Skip Intro"), RECAP("Skip Recap"), CREDITS("Skip Credits");
+    val label: String get() = UiText.of(english)
+}
 
 /** One skippable part of a video. [endMs] null means it runs to the end (credits). */
 data class SkipSegment(val kind: SkipKind, val startMs: Long, val endMs: Long?)

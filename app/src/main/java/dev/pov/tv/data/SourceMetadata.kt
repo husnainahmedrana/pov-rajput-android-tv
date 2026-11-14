@@ -1,5 +1,8 @@
 package dev.pov.tv.data
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import org.json.JSONObject
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -57,9 +60,9 @@ object SourceMetadata {
         return text.trim().toIntOrNull()?.takeIf { it in setOf(4320, 2160, 1440, 1080, 720, 576, 480, 360, 240) }
     }
 
-    fun qualityLabel(height: Int?): String = when (height?.takeIf { it > 0 }) { null -> "Quality unavailable"; 4320 -> "8K"; 2160 -> "4K"; else -> "${height}p" }
+    fun qualityLabel(height: Int?): String = when (height?.takeIf { it > 0 }) { null -> L10n.tr(R.string.t_quality_unavailable, "Quality unavailable"); 4320 -> "8K"; 2160 -> "4K"; else -> "${height}p" }
     fun sizeLabel(bytes: Long?): String {
-        if (bytes == null || bytes <= 0) return "Size unavailable"
+        if (bytes == null || bytes <= 0) return L10n.tr(R.string.t_size_unavailable, "Size unavailable")
         val units = listOf("B", "KB", "MB", "GB", "TB")
         var value = bytes.toDouble(); var index = 0
         while (value >= 1000 && index < units.lastIndex) { value /= 1000; index++ }

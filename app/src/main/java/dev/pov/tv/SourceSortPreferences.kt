@@ -63,15 +63,15 @@ internal class SourceSortPreferences(private val context: Context) {
                     second = audio.secondLanguage.takeIf { audio.language.isNotEmpty() }.orEmpty())
             }.takeIf { it.active }
     private val languageLabel: String?
-        get() = languages?.let { order -> if (order.audio.isNotEmpty()) "${languageName(order.audio)} first" else "${languageName(order.subtitle)} subtitles first" }
+        get() = languages?.let { order -> if (order.audio.isNotEmpty()) L10n.tr(R.string.t_x_first, "%1\$s first", languageName(order.audio)) else L10n.tr(R.string.t_x_subtitles_first, "%1\$s subtitles first", languageName(order.subtitle)) }
     /** The sort in its chosen order, e.g. "Highest quality · English first · Smallest first". */
     val label: String get() = order.priority.mapNotNull { key ->
         when (key) {
-            SourceSortOrder.LIBRARY -> "Library first".takeIf { libraryFirst }
+            SourceSortOrder.LIBRARY -> L10n.tr(R.string.t_library_first, "Library first").takeIf { libraryFirst }
             SourceSortOrder.LANGUAGE -> languageLabel
-            SourceSortOrder.PREFERRED -> "Preferred first".takeIf { preferredFirst && rules.preferActive }
-            SourceSortOrder.QUALITY -> if (order.qualityDescending) "Highest quality" else "Lowest quality"
-            else -> if (order.sizeAscending) "Smallest first" else "Largest first"
+            SourceSortOrder.PREFERRED -> L10n.tr(R.string.t_preferred_first, "Preferred first").takeIf { preferredFirst && rules.preferActive }
+            SourceSortOrder.QUALITY -> if (order.qualityDescending) L10n.tr(R.string.t_highest_quality, "Highest quality") else L10n.tr(R.string.t_lowest_quality, "Lowest quality")
+            else -> if (order.sizeAscending) L10n.tr(R.string.t_smallest_first, "Smallest first") else L10n.tr(R.string.t_largest_first, "Largest first")
         }
     }.joinToString(" · ")
 
@@ -100,8 +100,8 @@ internal class SourceSortPreferences(private val context: Context) {
             val switches = rules.preferPresets.size
             return listOfNotNull(rules.preferWords.take(3).joinToString(", ").takeIf { it.isNotBlank() }?.let { if (rules.preferWords.size > 3) "$it…" else it },
                 "$switches ${if (switches == 1) "switch" else "switches"}".takeIf { switches > 0 },
-                "own pattern".takeIf { rules.preferPattern.isNotBlank() }).joinToString(" · ")
-                .ifEmpty { "Nothing yet: Edit adds words like PSA or FLUX, switches and release groups" }
+                L10n.tr(R.string.t_own_pattern, "own pattern").takeIf { rules.preferPattern.isNotBlank() }).joinToString(" · ")
+                .ifEmpty { L10n.tr(R.string.t_nothing_yet_edit_adds_words_like, "Nothing yet: Edit adds words like PSA or FLUX, switches and release groups") }
         }
 
         fun show(context: Context, changed: () -> Unit, editPreferred: (() -> Unit)? = null) {
@@ -110,8 +110,8 @@ internal class SourceSortPreferences(private val context: Context) {
             fun dp(value: Int) = (value * density).roundToInt()
             val audio = AudioPreferences(context).language; val subtitle = SubtitlePreferences(context).language.takeUnless { it == "off" }.orEmpty()
             val languageSummary = listOfNotNull(audio.takeIf { it.isNotEmpty() }?.let { "${languageName(it)} audio" },
-                subtitle.takeIf { it.isNotEmpty() }?.let { "${languageName(it)} subtitles" }).joinToString(", ").ifEmpty { "set an audio or subtitle language in Settings" }
-            fun name(key: String) = when (key) { SourceSortOrder.LIBRARY -> "Library"; SourceSortOrder.LANGUAGE -> "Language"; SourceSortOrder.PREFERRED -> "Preferred"; SourceSortOrder.QUALITY -> "Quality"; else -> "File size" }
+                subtitle.takeIf { it.isNotEmpty() }?.let { "${languageName(it)} subtitles" }).joinToString(", ").ifEmpty { L10n.tr(R.string.t_set_an_audio_or_subtitle_language, "set an audio or subtitle language in Settings") }
+            fun name(key: String) = when (key) { SourceSortOrder.LIBRARY -> L10n.tr(R.string.t_library, "Library"); SourceSortOrder.LANGUAGE -> L10n.tr(R.string.t_language, "Language"); SourceSortOrder.PREFERRED -> L10n.tr(R.string.t_preferred, "Preferred"); SourceSortOrder.QUALITY -> L10n.tr(R.string.t_quality, "Quality"); else -> L10n.tr(R.string.t_file_size, "File size") }
             var dialog: AlertDialog? = null
             val list = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(6), dp(20), dp(4)) }
             var modified = false
@@ -145,17 +145,17 @@ internal class SourceSortPreferences(private val context: Context) {
                         typeface = Typeface.create("sans-serif", Typeface.BOLD)
                     })
                     if (key == SourceSortOrder.LANGUAGE || key == SourceSortOrder.LIBRARY || key == SourceSortOrder.PREFERRED) words.addView(TextView(context).apply {
-                        text = when (key) { SourceSortOrder.LIBRARY -> "Links already in your AIOStreams, StreamNZB or AltMount library"
+                        text = when (key) { SourceSortOrder.LIBRARY -> L10n.tr(R.string.t_links_already_in_your_aiostreams_streamnzb, "Links already in your AIOStreams, StreamNZB or AltMount library")
                             SourceSortOrder.PREFERRED -> preferredSummary(preferences.rules); else -> languageSummary }; setTextColor(0xFF9AA3B2.toInt()); setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f); maxLines = if (DeviceLayout.phone) 2 else 1
                         ellipsize = android.text.TextUtils.TruncateAt.END
                     })
                     row.addView(words, if (phone) LinearLayout.LayoutParams(-1, -2) else LinearLayout.LayoutParams(0, -2, 1f))
                     val direction = when (key) {
-                        SourceSortOrder.LIBRARY -> if (preferences.libraryFirst) "First" else "Off"
-                        SourceSortOrder.LANGUAGE -> if (preferences.languageFirst) "Preferred first" else "Off"
-                        SourceSortOrder.PREFERRED -> if (preferences.preferredFirst) "First" else "Off"
-                        SourceSortOrder.QUALITY -> if (order.qualityDescending) "Highest first" else "Lowest first"
-                        else -> if (order.sizeAscending) "Smallest first" else "Largest first"
+                        SourceSortOrder.LIBRARY -> if (preferences.libraryFirst) L10n.tr(R.string.t_first, "First") else L10n.tr(R.string.t_off, "Off")
+                        SourceSortOrder.LANGUAGE -> if (preferences.languageFirst) L10n.tr(R.string.t_preferred_first, "Preferred first") else L10n.tr(R.string.t_off, "Off")
+                        SourceSortOrder.PREFERRED -> if (preferences.preferredFirst) L10n.tr(R.string.t_first, "First") else L10n.tr(R.string.t_off, "Off")
+                        SourceSortOrder.QUALITY -> if (order.qualityDescending) L10n.tr(R.string.t_highest_first, "Highest first") else L10n.tr(R.string.t_lowest_first, "Lowest first")
+                        else -> if (order.sizeAscending) L10n.tr(R.string.t_smallest_first, "Smallest first") else L10n.tr(R.string.t_largest_first, "Largest first")
                     }
                     // The Preferred row's Edit shares the direction button's width, so every row's buttons line up.
                     val withEdit = key == SourceSortOrder.PREFERRED && editPreferred != null
@@ -169,7 +169,7 @@ internal class SourceSortPreferences(private val context: Context) {
                         }
                         modified = true; render("way:$key")
                     }, if (phone) LinearLayout.LayoutParams(0, dp(40), 1f) else LinearLayout.LayoutParams(dp(if (withEdit) 150 - 8 - EDIT_WIDTH else 150), dp(40)).apply { leftMargin = dp(8) })
-                    if (withEdit) controls.addView(button("Edit", "edit:$key", true) {
+                    if (withEdit) controls.addView(button(L10n.tr(R.string.t_edit, "Edit"), "edit:$key", true) {
                         dialog?.dismiss(); editPreferred?.invoke()
                     }, if (phone) LinearLayout.LayoutParams(-2, dp(40)).apply { leftMargin = dp(8) } else LinearLayout.LayoutParams(dp(EDIT_WIDTH), dp(40)).apply { leftMargin = dp(8) })
                     fun move(step: Int) {
@@ -183,7 +183,7 @@ internal class SourceSortPreferences(private val context: Context) {
                     list.addView(row)
                 }
                 list.addView(TextView(context).apply {
-                    text = "Result: ${preferences.label}"; setTextColor(0xFFCFD5DE.toInt()); setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    text = L10n.tr(R.string.t_result_x, "Result: %1\$s", preferences.label); setTextColor(0xFFCFD5DE.toInt()); setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
                 // Focus follows the row that moved; at the top or bottom its ▲ or ▼ is off, so the other one takes it.
                 if (focus != null) list.post {
@@ -192,8 +192,8 @@ internal class SourceSortPreferences(private val context: Context) {
                 }
             }
             render(null)
-            val created = AlertDialog.Builder(context).setTitle("Link sorting").setView(android.widget.ScrollView(context).apply { addView(list) })
-                .setPositiveButton("Done", null).setNeutralButton("Reset to default", null).create()
+            val created = AlertDialog.Builder(context).setTitle(L10n.tr(R.string.t_link_sorting, "Link sorting")).setView(android.widget.ScrollView(context).apply { addView(list) })
+                .setPositiveButton(L10n.tr(R.string.t_done, "Done"), null).setNeutralButton(L10n.tr(R.string.t_reset_to_default, "Reset to default"), null).create()
             dialog = created
             created.setOnDismissListener { if (modified) changed() }
             created.show()

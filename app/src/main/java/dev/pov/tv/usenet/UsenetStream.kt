@@ -1,5 +1,8 @@
 package dev.pov.tv.usenet
 
+import dev.pov.tv.L10n
+import dev.pov.tv.R
+
 import java.io.Closeable
 import java.io.IOException
 
@@ -56,7 +59,7 @@ class UsenetStream(
         val first = await(0)
         synchronized(lock) {
             if (prepared) return
-            if (first.begin != 0L || first.fileSize <= 0 || first.size <= 0) throw IOException("The first article doesn't describe the file.")
+            if (first.begin != 0L || first.fileSize <= 0 || first.size <= 0) throw IOException(L10n.tr(R.string.t_the_first_article_doesn_t_describe, "The first article doesn't describe the file."))
             partSize = first.size.toLong(); name = first.name
             window = windowFor(partSize)
             size = first.fileSize
@@ -118,7 +121,7 @@ class UsenetStream(
         var index = (position / partSize).toInt().coerceIn(0, last)
         repeat(24) {
             val segment = await(index)
-            if (assumed && segment.fileSize != size) throw IOException("This part of the set is not the size the others are.")
+            if (assumed && segment.fileSize != size) throw IOException(L10n.tr(R.string.t_this_part_of_the_set_is, "This part of the set is not the size the others are."))
             val end = segment.begin + segment.size
             when {
                 position < segment.begin -> index = (index - maxOf(1L, (segment.begin - position + partSize - 1) / partSize).toInt()).coerceAtLeast(0)
@@ -134,7 +137,7 @@ class UsenetStream(
                 }
             }
         }
-        throw IOException("The file's articles don't line up; position $position can't be found.")
+        throw IOException(L10n.tr(R.string.t_the_file_s_articles_don_t, "The file's articles don't line up; position %1\$s can't be found.", position))
     }
 
     /** Keeps the articles after [index] downloading and lets go of those far from it. */
@@ -154,7 +157,7 @@ class UsenetStream(
         val deadline = started + AWAIT_MS * 1_000_000
         var asked = started
         while (true) {
-            if (closed) throw IOException("The stream is closed.")
+            if (closed) throw IOException(L10n.tr(R.string.t_the_stream_is_closed, "The stream is closed."))
             // An article that hasn't come for a while is usually stuck on one slow or half-dead connection: ask for
             // it again at the front of the queue, so a free connection fetches it, instead of waiting out the timeout.
             if (System.nanoTime() - asked > STALL_MS * 1_000_000) {
@@ -184,7 +187,7 @@ class UsenetStream(
 }
 
 /** No article arrived in time: the connection or server was slow just then. Worth trying again; not a broken release. */
-class SlowArticleException : IOException("The news server took too long to send the video.")
+class SlowArticleException : IOException(L10n.tr(R.string.t_the_news_server_took_too_long, "The news server took too long to send the video."))
 
 /**
  * Whether [error] was the network's moment (a timeout, a dropped connection) rather than the release itself (missing

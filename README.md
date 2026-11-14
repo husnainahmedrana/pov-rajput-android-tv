@@ -27,6 +27,8 @@ This is **Rajput's Android TV edition**, forked from [MM-482/pov-android-tv](htt
 - **Your own catalog add-ons and Home order** — add Stremio catalog add-ons such as AIOMetadata as Home rows, and reorder or hide every row after Top 10 in Settings → Home rows. *See all* pages through a row's whole catalog.
 - **Play that just works** — Play searches every enabled source provider, checks your debrid caches in parallel and starts the best playable link, resuming where you left off. Continue Watching resumes instantly from the last link (kept 24 hours).
 - **A player built for the remote** — one-second precision seeking that accelerates the longer you hold, an *Ends at* clock, a Stremio-style loading splash, a **Streams** panel to switch links mid-movie, one Audio & Subtitles menu with volume boost, playback speed (one press steps 1× → 1.25× → 1.5× → 1.75× → 2×, hold OK for 0.5×–2×; pitch kept) and FFmpeg software decoding for Dolby and DTS audio.
+- **Seven languages** — English, Español, Français, Deutsch, Italiano, Português and Nederlands for every menu, setting and message (Settings → Home & appearance → Language, or your device language).
+- **Usenet indexer priorities** — NZBHydra2-style search order: indexers with the same priority are searched together, the next priority only when the links so far fall short, backups only when nothing was found, with daily search and grab limits for free tiers.
 - **Sensible defaults** — bold subtitles on a transparent background, 3% above the bottom, English subtitles and audio.
 - **Your library as posters** — Offcloud and TorBox downloads appear as artwork cards matched from their filenames.
 - **Voice search** — speak a title; the words appear as you talk and results open when you stop.
