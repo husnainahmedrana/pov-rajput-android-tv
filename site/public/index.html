@@ -40,6 +40,12 @@ h1{font-size:clamp(34px,6vw,58px);line-height:1.08;margin:22px 0 14px;letter-spa
 .btn.ghost:hover{background:rgba(255,255,255,.18)}
 .btn small{font-weight:500;opacity:.8}
 .version{margin-top:16px;color:var(--muted);font-size:14px}
+.codes{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin-top:18px;padding:12px 16px;background:var(--panel);border:1px solid var(--line);border-radius:14px;width:fit-content;max-width:100%}
+.codes img{width:36px;height:36px;border-radius:8px}
+.codes .label{color:var(--muted);font-size:14px}
+.code{display:inline-flex;align-items:baseline;gap:8px;font-size:15px}
+.code b{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:20px;letter-spacing:1px;color:var(--ink)}
+.steps .code b{font-size:inherit}
 .version b{color:var(--ink)}
 section{padding:56px 0;border-top:1px solid var(--line)}
 h2{font-size:clamp(26px,3.6vw,34px);margin:0 0 8px;letter-spacing:-.01em}
@@ -88,6 +94,12 @@ footer a{color:var(--muted)}
   <div class="buttons">
     <a class="btn primary" href="/tv">⬇ Android TV <small>Nabrio-TV.apk</small></a>
     <a class="btn ghost" href="/phone">⬇ Phone <small>Nabrio-Mobile.apk</small></a>
+  </div>
+  <div class="codes" aria-label="Downloader codes">
+    <img src="/img/downloader.png" alt="Downloader app logo" width="36" height="36">
+    <span class="label">Downloader codes</span>
+    <span class="code">TV <b>9523728</b></span>
+    <span class="code">Phone <b>9284921</b></span>
   </div>
   <div class="version" id="version">Latest version from <a href="/source">GitHub</a>. Android 8.0 or later.</div>
 </div></header>
@@ -144,7 +156,7 @@ footer a{color:var(--muted)}
       <h3>Android TV, Google TV and Fire TV</h3>
       <ol class="steps">
         <li>Install the free <b>Downloader</b> app (by AFTVnews) from your TV's app store.</li>
-        <li>Open Downloader and type <span class="kbd">nabrio.rajput.cc/tv</span>, then press Go.</li>
+        <li>Open Downloader and type the code <span class="kbd">9523728</span> (or the address <span class="kbd">nabrio.rajput.cc/tv</span>), then press Go.</li>
         <li>When Android asks, allow Downloader to install unknown apps, then press <b>Install</b>.</li>
         <li>Open <b>Nabrio</b>. Connect your debrid services and add-ons in Settings, or sign in to your Nabrio account to bring your setup back.</li>
       </ol>
@@ -152,7 +164,7 @@ footer a{color:var(--muted)}
     <div>
       <h3>Phone</h3>
       <ol class="steps">
-        <li>On your phone, open <a href="/phone">nabrio.rajput.cc/phone</a> to download the app.</li>
+        <li>On your phone, open <a href="/phone">nabrio.rajput.cc/phone</a> to download the app, or type the code <span class="kbd">9284921</span> in the <b>Downloader</b> app.</li>
         <li>Open the downloaded file. Allow your browser to install unknown apps if asked.</li>
         <li>Press <b>Install</b> and open <b>Nabrio</b>.</li>
       </ol>

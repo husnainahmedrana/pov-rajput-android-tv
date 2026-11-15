@@ -15,7 +15,7 @@
 
 ![Flix home: a living backdrop, rotating feature and Top 10 shelves](docs/screenshots/tv-home.jpg)
 
-**[⬇ Download the latest APK](https://github.com/husnainahmedrana/pov-rajput-android-tv/releases/latest)** · **[Website](https://nabrio.rajput.cc)** · **[Discord](https://discord.gg/dr7PauYM3y)** · [Setup guide](docs/OFFCLOUD.md) · [Release notes](docs/RELEASE_NOTES.md) · [Build and release](docs/BUILD_AND_RELEASE.md)
+**[⬇ Download the latest APK](https://github.com/husnainahmedrana/pov-rajput-android-tv/releases/latest)** · <img src="docs/downloader.png" alt="Downloader" width="16" height="16" align="top"> Downloader codes: **TV `9523728`** · **Phone `9284921`** · **[Website](https://nabrio.rajput.cc)** · **[Discord](https://discord.gg/dr7PauYM3y)** · [Setup guide](docs/OFFCLOUD.md) · [Release notes](docs/RELEASE_NOTES.md) · [Build and release](docs/BUILD_AND_RELEASE.md)
 
 This is **Rajput's Android TV edition**, forked from [MM-482/pov-android-tv](https://github.com/MM-482/pov-android-tv). The original Android TV port was created by **Mark Mateo**, based on the original POV Kodi add-on by **[kodifitzwell](https://github.com/kodifitzwell/repo)**. Their work, attribution and GPL-3.0 license are preserved.
 
@@ -71,6 +71,7 @@ Captured on an onn 4K box and an Android phone. Every link, file and watch progr
 ## Getting started
 
 1. Download the APK for your device from [Releases](https://github.com/husnainahmedrana/pov-rajput-android-tv/releases/latest) and sideload it (Android 8.0 or later). The launcher name is **Nabrio**.
+   - <img src="docs/downloader.png" alt="Downloader" width="20" height="20" align="top"> **Downloader codes** (in the free [Downloader](https://www.aftvnews.com/downloader/) app by AFTVnews): **TV `9523728`** · **Phone `9284921`**
    - **Android TV / Google TV:** `Nabrio-TV.apk` (package `dev.pov.tv.rajput`). `POV-Rajput-TV.apk` and `POV-Rajput-release.apk` are the same file under its older names.
    - **Phones:** `Nabrio-Mobile.apk` (package `dev.pov.rajput.mobile`; `POV-Rajput-Mobile.apk` is the same file), a separate app with a portrait layout, bottom navigation and a touch player.
 2. **Settings → Sources → Debrid services**: connect **Offcloud**, **TorBox** (sign in with a code or paste an API key), **Real-Debrid**, **AllDebrid**, **Premiumize** or **Debrid-Link** with your own API keys. Real-Debrid, AllDebrid and Debrid-Link have no up-front cache check, so the app tries the first 7 links when you play and plays the first cached one. Each service has an **On/Off** switch (off keeps the key) and ▲ ▼ to set which plays first.
