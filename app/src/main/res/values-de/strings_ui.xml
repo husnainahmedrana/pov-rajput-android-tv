@@ -129,7 +129,7 @@
     <string name="t_back_to_browsing">Zurück zum Stöbern</string>
     <string name="t_back_to_the_app_s_default">Zurück zum App-Standard: weiße fette Lato, mittel, schwarzer Schatten, keine Box.</string>
     <string name="t_back_up_now">Jetzt sichern</string>
-    <string name="t_back_up_your_debrid_services_add">"Sichere deine Debrid-Dienste, Add-ons, Startseiten-Reihen und deinen Fortschritt, verschlüsselt auf diesem Gerät. "</string>
+    <string name="t_back_up_your_debrid_services_add">"Sichere deine Debrid-Dienste, Add-ons, Usenet-Anbieter und -Indexer, Easynews, Startseiten-Reihen und deinen Fortschritt, mit jedem Schalter und ihrer Reihenfolge, verschlüsselt auf diesem Gerät. "</string>
     <string name="t_back_up_your_setup">Deine Einrichtung sichern</string>
     <string name="t_backed_up_to_your_x_account">In deinem %1$s-Konto gesichert</string>
     <string name="t_backing_up">Wird gesichert…</string>
@@ -317,7 +317,7 @@
     <string name="t_couldn_t_check_just_now_try">Prüfung gerade nicht möglich. Versuche es später erneut.</string>
     <string name="t_couldn_t_connect">Verbindung fehlgeschlagen.</string>
     <string name="t_couldn_t_load_the_episode_list">Die Folgenliste konnte nicht geladen werden.</string>
-    <string name="t_create_a_free_x_account_and">"Erstelle ein kostenloses %1$s-Konto, und deine Debrid-Dienste, Add-ons, Startseiten-Reihen und dein Fortschritt werden gesichert, "</string>
+    <string name="t_create_a_free_x_account_and">"Erstelle ein kostenloses %1$s-Konto, und deine Debrid-Dienste, Add-ons, Usenet-Anbieter und -Indexer, Easynews, Startseiten-Reihen und dein Fortschritt werden gesichert, "</string>
     <string name="t_create_account">Konto erstellen</string>
     <string name="t_create_your_x_account">Erstelle dein %1$s-Konto</string>
     <string name="t_created_by">Erfunden von</string>
@@ -1749,4 +1749,28 @@
     <string name="t_youtube_style">YouTube-Stil</string>
     <string name="t_youtube_style_white_roboto_on_a" formatted="false">YouTube-Stil · weiße Roboto auf 75 % schwarzem Kasten</string>
     <string name="t_zoom_to_remove_bars">Zoomen, um Balken zu entfernen</string>
+    <string name="t_auto_tune_x">Automatisch einstellen · %1$s</string>
+    <string name="t_auto_tune_no_articles">Spiele zuerst einmal einen Usenet-Link ab: Die automatische Einstellung lädt Artikel aus einem Video, das dieses Gerät abgespielt hat.</string>
+    <string name="t_auto_tune_missing">%1$s Artikel fehlen</string>
+    <string name="t_auto_tune_none">Nichts heruntergeladen, die Pipeline bleibt unverändert. Prüfe Anmeldung und Verbindungen des Anbieters.</string>
+    <string name="t_auto_tune_testing">Teste Pipeline %1$s · %2$s Verbindungen… (Schritt %3$s)</string>
+    <string name="t_auto_tune_result">Pipeline %1$s · %2$s Verbindungen: %3$s Mbit/s</string>
+    <string name="t_auto_tune_limit">Der Anbieter erlaubt %1$s gleichzeitige Verbindungen</string>
+    <string name="t_auto_tune_failed">Pipeline %1$s · %2$s Verbindungen: fehlgeschlagen (%3$s)</string>
+    <string name="t_auto_tune_testing_port">Teste Port %1$s (%2$s)… (Schritt %3$s)</string>
+    <string name="t_auto_tune_port_result">Port %1$s (%2$s): %3$s Mbit/s · erster Artikel %4$s ms</string>
+    <string name="t_auto_tune_port_failed">Port %1$s (%2$s): keine Antwort (%3$s)</string>
+    <string name="t_auto_tune_best_port">Am besten: Port %1$s (%2$s) · Pipeline %3$s · %4$s Verbindungen (%5$s Mbit/s). Gespeichert (vorher Port %6$s · Pipeline %7$s · %8$s Verbindungen).</string>
+    <string name="t_auto_tune_plain_faster">Port %1$s ohne SSL war schneller (%2$s Mbit/s), wurde aber nicht gewählt: Er überträgt Anmeldung und Downloads unverschlüsselt. Wechsle unter Bearbeiten nur, wenn du das akzeptierst.</string>
+    <string name="t_saved_accounts_unreadable">%1$s gespeicherte Kontodaten konnten nach einer Systemänderung nicht gelesen werden und wurden entfernt. Verknüpfe diese Konten in den Einstellungen neu.</string>
+    <string name="t_auto_tune_menu">Automatisch einstellen…</string>
+    <string name="t_auto_tune_choose">%1$s automatisch einstellen: was einstellen</string>
+    <string name="t_auto_tune_round_port">Port (etwa 1 Min.)</string>
+    <string name="t_auto_tune_round_pipeline">Pipeline (etwa 3 Min.)</string>
+    <string name="t_auto_tune_round_connections">Verbindungen (3 bis 4 Min.)</string>
+    <string name="t_auto_tune_start">Starten</string>
+    <string name="t_auto_tune_about">Lädt Artikel aus einem Video, das dieses Gerät abgespielt hat, etwa 6 s pro Schritt, und speichert die schnellste Einstellung. Nicht angehakte Einstellungen bleiben, wie sie sind. Es lädt so schnell, wie deine Leitung erlaubt, und verbraucht auf einer schnellen Leitung viele Daten. Spiele währenddessen nichts ab.</string>
+    <string name="t_allow_plain_x">Ports ohne SSL erlauben: %1$s</string>
+    <string name="t_allow_plain_warning">Ports ohne SSL übertragen deine Anmeldung und alles, was du lädst, unverschlüsselt: Dein Internetanbieter und jeder auf dem Weg kann sie lesen. Darf die automatische Einstellung für %1$s einen solchen Port wählen, wenn er schneller ist?</string>
+    <string name="t_allow">Erlauben</string>
 </resources>

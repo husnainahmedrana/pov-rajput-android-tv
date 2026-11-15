@@ -50,10 +50,10 @@ object UsenetMedia {
             at(0, 'R'.code, 'I'.code, 'F'.code, 'F'.code) || at(0, 0x47) || at(4, 0x47) || at(0, 0x00, 0x00, 0x01, 0xBA) || at(0, 'F'.code, 'L'.code, 'V'.code)
     }
 
-    private fun refuseArchive(head: ByteArray, name: String): Nothing = throw UnsupportedSetException(when {
-        isSevenZip(head) -> "This release is a 7z archive, which can't be streamed yet. Choose another link."
-        else -> "This release isn't a video file the app can read${if (name.isNotBlank()) " (${name.take(50)})" else ""}. Choose another link."
-    })
+    /** 7z sets are opened before this is reached, so anything here is neither a video nor an archive the app plays. */
+    @Suppress("UNUSED_PARAMETER")
+    private fun refuseArchive(head: ByteArray, name: String): Nothing = throw UnsupportedSetException(
+        "This release isn't a video file the app can read${if (name.isNotBlank()) " (${name.take(50)})" else ""}. Choose another link.")
 
     fun open(pool: ArticleSource, nzb: Nzb, cache: java.io.File? = null, log: (String) -> Unit = {}): Opened {
         val files = nzb.files

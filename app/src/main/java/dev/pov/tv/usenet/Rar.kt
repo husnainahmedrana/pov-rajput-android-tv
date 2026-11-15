@@ -148,11 +148,13 @@ object Rar {
                     val name = String(body, cursor.at, nameSize, Charsets.UTF_8)
                     // The extra area closes the header; a record of type 1 in it means the file is encrypted.
                     var encrypted = false
-                    if (extraSize in 1..body.size.toLong() && headSize <= body.size) {
+                    // Every size is checked against what is left: a crafted size could otherwise point back at the same
+                    // record (looping forever) or before the area (reading garbage).
+                    if (extraSize in 1..body.size.toLong() && headSize <= body.size && extraSize <= headSize) {
                         val extra = Cursor(body, (headSize - extraSize).toInt())
                         while (extra.at < body.size) {
                             val recordSize = extra.vint(); val recordStart = extra.at
-                            if (recordSize <= 0) break
+                            if (recordSize <= 0 || recordSize > body.size - recordStart) break
                             if (extra.vint() == 1L) encrypted = true
                             extra.at = recordStart + recordSize.toInt()
                         }

@@ -67,7 +67,8 @@ internal class ExternalSubtitles(
                 val entry = input.nextEntry ?: break
                 val ext = entry.name.substringAfterLast('.', "").lowercase(Locale.ROOT)
                 if (!entry.isDirectory && ext in setOf("srt", "vtt", "ass", "ssa")) {
-                    val bytes = input.readBytes()
+                    // Read at most one byte past the limit: an oversized (or zip-bomb) entry is skipped, never inflated whole.
+                    val bytes = readUpTo(input, MAX_SUBTITLE_BYTES + 1)
                     if (bytes.size in 1..MAX_SUBTITLE_BYTES) entries += entry.name to bytes
                 }
                 if (entries.size >= 60) break
@@ -122,12 +123,29 @@ internal class ExternalSubtitles(
         private const val SUBDL_FILES = "https://dl.subdl.com"
         private const val MAX_SUBTITLE_BYTES = 3 * 1024 * 1024
 
+        /** A subtitle zip, even a whole season's, is far below this; anything bigger isn't one. */
+        private const val MAX_ZIP_BYTES = 20 * 1024 * 1024
+
         private fun bytes(address: String): ByteArray {
             val connection = (URL(address).openConnection() as HttpURLConnection).apply { connectTimeout = 12_000; readTimeout = 20_000 }
             try {
                 check(connection.responseCode in 200..299) { "SubDL download failed" }
-                return connection.inputStream.use { it.readBytes() }
+                val bytes = connection.inputStream.use { readUpTo(it, MAX_ZIP_BYTES + 1) }
+                check(bytes.size <= MAX_ZIP_BYTES) { "SubDL download too large" }
+                return bytes
             } finally { connection.disconnect() }
+        }
+
+        /** Up to [limit] bytes of [input]; stops there instead of reading (and holding) all of it. */
+        private fun readUpTo(input: java.io.InputStream, limit: Int): ByteArray {
+            val out = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(16 * 1024)
+            while (out.size() < limit) {
+                val count = input.read(buffer, 0, minOf(buffer.size, limit - out.size()))
+                if (count < 0) break
+                out.write(buffer, 0, count)
+            }
+            return out.toByteArray()
         }
         const val SUBRIP = "application/x-subrip"
         const val VTT = "text/vtt"

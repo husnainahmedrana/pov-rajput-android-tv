@@ -47,5 +47,23 @@ class EpisodePresentationTest {
         for (value in listOf("", "unknown", "2026-02-30", "null")) assertFalse(EpisodePresentation.future(value, now))
     }
 
+    @Test fun `the next episode follows the furthest one watched`() {
+        val episodes = (1..80).map { episode(1, it) } + listOf(episode(0, 1))
+        assertEquals(70, EpisodePresentation.nextAfterWatched(episodes, listOf(1 to 3, 1 to 69, 1 to 12))?.episode)
+    }
+
+    @Test fun `the next episode crosses into the next season and skips specials`() {
+        val episodes = listOf(episode(1, 1), episode(1, 2), episode(2, 1), episode(2, 2), episode(0, 5))
+        val next = EpisodePresentation.nextAfterWatched(episodes, listOf(1 to 2, 0 to 9))
+        assertEquals(2, next?.season); assertEquals(1, next?.episode)
+    }
+
+    @Test fun `nothing watched, everything watched, or only unaired left gives no next episode`() {
+        val now = Instant.parse("2026-11-14T00:00:00Z")
+        val episodes = listOf(episode(1, 1), episode(1, 2), EpisodeData(1, 3, "Later", released = "2027-01-01"))
+        assertNull(EpisodePresentation.nextAfterWatched(episodes, emptyList(), now))
+        assertNull(EpisodePresentation.nextAfterWatched(episodes, listOf(1 to 2), now))
+    }
+
     private fun episode(season: Int, number: Int = 1) = EpisodeData(season, number, "Episode $number")
 }

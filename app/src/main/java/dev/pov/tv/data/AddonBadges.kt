@@ -41,13 +41,13 @@ object AddonBadges {
     /** News providers the viewer can pick per add-on (id to name); blank shows no news-provider logo. */
     val NEWS_PROVIDERS get() = listOf("" to L10n.tr(R.string.t_not_set, "Not set"), "easynews" to "Easynews", "newshosting" to "Newshosting", "eweka" to "Eweka", "giganews" to "Giganews", "usenetserver" to "UsenetServer", "frugalusenet" to "Frugal Usenet", "tweaknews" to "Tweaknews", "usenetfarm" to "Usenet.Farm", "newsdemon" to "NewsDemon", "pureusenet" to "Pure Usenet", "vipernews" to "ViperNews")
     val NEWS_PROVIDER_IDS = NEWS_PROVIDERS.map { it.first }.filter(String::isNotEmpty).toSet()
-    private val INDEXERS = listOf("geek" to "nzbgeek", "ninja" to "ninjacentral", "miatrix" to "miatrix",
+    private val INDEXERS = listOf("prowlarr" to "prowlarr", "hydra" to "nzbhydra2", "geek" to "nzbgeek", "ninja" to "ninjacentral", "miatrix" to "miatrix",
         "crawler" to "usenetcrawler", "nest" to "nzbnest", "easynews" to "easynews", "slug" to "drunkenslug", "finder" to "nzbfinder",
         "planet" to "nzbplanet", "dog" to "dognzb", "althub" to "althub", "abnzb" to "abnzb", "tabula" to "tabularasa",
         "omgwtf" to "omgwtfnzbs", "carnage" to "digitalcarnage")
     val INDEXER_LOGOS = INDEXERS.map { it.second }.toSet()
     /** Indexer logo ids to their names, for the player badge's spoken description. */
-    val INDEXER_NAMES = mapOf("nzbgeek" to "NZBgeek", "ninjacentral" to "NinjaCentral", "miatrix" to "Miatrix", "usenetcrawler" to "Usenet-Crawler",
+    val INDEXER_NAMES = mapOf("prowlarr" to "Prowlarr", "nzbhydra2" to "NZBHydra2", "nzbgeek" to "NZBgeek", "ninjacentral" to "NinjaCentral", "miatrix" to "Miatrix", "usenetcrawler" to "Usenet-Crawler",
         "nzbnest" to "NzbNest", "drunkenslug" to "DrunkenSlug", "nzbfinder" to "NZBFinder", "nzbplanet" to "NZBPlanet", "dognzb" to "DOGnzb",
         "althub" to "altHUB", "abnzb" to "abNZB", "tabularasa" to "Tabula Rasa", "omgwtfnzbs" to "omgwtfnzbs", "digitalcarnage" to "Digital Carnage")
     /** An indexer's logo id from its name ("NZBgeek", "NzbNest", "Usenet-Crawler"…), when we have one. */

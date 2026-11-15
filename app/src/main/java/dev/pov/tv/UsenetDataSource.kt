@@ -34,12 +34,34 @@ internal object UsenetLog {
         android.util.Log.w(UsenetPlayback.TAG, text, error)
         keep("W", if (error == null) text else "$text: ${error.javaClass.simpleName}: ${error.message}" + (error.cause?.let { " (cause ${it.javaClass.simpleName}: ${it.message})" } ?: ""))
     }
-    @Synchronized private fun keep(level: String, text: String) {
-        val target = file ?: return
-        try {
-            if (target.length() > 512 * 1024) target.renameTo(java.io.File(target.parentFile, "usenet-log.old.txt"))
-            target.appendText("${stamp.format(java.util.Date())} $level $text" + "\n")
-        } catch (_: Exception) {}
+    /**
+     * Lines go to one writer thread, so the news connections' workers never wait on flash storage (a burst of
+     * connection trouble used to make them take turns opening and closing the file). Bounded: a flood drops lines.
+     */
+    private val pending = java.util.concurrent.LinkedBlockingQueue<String>(2000)
+    private val writer by lazy {
+        Thread({
+            var out: java.io.Writer? = null
+            var target: java.io.File? = null
+            while (true) {
+                val line = try { pending.take() } catch (_: InterruptedException) { return@Thread }
+                try {
+                    val now = file ?: continue
+                    if (target != now || now.length() > 512 * 1024) {
+                        out?.close()
+                        if (now.length() > 512 * 1024) now.renameTo(java.io.File(now.parentFile, "usenet-log.old.txt"))
+                        target = now; out = java.io.BufferedWriter(java.io.FileWriter(now, true))
+                    }
+                    out!!.write(line)
+                    if (pending.isEmpty()) out.flush()                     // written out once a burst is over
+                } catch (_: Exception) { runCatching { out?.close() }; out = null; target = null }
+            }
+        }, "usenet-log").apply { isDaemon = true; start() }
+    }
+    private fun keep(level: String, text: String) {
+        if (file == null) return
+        writer
+        pending.offer("${synchronized(stamp) { stamp.format(java.util.Date()) }} $level $text\n")
     }
 }
 
@@ -47,39 +69,74 @@ internal object UsenetLog {
 internal object UsenetSessions {
     class Session(val key: String, val pool: java.io.Closeable, val source: ByteSource)
 
-    private var current: Session? = null
-    /** Links that can't stream this way (no NZB, a failure mid-play), with the reason: Easynews ones use the web servers instead. */
-    private val refused = LinkedHashMap<String, String>()
+    /** One stream opens at a time; only [get] holds this, for the whole (possibly long) opening. */
+    private val opening = Any()
+    @Volatile private var current: Session? = null
+    /**
+     * Links that can't stream this way (no NZB, a failure mid-play), with the reason: Easynews ones use the web servers
+     * instead. Read without any lock, so the link list and the Streams panel never wait for a stream that is opening.
+     */
+    private val refused = java.util.concurrent.ConcurrentHashMap<String, String>()
+    /** When each refused link's reason was last shown: a reopen right after (the player's own retries) stays quiet. */
+    private val told = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     /** [create] returns null (the link can't stream this way) or throws; either way the link is not tried again this session. */
-    @Synchronized fun get(key: String, create: () -> Session?): Session? {
+    fun get(key: String, create: () -> Session?): Session? = synchronized(opening) {
         current?.let { if (it.key == key) return it }
-        if (key in refused) return null
-        closeCurrent()
-        // A timeout or dropped connection while opening isn't remembered: pressing play again tries afresh.
-        val made = try { create() } catch (error: Exception) { if (!dev.pov.tv.usenet.isPassingFailure(error)) refuse(key, error.message.orEmpty()); throw error }
+        if (refused.containsKey(key)) return null
+        closeSession(current)
+        stumbles.remove(key)                                         // a fresh session starts with a clean count
+        // A timeout, a dropped connection or a cancelled opening (Stop, another link) isn't remembered: pressing play
+        // again tries afresh.
+        val made = try { create() } catch (error: Exception) {
+            if (!dev.pov.tv.usenet.isCancellation(error) && !dev.pov.tv.usenet.isPassingFailure(error)) refuse(key, error.message.orEmpty())
+            throw error
+        }
         if (made == null) refuse(key, "") else current = made
-        return made
+        made
     }
 
-    @Synchronized fun reason(key: String): String? = refused[key]
+    fun reason(key: String): String? = refused[key]
+
+    /** True when [key]'s refusal should be shown now: once, then again only after a quiet spell (a deliberate replay). */
+    fun shouldTell(key: String): Boolean {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val last = told[key]
+        if (last != null && now - last < TELL_AGAIN_MS) return false
+        told[key] = now
+        return true
+    }
 
     /** Passing read failures per video: a few are retried on the same connections before the link is given up. */
-    private val stumbles = HashMap<String, Int>()
-    @Synchronized fun stumble(key: String): Int = (stumbles[key] ?: 0).plus(1).also { stumbles[key] = it }
+    private val stumbles = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    fun stumble(key: String): Int = stumbles.merge(key, 1, Int::plus) ?: 1
+    /** A long stretch read fine: earlier trouble no longer counts towards giving the link up. */
+    fun steady(key: String) { stumbles.remove(key) }
 
     /** A read failed: this video is not streamed this way again for the rest of this app session. */
-    @Synchronized fun giveUp(key: String, why: String) {
+    fun giveUp(key: String, why: String) {
         UsenetPlayback.invalidateHealth()
         refuse(key, why)
-        if (current?.key == key) closeCurrent()
+        current?.takeIf { it.key == key }?.let(::closeSession)
     }
 
-    /** Lets the connections go without making the caller (the main thread, on Stop) wait for a stream that is still opening. */
-    fun close() { Thread({ synchronized(this) { closeCurrent() } }, "nntp-close").start() }
+    /**
+     * Lets the connections go without making the caller (the main thread, on Stop) wait. Only the stream current right
+     * now is closed: a close that runs late must never close the next video's stream. A stream still opening is
+     * cancelled by the player itself (its loader is interrupted) and closes its own connections.
+     */
+    fun close() {
+        val target = current ?: return
+        Thread({ closeSession(target) }, "nntp-close").start()
+    }
 
     private fun refuse(key: String, why: String) { if (refused.size > 500) refused.clear(); refused[key] = why }
-    private fun closeCurrent() { current?.let { it.source.close(); it.pool.close() }; current = null }
+    private fun closeSession(session: Session?) {
+        if (session == null) return
+        synchronized(this) { if (current === session) current = null }
+        session.source.close(); session.pool.close()
+    }
+    private const val TELL_AGAIN_MS = 30_000L
 }
 
 /** Indexer links: the NZB is fetched when the video starts, then streamed from the viewer's news providers. */
@@ -93,8 +150,13 @@ internal object UsenetPlayback {
         if (cache != null) UsenetLog.file = java.io.File(cache, "usenet-log.txt")
         if (!UsenetLinks.isNzb(address)) return EasynewsNntp.session(address, store, cache, notify)
         val key = sha1(address)
-        // Tried before this session: say why again, every time.
-        UsenetSessions.reason(key)?.let { why -> val reason = why.ifBlank { L10n.tr(R.string.t_this_usenet_link_couldn_t_be, "This Usenet link couldn't be streamed.") }; notify(reason); throw IOException(reason) }
+        // Tried before this session: fail at once. The reason is shown once, not on each of the player's own retries
+        // (those used to queue a dozen toasts); a deliberate replay later shows it again.
+        UsenetSessions.reason(key)?.let { why ->
+            val reason = why.ifBlank { L10n.tr(R.string.t_this_usenet_link_couldn_t_be, "This Usenet link couldn't be streamed.") }
+            if (UsenetSessions.shouldTell(key)) notify(reason)
+            throw dev.pov.tv.usenet.UsenetRefusedException(reason)
+        }
         val made = try {
             UsenetSessions.get(key) {
                 val providers = NewsProviders(store).active()
@@ -128,13 +190,20 @@ internal object UsenetPlayback {
                 } catch (error: Exception) { chain.close(); throw error }
             }
         } catch (error: Exception) {
+            // Called off by the player (Stop, a seek, another link): nothing to tell, nothing remembered.
+            if (dev.pov.tv.usenet.isCancellation(error)) {
+                UsenetLog.i("Usenet link opening cancelled")
+                throw (error as? java.io.InterruptedIOException) ?: java.io.InterruptedIOException("cancelled").apply { initCause(error) }
+            }
             UsenetLog.w("Usenet link couldn't start", error)
             val reason = when (error) {
                 is dev.pov.tv.usenet.MissingArticleException -> "Your news providers no longer have this release. Choose another link."
                 is dev.pov.tv.usenet.NntpRefusedException -> "News provider: ${error.message}"
                 else -> error.message ?: "This Usenet link couldn't be streamed."
             }
-            notify(reason)
+            if (UsenetSessions.shouldTell(key)) notify(reason)
+            // Remembered as unplayable: the player must not retry it. A passing failure can be retried as usual.
+            if (UsenetSessions.reason(key) != null) throw dev.pov.tv.usenet.UsenetRefusedException(reason).apply { initCause(error) }
             throw IOException(reason, error)
         }
         return made ?: throw IOException(L10n.tr(R.string.t_this_usenet_link_couldn_t_be, "This Usenet link couldn't be streamed."))
@@ -186,7 +255,8 @@ internal object UsenetPlayback {
             else L10n.tr(R.string.t_the_indexer_didn_t_send_an_article_list, "The indexer didn't send an article list for this link."))
         if (indexer != null) indexers.noteGrab(indexer.id)
         if (file != null) try {
-            java.util.zip.GZIPOutputStream(file.outputStream()).use { it.write(text.toByteArray(Charsets.UTF_8)) }
+            // Written as it is encoded: no second full copy of a NZB that can be 24 MB.
+            java.util.zip.GZIPOutputStream(file.outputStream()).bufferedWriter(Charsets.UTF_8).use { it.write(text) }
             file.parentFile?.listFiles()?.sortedByDescending { it.lastModified() }?.drop(KEEP_FILES)?.forEach { it.delete() }
         } catch (_: Exception) {}
         return text
@@ -346,7 +416,7 @@ internal object ReadWatch {
 /** Reads a Usenet [ByteSource] for the player. Opening at a new position is cheap: the session keeps its connections. */
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 internal class UsenetDataSource(private val session: UsenetSessions.Session) : BaseDataSource(true) {
-    private companion object { const val PASSING_RETRIES = 4 }
+    private companion object { const val PASSING_RETRIES = 4; const val STEADY_BYTES = 64L * 1024 * 1024 }
     private var uri: Uri? = null
     private var position = 0L
     private var remaining = 0L
@@ -377,7 +447,8 @@ internal class UsenetDataSource(private val session: UsenetSessions.Session) : B
         val watch = ReadWatch.start(position)
         val count = try { session.source.read(position, buffer, offset, minOf(length.toLong(), remaining).toInt()) }
         catch (error: IOException) {
-            ReadWatch.done(watch)
+            // A seek or Stop interrupts the read: called off, not a failure of the link.
+            if (dev.pov.tv.usenet.isCancellation(error)) throw error
             UsenetLog.w("NNTP read failed at $position: ${error.message}")
             // A timeout or dropped connection: keep the session (its connections and read-ahead) so the player's quiet
             // retry carries on from here. Only a release fault, or the same trouble again and again, ends the link
@@ -386,10 +457,12 @@ internal class UsenetDataSource(private val session: UsenetSessions.Session) : B
             if (!passing || UsenetSessions.stumble(session.key) > PASSING_RETRIES)
                 UsenetSessions.giveUp(session.key, if (error is dev.pov.tv.usenet.MissingArticleException) "Your news providers are missing part of this release. Choose another link." else "")
             throw error
-        }
-        ReadWatch.done(watch)
+        } finally { ReadWatch.done(watch) }                       // however the read ended (a cancel too)
         if (count < 0) return C.RESULT_END_OF_INPUT
         if (firstRead) { firstRead = false; readSinceOpen = 0; UsenetLog.i("  first bytes after ${(System.nanoTime() - openedAt) / 1_000_000} ms") }
+        // A long stretch read without trouble: earlier hiccups no longer count towards giving the link up, so a
+        // five-hour film (or a TV left on for days) isn't refused for a handful of unrelated timeouts.
+        if (readSinceOpen < STEADY_BYTES && readSinceOpen + count >= STEADY_BYTES) UsenetSessions.steady(session.key)
         readSinceOpen += count
         position += count; remaining -= count
         bytesTransferred(count)

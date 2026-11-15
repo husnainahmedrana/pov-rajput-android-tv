@@ -59,6 +59,35 @@ class SecureStore(context: Context) {
         encrypted.forEach { (name, value) -> decrypted[name] = value to values.getValue(name) }
     }
 
+    /**
+     * After the device's Keystore lost its key (an OTA or a restore on some boxes) the saved values can never be read
+     * again, and every read throws, so the app crashed at launch with no way to reach "disconnect". Called at start:
+     * values that can't be read are removed only when that is certain to be permanent (the key is gone, or the key
+     * works but those values don't decrypt with it). A Keystore that is merely failing right now removes nothing.
+     * Returns how many values were removed.
+     */
+    fun recoverUnreadable(): Int = synchronized(lock) {
+        val unreadable = preferences.all.keys.filter { name -> runCatching { get(name) }.isFailure }
+        if (unreadable.isEmpty()) return@synchronized 0
+        val hasKey = runCatching { KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.containsAlias(ALIAS) }.getOrNull()
+            ?: return@synchronized 0                                          // the Keystore isn't answering: keep everything
+        if (hasKey && !runCatching { keyWorks() }.getOrDefault(false)) return@synchronized 0
+        val editor = preferences.edit()
+        unreadable.forEach { editor.remove(it); decrypted.remove(it) }
+        if (!editor.commit()) return@synchronized 0
+        if (!hasKey) key = null                                              // a new key is made on the next save
+        unreadable.size
+    }
+
+    /** Encrypts and decrypts a test value with the account key: whether the Keystore key itself is usable. */
+    private fun keyWorks(): Boolean {
+        val sample = byteArrayOf(1, 2, 3, 4)
+        val encrypt = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, encryptionKey()) }
+        val sealed = encrypt.doFinal(sample)
+        val decrypt = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, encryptionKey(), GCMParameterSpec(128, encrypt.iv)) }
+        return decrypt.doFinal(sealed).contentEquals(sample)
+    }
+
     fun remove(key: String) = synchronized(lock) {
         check(preferences.edit().remove(key).commit()) { "Account data could not be removed." }
         decrypted.remove(key)

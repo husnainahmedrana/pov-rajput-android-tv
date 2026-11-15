@@ -129,7 +129,7 @@
     <string name="t_back_to_browsing">Back to browsing</string>
     <string name="t_back_to_the_app_s_default">Back to the app\'s default: bold white Lato, medium, black drop shadow, no box.</string>
     <string name="t_back_up_now">Back up now</string>
-    <string name="t_back_up_your_debrid_services_add">"Back up your debrid services, add-ons, Home rows and watch progress, encrypted on this device. "</string>
+    <string name="t_back_up_your_debrid_services_add">"Back up your debrid services, add-ons, Usenet providers and indexers, Easynews, Home rows and watch progress, with every on/off switch and their order, encrypted on this device. "</string>
     <string name="t_back_up_your_setup">Back up your setup</string>
     <string name="t_backed_up_to_your_x_account">Backed up to your %1$s account</string>
     <string name="t_backing_up">Backing up…</string>
@@ -317,7 +317,7 @@
     <string name="t_couldn_t_check_just_now_try">Couldn\'t check just now. Try again later.</string>
     <string name="t_couldn_t_connect">Couldn\'t connect.</string>
     <string name="t_couldn_t_load_the_episode_list">Couldn\'t load the episode list.</string>
-    <string name="t_create_a_free_x_account_and">"Create a free %1$s account and your debrid services, add-ons, Home rows and watch progress are backed up, "</string>
+    <string name="t_create_a_free_x_account_and">"Create a free %1$s account and your debrid services, add-ons, Usenet providers and indexers, Easynews, Home rows and watch progress are backed up, "</string>
     <string name="t_create_account">Create account</string>
     <string name="t_create_your_x_account">Create your %1$s account</string>
     <string name="t_created_by">Created by</string>
@@ -1749,4 +1749,28 @@
     <string name="t_youtube_style">YouTube-style</string>
     <string name="t_youtube_style_white_roboto_on_a" formatted="false">YouTube-style · white Roboto on a 75% black box</string>
     <string name="t_zoom_to_remove_bars">Zoom to remove bars</string>
+    <string name="t_auto_tune_x">Auto-tune · %1$s</string>
+    <string name="t_auto_tune_no_articles">Play a Usenet link once first: auto-tune downloads articles from a video this device has played.</string>
+    <string name="t_auto_tune_missing">%1$s articles missing</string>
+    <string name="t_auto_tune_none">Nothing downloaded, so the pipeline was not changed. Check the provider\'s login and connections.</string>
+    <string name="t_auto_tune_testing">Testing pipeline %1$s · %2$s connections… (step %3$s)</string>
+    <string name="t_auto_tune_result">Pipeline %1$s · %2$s connections: %3$s Mbps</string>
+    <string name="t_auto_tune_limit">The provider allows %1$s connections at a time</string>
+    <string name="t_auto_tune_failed">Pipeline %1$s · %2$s connections: failed (%3$s)</string>
+    <string name="t_auto_tune_testing_port">Testing port %1$s (%2$s)… (step %3$s)</string>
+    <string name="t_auto_tune_port_result">Port %1$s (%2$s): %3$s Mbps · first article %4$s ms</string>
+    <string name="t_auto_tune_port_failed">Port %1$s (%2$s): no answer (%3$s)</string>
+    <string name="t_auto_tune_best_port">Best: port %1$s (%2$s) · pipeline %3$s · %4$s connections (%5$s Mbps). Saved (was port %6$s · pipeline %7$s · %8$s connections).</string>
+    <string name="t_auto_tune_plain_faster">Port %1$s without SSL was faster (%2$s Mbps) but was not chosen: it sends your login and downloads unencrypted. Switch to it in Edit only if you accept that.</string>
+    <string name="t_saved_accounts_unreadable">%1$s saved account values could not be read after a system change and were removed. Link those accounts again in Settings.</string>
+    <string name="t_auto_tune_menu">Auto-tune…</string>
+    <string name="t_auto_tune_choose">Auto-tune %1$s: what to tune</string>
+    <string name="t_auto_tune_round_port">Port (about 1 min)</string>
+    <string name="t_auto_tune_round_pipeline">Pipeline (about 3 min)</string>
+    <string name="t_auto_tune_round_connections">Connections (about 3 to 4 min)</string>
+    <string name="t_auto_tune_start">Start</string>
+    <string name="t_auto_tune_about">Downloads articles from a video this device played, about 6 s per step, and saves the fastest setting. Settings you didn\'t tick stay as they are. It downloads as fast as your line allows, so it uses a lot of data on a fast line. Don\'t play anything meanwhile.</string>
+    <string name="t_allow_plain_x">Allow ports without SSL: %1$s</string>
+    <string name="t_allow_plain_warning">Ports without SSL send your login and everything you download unencrypted: your internet provider, and anyone else on the way, can read them. Let auto-tune pick such a port for %1$s when it is faster?</string>
+    <string name="t_allow">Allow</string>
 </resources>

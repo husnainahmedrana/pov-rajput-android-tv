@@ -129,7 +129,7 @@
     <string name="t_back_to_browsing">Voltar à navegação</string>
     <string name="t_back_to_the_app_s_default">Voltar à predefinição da app: Lato branca a negrito, média, sombra preta, sem caixa.</string>
     <string name="t_back_up_now">Fazer cópia agora</string>
-    <string name="t_back_up_your_debrid_services_add">"Faz cópia dos teus serviços debrid, complementos, filas do Início e progresso, cifrados neste dispositivo. "</string>
+    <string name="t_back_up_your_debrid_services_add">"Faz cópia dos teus serviços debrid, complementos, fornecedores e indexadores Usenet, Easynews, filas do Início e progresso, com cada interruptor e a sua ordem, cifrados neste dispositivo. "</string>
     <string name="t_back_up_your_setup">Cópia da tua configuração</string>
     <string name="t_backed_up_to_your_x_account">Cópia guardada na tua conta %1$s</string>
     <string name="t_backing_up">A fazer cópia…</string>
@@ -317,7 +317,7 @@
     <string name="t_couldn_t_check_just_now_try">Não foi possível verificar agora. Tenta mais tarde.</string>
     <string name="t_couldn_t_connect">Não foi possível ligar.</string>
     <string name="t_couldn_t_load_the_episode_list">Não foi possível carregar a lista de episódios.</string>
-    <string name="t_create_a_free_x_account_and">"Cria uma conta %1$s gratuita e os teus serviços debrid, complementos, filas do Início e progresso ficam guardados, "</string>
+    <string name="t_create_a_free_x_account_and">"Cria uma conta %1$s gratuita e os teus serviços debrid, complementos, fornecedores e indexadores Usenet, Easynews, filas do Início e progresso ficam guardados, "</string>
     <string name="t_create_account">Criar conta</string>
     <string name="t_create_your_x_account">Cria a tua conta %1$s</string>
     <string name="t_created_by">Criada por</string>
@@ -1749,4 +1749,28 @@
     <string name="t_youtube_style">Estilo YouTube</string>
     <string name="t_youtube_style_white_roboto_on_a" formatted="false">Estilo YouTube · Roboto branca sobre caixa preta a 75%</string>
     <string name="t_zoom_to_remove_bars">Ampliar para tirar as barras</string>
+    <string name="t_auto_tune_x">Ajuste automático · %1$s</string>
+    <string name="t_auto_tune_no_articles">Reproduza primeiro um link Usenet: o ajuste automático baixa artigos de um vídeo já reproduzido neste dispositivo.</string>
+    <string name="t_auto_tune_missing">%1$s artigos em falta</string>
+    <string name="t_auto_tune_none">Nada foi baixado, por isso o pipeline não mudou. Verifique o login e as conexões do provedor.</string>
+    <string name="t_auto_tune_testing">A testar pipeline %1$s · %2$s conexões… (passo %3$s)</string>
+    <string name="t_auto_tune_result">Pipeline %1$s · %2$s conexões: %3$s Mbps</string>
+    <string name="t_auto_tune_limit">O provedor permite %1$s conexões de cada vez</string>
+    <string name="t_auto_tune_failed">Pipeline %1$s · %2$s conexões: falhou (%3$s)</string>
+    <string name="t_auto_tune_testing_port">A testar porta %1$s (%2$s)… (passo %3$s)</string>
+    <string name="t_auto_tune_port_result">Porta %1$s (%2$s): %3$s Mbps · primeiro artigo %4$s ms</string>
+    <string name="t_auto_tune_port_failed">Porta %1$s (%2$s): sem resposta (%3$s)</string>
+    <string name="t_auto_tune_best_port">Melhor: porta %1$s (%2$s) · pipeline %3$s · %4$s conexões (%5$s Mbps). Guardado (antes porta %6$s · pipeline %7$s · %8$s conexões).</string>
+    <string name="t_auto_tune_plain_faster">A porta %1$s sem SSL foi mais rápida (%2$s Mbps) mas não foi escolhida: envia o seu login e downloads sem cifra. Mude para ela em Editar só se aceitar isso.</string>
+    <string name="t_saved_accounts_unreadable">%1$s dados de contas guardadas não puderam ser lidos após uma alteração do sistema e foram removidos. Volte a ligar essas contas nas Definições.</string>
+    <string name="t_auto_tune_menu">Ajuste automático…</string>
+    <string name="t_auto_tune_choose">Ajuste automático de %1$s: o que ajustar</string>
+    <string name="t_auto_tune_round_port">Porta (cerca de 1 min)</string>
+    <string name="t_auto_tune_round_pipeline">Pipeline (cerca de 3 min)</string>
+    <string name="t_auto_tune_round_connections">Conexões (3 a 4 min)</string>
+    <string name="t_auto_tune_start">Iniciar</string>
+    <string name="t_auto_tune_about">Baixa artigos de um vídeo reproduzido neste dispositivo, cerca de 6 s por passo, e guarda a definição mais rápida. O que não marcar fica como está. Baixa tão rápido quanto a sua linha permite, por isso usa muitos dados numa linha rápida. Não reproduza nada enquanto isso.</string>
+    <string name="t_allow_plain_x">Permitir portas sem SSL: %1$s</string>
+    <string name="t_allow_plain_warning">As portas sem SSL enviam o seu login e tudo o que baixa sem cifra: o seu fornecedor de internet, e qualquer pessoa no caminho, pode lê-los. Deixar o ajuste automático escolher uma dessas portas para %1$s quando for mais rápida?</string>
+    <string name="t_allow">Permitir</string>
 </resources>

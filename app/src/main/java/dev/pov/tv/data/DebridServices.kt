@@ -27,10 +27,13 @@ object DebridServices {
     /** Linked accounts that are switched on: only these are checked for cached copies and used to play. */
     fun connected(store: SecureStore) = linked(store).filter { enabled(store, it) }
     fun enabled(store: SecureStore, id: String) = store.get(offKey(id)) != "true"
-    /** Switching a service off keeps its key, so turning it back on needs no new sign-in. */
+    /**
+     * Switching a service off keeps its key, so turning it back on needs no new sign-in. "On" is written out too (not
+     * just the off flag removed): a backup restored on another device then turns the service back on there as well.
+     */
     fun setEnabled(store: SecureStore, id: String, on: Boolean) {
         require(id in IDS)
-        if (on) store.remove(offKey(id)) else store.put(offKey(id), "true")
+        store.put(offKey(id), if (on) "false" else "true")
     }
     private fun offKey(id: String) = "debrid.off.$id"
     /** Saves a complete permutation, retaining ranks when accounts disconnect. */

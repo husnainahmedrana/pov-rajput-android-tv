@@ -211,7 +211,8 @@ object Easynews {
     fun disconnect(store: SecureStore) { store.remove(USER); store.remove(PASSWORD) }
     /** Off keeps the login saved but leaves Easynews out of link searches. */
     fun enabled(store: SecureStore) = store.get(OFF) != "true"
-    fun setEnabled(store: SecureStore, on: Boolean) { if (on) store.remove(OFF) else store.put(OFF, "true") }
+    /** Written both ways, so a restored backup carries "on" as well as "off". */
+    fun setEnabled(store: SecureStore, on: Boolean) { store.put(OFF, if (on) "false" else "true") }
     /** Connected and switched on. */
     fun active(store: SecureStore) = credentials(store) != null && enabled(store)
     private const val OFF = "easynews.off"

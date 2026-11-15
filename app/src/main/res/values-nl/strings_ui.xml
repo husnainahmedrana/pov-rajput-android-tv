@@ -129,7 +129,7 @@
     <string name="t_back_to_browsing">Terug naar bladeren</string>
     <string name="t_back_to_the_app_s_default">Terug naar de app-standaard: witte vette Lato, middelgroot, zwarte schaduw, geen vak.</string>
     <string name="t_back_up_now">Nu back-up maken</string>
-    <string name="t_back_up_your_debrid_services_add">Maak een back-up van je debriddiensten, add-ons, startrijen en kijkvoortgang, versleuteld op dit apparaat.</string>
+    <string name="t_back_up_your_debrid_services_add">Maak een back-up van je debriddiensten, add-ons, Usenet-providers en -indexers, Easynews, startrijen en kijkvoortgang, met elke schakelaar en hun volgorde, versleuteld op dit apparaat.</string>
     <string name="t_back_up_your_setup">Back-up van je instellingen</string>
     <string name="t_backed_up_to_your_x_account">Back-up opgeslagen in je %1$s-account</string>
     <string name="t_backing_up">Back-up maken…</string>
@@ -317,7 +317,7 @@
     <string name="t_couldn_t_check_just_now_try">Kon nu niet controleren. Probeer het later opnieuw.</string>
     <string name="t_couldn_t_connect">Kon geen verbinding maken.</string>
     <string name="t_couldn_t_load_the_episode_list">Kon de afleveringenlijst niet laden.</string>
-    <string name="t_create_a_free_x_account_and">Maak een gratis %1$s-account en je debriddiensten, add-ons, startrijen en kijkvoortgang worden geback-upt,</string>
+    <string name="t_create_a_free_x_account_and">Maak een gratis %1$s-account en je debriddiensten, add-ons, Usenet-providers en -indexers, Easynews, startrijen en kijkvoortgang worden geback-upt,</string>
     <string name="t_create_account">Account maken</string>
     <string name="t_create_your_x_account">Maak je %1$s-account</string>
     <string name="t_created_by">Gemaakt door</string>
@@ -1749,4 +1749,28 @@
     <string name="t_youtube_style">YouTube-stijl</string>
     <string name="t_youtube_style_white_roboto_on_a" formatted="false">YouTube-stijl · witte Roboto op een 75% zwart vak</string>
     <string name="t_zoom_to_remove_bars">Inzoomen om balken weg te halen</string>
+    <string name="t_auto_tune_x">Automatisch afstemmen · %1$s</string>
+    <string name="t_auto_tune_no_articles">Speel eerst een Usenet-link af: automatisch afstemmen downloadt artikelen van een video die dit apparaat heeft afgespeeld.</string>
+    <string name="t_auto_tune_missing">%1$s artikelen ontbreken</string>
+    <string name="t_auto_tune_none">Er is niets gedownload, dus de pipeline is niet gewijzigd. Controleer de login en verbindingen van de provider.</string>
+    <string name="t_auto_tune_testing">Pipeline %1$s · %2$s verbindingen testen… (stap %3$s)</string>
+    <string name="t_auto_tune_result">Pipeline %1$s · %2$s verbindingen: %3$s Mbps</string>
+    <string name="t_auto_tune_limit">De provider staat %1$s verbindingen tegelijk toe</string>
+    <string name="t_auto_tune_failed">Pipeline %1$s · %2$s verbindingen: mislukt (%3$s)</string>
+    <string name="t_auto_tune_testing_port">Poort %1$s (%2$s) testen… (stap %3$s)</string>
+    <string name="t_auto_tune_port_result">Poort %1$s (%2$s): %3$s Mbps · eerste artikel %4$s ms</string>
+    <string name="t_auto_tune_port_failed">Poort %1$s (%2$s): geen antwoord (%3$s)</string>
+    <string name="t_auto_tune_best_port">Beste: poort %1$s (%2$s) · pipeline %3$s · %4$s verbindingen (%5$s Mbps). Opgeslagen (was poort %6$s · pipeline %7$s · %8$s verbindingen).</string>
+    <string name="t_auto_tune_plain_faster">Poort %1$s zonder SSL was sneller (%2$s Mbps) maar is niet gekozen: die verstuurt je login en downloads onversleuteld. Schakel er in Bewerken alleen naar over als je dat accepteert.</string>
+    <string name="t_saved_accounts_unreadable">%1$s opgeslagen accountgegevens konden na een systeemwijziging niet worden gelezen en zijn verwijderd. Koppel die accounts opnieuw in Instellingen.</string>
+    <string name="t_auto_tune_menu">Automatisch afstemmen…</string>
+    <string name="t_auto_tune_choose">%1$s automatisch afstemmen: wat afstemmen</string>
+    <string name="t_auto_tune_round_port">Poort (ongeveer 1 min)</string>
+    <string name="t_auto_tune_round_pipeline">Pipeline (ongeveer 3 min)</string>
+    <string name="t_auto_tune_round_connections">Verbindingen (3 tot 4 min)</string>
+    <string name="t_auto_tune_start">Starten</string>
+    <string name="t_auto_tune_about">Downloadt artikelen van een video die dit apparaat heeft afgespeeld, ongeveer 6 s per stap, en bewaart de snelste instelling. Wat je niet aanvinkt, blijft zoals het is. Het downloadt zo snel als je lijn toelaat, dus het verbruikt veel data op een snelle lijn. Speel intussen niets af.</string>
+    <string name="t_allow_plain_x">Poorten zonder SSL toestaan: %1$s</string>
+    <string name="t_allow_plain_warning">Poorten zonder SSL versturen je login en alles wat je downloadt onversleuteld: je internetprovider, en iedereen onderweg, kan ze lezen. Mag automatisch afstemmen zo\'n poort kiezen voor %1$s als die sneller is?</string>
+    <string name="t_allow">Toestaan</string>
 </resources>

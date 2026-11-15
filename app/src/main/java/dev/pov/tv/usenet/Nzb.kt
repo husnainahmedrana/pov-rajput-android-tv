@@ -70,13 +70,17 @@ class Nzb(val files: List<NzbFile>, val password: String?) {
             return null
         }
 
+        /** [name]'s value inside the tag at [from]..[to]; the search never leaves the tag (an absent attribute used to scan to the end of the file). */
         private fun attribute(text: String, from: Int, to: Int, name: String): String? {
             val key = " $name=\""
-            val at = text.indexOf(key, from)
-            if (at < 0 || at >= to) return null
+            var at = from
+            val last = minOf(to, text.length) - key.length
+            while (at <= last && !text.startsWith(key, at)) at++
+            if (at > last) return null
             val start = at + key.length
-            val end = text.indexOf('"', start)
-            return if (end < 0 || end > to) null else text.substring(start, end)
+            var end = start
+            while (end < to && end < text.length && text[end] != '"') end++
+            return if (end >= to || end >= text.length) null else text.substring(start, end)
         }
 
         private val entities = Regex("&(?:lt|gt|quot|apos|amp|#[0-9]+|#x[0-9a-fA-F]+);")

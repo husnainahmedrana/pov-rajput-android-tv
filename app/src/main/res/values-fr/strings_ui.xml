@@ -129,7 +129,7 @@
     <string name="t_back_to_browsing">Retour à la navigation</string>
     <string name="t_back_to_the_app_s_default">Revenir au réglage par défaut : Lato blanche en gras, moyenne, ombre noire, sans fond.</string>
     <string name="t_back_up_now">Sauvegarder maintenant</string>
-    <string name="t_back_up_your_debrid_services_add">"Sauvegardez vos services debrid, modules, rangées d\'accueil et progression, chiffrés sur cet appareil. "</string>
+    <string name="t_back_up_your_debrid_services_add">"Sauvegardez vos services debrid, modules, fournisseurs et indexeurs Usenet, Easynews, rangées d\'accueil et progression, avec chaque interrupteur et leur ordre, chiffrés sur cet appareil. "</string>
     <string name="t_back_up_your_setup">Sauvegarder votre configuration</string>
     <string name="t_backed_up_to_your_x_account">Sauvegardé sur votre compte %1$s</string>
     <string name="t_backing_up">Sauvegarde…</string>
@@ -317,7 +317,7 @@
     <string name="t_couldn_t_check_just_now_try">Vérification impossible pour le moment. Réessayez plus tard.</string>
     <string name="t_couldn_t_connect">Connexion impossible.</string>
     <string name="t_couldn_t_load_the_episode_list">Impossible de charger la liste des épisodes.</string>
-    <string name="t_create_a_free_x_account_and">"Créez un compte %1$s gratuit et vos services debrid, modules, rangées d\'accueil et progression sont sauvegardés, "</string>
+    <string name="t_create_a_free_x_account_and">"Créez un compte %1$s gratuit et vos services debrid, modules, fournisseurs et indexeurs Usenet, Easynews, rangées d\'accueil et progression sont sauvegardés, "</string>
     <string name="t_create_account">Créer un compte</string>
     <string name="t_create_your_x_account">Créez votre compte %1$s</string>
     <string name="t_created_by">Créée par</string>
@@ -1749,4 +1749,28 @@
     <string name="t_youtube_style">Style YouTube</string>
     <string name="t_youtube_style_white_roboto_on_a" formatted="false">Style YouTube · Roboto blanche sur fond noir à 75 %</string>
     <string name="t_zoom_to_remove_bars">Zoomer pour enlever les bandes</string>
+    <string name="t_auto_tune_x">Réglage automatique · %1$s</string>
+    <string name="t_auto_tune_no_articles">Lisez d\'abord un lien Usenet : le réglage automatique télécharge des articles d\'une vidéo déjà lue sur cet appareil.</string>
+    <string name="t_auto_tune_missing">%1$s articles manquants</string>
+    <string name="t_auto_tune_none">Rien n\'a été téléchargé, le pipeline n\'a donc pas changé. Vérifiez l\'identifiant et les connexions du fournisseur.</string>
+    <string name="t_auto_tune_testing">Test du pipeline %1$s · %2$s connexions… (étape %3$s)</string>
+    <string name="t_auto_tune_result">Pipeline %1$s · %2$s connexions : %3$s Mbps</string>
+    <string name="t_auto_tune_limit">Le fournisseur autorise %1$s connexions à la fois</string>
+    <string name="t_auto_tune_failed">Pipeline %1$s · %2$s connexions : échec (%3$s)</string>
+    <string name="t_auto_tune_testing_port">Test du port %1$s (%2$s)… (étape %3$s)</string>
+    <string name="t_auto_tune_port_result">Port %1$s (%2$s) : %3$s Mbps · premier article %4$s ms</string>
+    <string name="t_auto_tune_port_failed">Port %1$s (%2$s) : pas de réponse (%3$s)</string>
+    <string name="t_auto_tune_best_port">Meilleur : port %1$s (%2$s) · pipeline %3$s · %4$s connexions (%5$s Mbps). Enregistré (avant port %6$s · pipeline %7$s · %8$s connexions).</string>
+    <string name="t_auto_tune_plain_faster">Le port %1$s sans SSL était plus rapide (%2$s Mbps) mais n\'a pas été choisi : il envoie votre identifiant et vos téléchargements sans chiffrement. Passez-y dans Modifier seulement si vous l\'acceptez.</string>
+    <string name="t_saved_accounts_unreadable">%1$s données de comptes enregistrés n\'ont pas pu être lues après une modification du système et ont été supprimées. Reliez ces comptes à nouveau dans les Réglages.</string>
+    <string name="t_auto_tune_menu">Réglage automatique…</string>
+    <string name="t_auto_tune_choose">Réglage automatique de %1$s : que régler</string>
+    <string name="t_auto_tune_round_port">Port (environ 1 min)</string>
+    <string name="t_auto_tune_round_pipeline">Pipeline (environ 3 min)</string>
+    <string name="t_auto_tune_round_connections">Connexions (3 à 4 min)</string>
+    <string name="t_auto_tune_start">Démarrer</string>
+    <string name="t_auto_tune_about">Télécharge des articles d\'une vidéo lue sur cet appareil, environ 6 s par étape, et enregistre le réglage le plus rapide. Ce que vous n\'avez pas coché reste inchangé. Il télécharge aussi vite que votre ligne le permet, donc il consomme beaucoup de données sur une ligne rapide. Ne lancez rien pendant ce temps.</string>
+    <string name="t_allow_plain_x">Autoriser les ports sans SSL : %1$s</string>
+    <string name="t_allow_plain_warning">Les ports sans SSL envoient votre identifiant et tout ce que vous téléchargez sans chiffrement : votre fournisseur d\'accès, et toute personne sur le trajet, peut les lire. Laisser le réglage automatique choisir un tel port pour %1$s s\'il est plus rapide ?</string>
+    <string name="t_allow">Autoriser</string>
 </resources>

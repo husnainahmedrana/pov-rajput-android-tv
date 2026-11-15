@@ -30,6 +30,9 @@ class MissingArticleException(messageId: String) : IOException(L10n.tr(R.string.
 /** The server refused the login or the connection (too many connections, wrong password): retrying will not help. */
 class NntpRefusedException(val code: Int, message: String) : IOException(message)
 
+/** The article arrived whole but its contents are unusable: that article fails (a backup provider may have a good copy), the connection carries on. */
+class BadArticleException(message: String) : IOException(message)
+
 /** One decoded article: [size] bytes of the file starting at [begin] (zero-based), out of [fileSize]. */
 class Segment(val data: ByteArray, val size: Int, val begin: Long, val fileSize: Long, val name: String, val crcOk: Boolean)
 
@@ -97,6 +100,9 @@ internal class NntpConnection(
         var name = ""
         var expected: Long? = null
         var ended = false
+        // A broken article is read to its end before saying so: the connection stays in step, so only this article
+        // fails, not the good ones pipelined behind it (a drop used to re-request, and count against, all of them).
+        var broken: String? = null
         while (true) {
             val end = lineEnd()
             var start = position
@@ -124,9 +130,9 @@ internal class NntpConnection(
                 }
                 continue
             }
-            if (ended || fileSize < 0) continue                           // text before =ybegin or after =yend
+            if (ended || fileSize < 0 || broken != null) continue        // text before =ybegin or after =yend, or skipping
             if (data === EMPTY) {
-                if (partSize <= 0 || partSize > MAX_PART) throw IOException(L10n.tr(R.string.t_the_article_is_not_a_usable, "The article is not a usable yEnc part."))
+                if (partSize <= 0 || partSize > MAX_PART) { broken = L10n.tr(R.string.t_the_article_is_not_a_usable, "The article is not a usable yEnc part."); continue }
                 data = ByteArray(partSize.toInt())
             }
             // The decode loop: every byte is shifted by 42; '=' marks an escaped byte shifted by a further 64.
@@ -138,11 +144,12 @@ internal class NntpConnection(
                     if (index >= stop) break
                     value = buffer[index++].toInt() - 64
                 }
-                if (filled >= room) throw IOException(L10n.tr(R.string.t_the_article_holds_more_data_than, "The article holds more data than it states."))
+                if (filled >= room) { broken = L10n.tr(R.string.t_the_article_holds_more_data_than, "The article holds more data than it states."); break }
                 data[filled++] = (value - 42).toByte()
             }
         }
-        if (data === EMPTY) throw IOException(L10n.tr(R.string.t_the_article_holds_no_yenc_data, "The article holds no yEnc data."))
+        broken?.let { throw BadArticleException(it) }
+        if (data === EMPTY) throw BadArticleException(L10n.tr(R.string.t_the_article_holds_no_yenc_data, "The article holds no yEnc data."))
         crc.reset(); crc.update(data, 0, filled)
         return Segment(data, filled, begin, fileSize, name, crcOk = ended && filled.toLong() == partSize && (expected == null || expected == crc.value))
     }

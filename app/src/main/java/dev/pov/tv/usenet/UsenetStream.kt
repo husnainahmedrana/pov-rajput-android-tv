@@ -199,10 +199,30 @@ fun isPassingFailure(error: Throwable): Boolean {
         when (cause) {
             is MissingArticleException, is UnsupportedSetException, is NntpRefusedException -> return false
             is SlowArticleException, is java.net.SocketTimeoutException, is java.net.SocketException,
-            is javax.net.ssl.SSLException, is java.io.EOFException -> return true
+            is java.net.UnknownHostException, is javax.net.ssl.SSLException, is java.io.EOFException -> return true
+            // The indexer unreachable (code 0), busy (429) or failing (5xx) while fetching the NZB: try again later.
+            is dev.pov.tv.data.ApiException -> return cause.code == 0 || cause.code == 429 || cause.code >= 500
         }
         if (cause.message?.startsWith("The news server answered") == true) return true
         cause = cause.cause
     }
     return false
 }
+
+/**
+ * Whether [error] only means the work was called off: the player interrupts its loader thread on Stop, on a seek and
+ * when another link is picked. That is no reason to give up on a link. A socket timeout is an InterruptedIOException
+ * too, but a real failure, so it doesn't count.
+ */
+fun isCancellation(error: Throwable): Boolean {
+    var cause: Throwable? = error
+    while (cause != null) {
+        if (cause is InterruptedException || cause is java.nio.channels.ClosedByInterruptException ||
+            (cause is java.io.InterruptedIOException && cause !is java.net.SocketTimeoutException)) return true
+        cause = cause.cause
+    }
+    return Thread.currentThread().isInterrupted
+}
+
+/** A link already found unplayable this session: thrown again on every reopen, but never worth a retry. */
+class UsenetRefusedException(message: String) : java.io.IOException(message)

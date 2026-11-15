@@ -12,7 +12,9 @@ import org.json.JSONObject
 /** A Usenet news server account. [backup] ones are asked only for articles the main ones don't have. */
 data class NewsProvider(
     val id: String, val name: String, val host: String, val port: Int, val tls: Boolean,
-    val user: String, val password: String, val connections: Int, val backup: Boolean = false, val enabled: Boolean = true, val pipelineDepth: Int = NewsProviders.DEFAULT_PIPELINE_DEPTH
+    val user: String, val password: String, val connections: Int, val backup: Boolean = false, val enabled: Boolean = true, val pipelineDepth: Int = NewsProviders.DEFAULT_PIPELINE_DEPTH,
+    /** The viewer agreed that auto-tune may pick a port without SSL (login and downloads then travel unencrypted). */
+    val allowPlain: Boolean = false
 )
 
 /** The viewer's news providers, in the order they are tried. Logins stay in [SecureStore]. */
@@ -29,7 +31,10 @@ class NewsProviders(private val get: (String) -> String, private val put: (Strin
             (0 until array.length()).map { index ->
                 val item = array.getJSONObject(index)
                 NewsProvider(item.getString("id"), item.getString("name"), item.getString("host"), item.getInt("port"), item.optBoolean("tls", true),
-                    item.getString("user"), item.getString("password"), item.optInt("connections", DEFAULT_CONNECTIONS), item.optBoolean("backup"), item.optBoolean("enabled", true), item.optInt("pipelineDepth", DEFAULT_PIPELINE_DEPTH).coerceIn(1, MAX_PIPELINE_DEPTH))
+                    // Kept in range on the way in too: a restored or hand-edited value outside it used to stop playback
+                    // with "Failed requirement." from the connection pool.
+                    item.getString("user"), item.getString("password"), item.optInt("connections", DEFAULT_CONNECTIONS).coerceIn(1, MAX_CONNECTIONS), item.optBoolean("backup"), item.optBoolean("enabled", true), item.optInt("pipelineDepth", DEFAULT_PIPELINE_DEPTH).coerceIn(1, MAX_PIPELINE_DEPTH),
+                    item.optBoolean("allowPlain", false))
             }
         } catch (_: Exception) { throw IllegalStateException(L10n.tr(R.string.t_saved_news_providers_could_not_be, "Saved news providers could not be read. Check Settings → Usenet.")) }
     }
@@ -39,7 +44,7 @@ class NewsProviders(private val get: (String) -> String, private val put: (Strin
         require(providers.map { it.id }.distinct().size == providers.size) { "Invalid news provider identifiers." }
         val array = JSONArray()
         providers.forEach { array.put(JSONObject().put("id", it.id).put("name", it.name).put("host", it.host).put("port", it.port).put("tls", it.tls)
-            .put("user", it.user).put("password", it.password).put("connections", it.connections).put("backup", it.backup).put("enabled", it.enabled).put("pipelineDepth", it.pipelineDepth)) }
+            .put("user", it.user).put("password", it.password).put("connections", it.connections).put("backup", it.backup).put("enabled", it.enabled).put("pipelineDepth", it.pipelineDepth).put("allowPlain", it.allowPlain)) }
         put(KEY, array.toString())
     }
 

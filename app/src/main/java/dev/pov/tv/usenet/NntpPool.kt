@@ -83,6 +83,12 @@ class NntpPool(
     private var workers = 0
     /** How many connections the server has let us have; drops when it refuses one. */
     private var limit = connections
+    /**
+     * When a connection the server turned away for being one too many (not a wrong login) may be tried again: the
+     * slot is often busy only for a moment (the availability check's own connection, a closing one), so the session
+     * shouldn't run short of it for good. 0: nothing to win back.
+     */
+    private var regrowAt = 0L
     private val sockets = java.util.concurrent.ConcurrentHashMap.newKeySet<NntpConnection>()
     private var idle = 0
     private val live = AtomicInteger()
@@ -110,6 +116,8 @@ class NntpPool(
         synchronized(lock) {
             if (closed) { fetch.fail(IOException(L10n.tr(R.string.t_the_news_connection_is_closed, "The news connection is closed."))); return }
             if (limit == 0) { fetch.fail(refusal ?: IOException(L10n.tr(R.string.t_the_news_server_can_t_be, "The news server can't be reached."))); return }
+            val now = System.nanoTime() / 1_000_000
+            if (regrowAt in 1..now && limit < connections) { limit++; regrowAt = if (limit < connections) now + REGROW_MS else 0 }
             if (urgent) queue.addFirst(fetch) else queue.addLast(fetch)
             if (idle == 0 && workers < limit) {
                 workers++
@@ -170,7 +178,13 @@ class NntpPool(
                                 // others carry on; when it was the last one, what is queued fails with the reason.
                                 refusal = error
                                 log("connection refused: ${error.message}")
-                                val last = synchronized(lock) { limit = maxOf(limit - 1, 0); workers == 1 }
+                                // Two workers refused at once both see workers > 1: a limit of 0 also means none is left.
+                                val last = synchronized(lock) {
+                                    limit = maxOf(limit - 1, 0)
+                                    // A wrong login stays refused; "too many connections" is tried again later.
+                                    if (error.code != 481 && error.code != 482 && limit > 0) regrowAt = System.nanoTime() / 1_000_000 + REGROW_MS
+                                    workers == 1 || limit == 0
+                                }
                                 if (last) { next.fail(error); failAll(error) } else enqueue(next, urgent = true)
                                 return
                             }
@@ -196,7 +210,9 @@ class NntpPool(
                     val fetch = flying.removeFirst()
                     when (code) {
                         222 -> if (fetch.cancelled) current.skipBody() else {
-                            val segment = try { current.body() } catch (error: IOException) { flying.addFirst(fetch); throw error }
+                            val segment = try { current.body() }
+                                catch (error: BadArticleException) { fetch.fail(error); continue }   // read whole: the connection is fine
+                                catch (error: IOException) { flying.addFirst(fetch); throw error }
                             if (!segment.crcOk) {
                                 if (fetch.attempts++ < 1) {
                                     log("article failed its checksum; fetching again")
@@ -237,6 +253,7 @@ class NntpPool(
     companion object {
         /** Most requests one connection keeps in flight (Settings → Usenet → provider → Pipeline depth). */
         const val MAX_DEPTH = 20
+        private const val REGROW_MS = 60_000L
     }
 
     private fun failAll(error: IOException) {

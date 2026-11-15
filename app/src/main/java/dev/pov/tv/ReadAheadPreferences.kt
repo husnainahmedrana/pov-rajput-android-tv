@@ -18,7 +18,8 @@ internal class ReadAheadPreferences(context: Context) {
         get() = ReadAhead.entries.firstOrNull { it.name == preferences.getString("read_ahead", null) } ?: ReadAhead.LONG
         set(value) { preferences.edit().putString("read_ahead", value.name).apply() }
 
-    fun loadControl(): DefaultLoadControl {
+    /** [usenet]: the in-app Usenet engine keeps its own read-ahead in memory too, so the player's share is smaller. */
+    fun loadControl(usenet: Boolean = false): DefaultLoadControl {
         val read = mode
         val builder = DefaultLoadControl.Builder()
             // A seek lands on the keyframe before its target, which has usually already played. Keeping the last
@@ -29,7 +30,7 @@ internal class ReadAheadPreferences(context: Context) {
         return builder
             // Equal min and max keep the buffer topped up instead of waiting for it to drain to 50 seconds.
             .setBufferDurationsMs(ms, ms, DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS, DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
-            .setTargetBufferBytes(budgetBytes(Runtime.getRuntime().maxMemory(), read))
+            .setTargetBufferBytes(budgetBytes(Runtime.getRuntime().maxMemory(), read, if (usenet) 3 else 2))
             .setPrioritizeTimeOverSizeThresholds(false)
             .build()
     }
@@ -37,9 +38,12 @@ internal class ReadAheadPreferences(context: Context) {
     companion object {
         /** Ten seconds covers the keyframe gap of almost every film encode. */
         const val BACK_BUFFER_MS = 10_000
-        /** Up to half the heap: about 190 MB on the onn 4K's 384 MB, enough for over a minute of a typical 1080p file. */
-        internal fun budgetBytes(maxMemory: Long, read: ReadAhead): Int {
-            val ceiling = maxMemory / 2
+        /**
+         * Up to half the heap: about 190 MB on the onn 4K's 384 MB, enough for over a minute of a typical 1080p file.
+         * A third ([share] 3) while Usenet streams in the app: its read-ahead, the next volume and the NZB need room too.
+         */
+        internal fun budgetBytes(maxMemory: Long, read: ReadAhead, share: Int = 2): Int {
+            val ceiling = maxMemory / share
             val wanted = read.seconds * 2_500_000L  // about 20 Mbit/s
             return minOf(wanted, ceiling, Int.MAX_VALUE.toLong()).coerceAtLeast(DefaultLoadControl.DEFAULT_VIDEO_BUFFER_SIZE.toLong()).toInt()
         }

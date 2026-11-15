@@ -56,6 +56,8 @@ internal object PlaybackDebrid {
         "newsdemon" -> R.drawable.pov_newsdemon_logo
         "pureusenet" -> R.drawable.pov_pureusenet_logo
         "vipernews" -> R.drawable.pov_vipernews_logo
+        "prowlarr" -> R.drawable.pov_prowlarr_logo
+        "nzbhydra2" -> R.drawable.pov_nzbhydra2_logo
         "nzbgeek" -> R.drawable.pov_nzbgeek_logo
         "ninjacentral" -> R.drawable.pov_ninjacentral_logo
         "miatrix" -> R.drawable.pov_miatrix_logo

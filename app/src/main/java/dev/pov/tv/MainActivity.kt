@@ -126,6 +126,8 @@ class MainActivity : Activity() {
     private var miniLabel: TextView? = null
     private var miniFocus: MiniPlayerFocusRouter? = null
     internal var currentPlaybackOptionsDialog: AlertDialog? = null
+    /** The running auto-tune: closing it (or the activity going away) stops its test thread. */
+    private var autoTuneDialog: AlertDialog? = null
         private set
     private val playbackChanged: () -> Unit = { runOnUiThread { if (resumed && !isDestroyed) { updateMiniPlayer(); refreshHeroTrailer() } } }
     private val authWorker = Executors.newSingleThreadExecutor()
@@ -190,7 +192,11 @@ class MainActivity : Activity() {
         publicPreview = debug && (intent.getBooleanExtra("public_preview", false) || sourcePreview)
         if (DeviceLayout.tv) window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         else { window.statusBarColor = 0xFF141414.toInt(); window.navigationBarColor = PHONE_BAR_COLOR }
-        store = SecureStore(this); metadataSource = MetadataSource.fromJson(store.get(MetadataSource.KEY))?.takeIf { store.get(METADATA_ON) != "false" }; torbox = TorBoxApi(store); weTrakrApi = WeTrakrApi(store); simklApi = SimklApi(store)
+        store = SecureStore(this)
+        // Saved accounts the device can no longer decrypt (its Keystore key was lost) would crash every read below.
+        val lostAccounts = runCatching { store.recoverUnreadable() }.getOrDefault(0)
+        if (lostAccounts > 0) window.decorView.post { toast(getString(R.string.t_saved_accounts_unreadable, lostAccounts)) }
+        metadataSource = MetadataSource.fromJson(store.get(MetadataSource.KEY))?.takeIf { store.get(METADATA_ON) != "false" }; torbox = TorBoxApi(store); weTrakrApi = WeTrakrApi(store); simklApi = SimklApi(store)
         weTrakrOutbox = PlaybackStore(this, Trackers.outboxKey(Trackers.WETRAKR)); simklOutbox = PlaybackStore(this, Trackers.outboxKey(Trackers.SIMKL))
         simklChosen = Trackers.selected(store) == Trackers.SIMKL
         resolver = SourceResolver(store, torbox); history = PlaybackStore(this)
@@ -314,6 +320,7 @@ class MainActivity : Activity() {
         detailsTrailerChrome.stop()
         window.decorView.viewTreeObserver.takeIf { it.isAlive }?.removeOnGlobalFocusChangeListener(contentFocusChanged)
         currentPlaybackOptionsDialog?.dismiss(); currentPlaybackOptionsDialog = null
+        autoTuneDialog?.dismiss(); autoTuneDialog = null                     // its dismiss stops the test thread
         searchDialog?.dismiss(); authorization?.dismiss(); apiKeyDialog?.dismiss(); miniPlayer?.let(InAppPlaybackSession::detachPlayerView)
         InAppPlaybackSession.removeListener(playbackChanged)
         StreamChoices.searcher = null
@@ -1488,10 +1495,29 @@ class MainActivity : Activity() {
         return row
     }
 
-    /** Where Play should start on a show: the episode in progress, else the first released episode of the chosen season. */
+    /**
+     * With nothing half-watched: the episode after the furthest one finished here (95% or more played) or marked
+     * watched on the tracker, so a show 69 episodes in opens on episode 70 instead of episode 1. Null before the first
+     * episode is watched.
+     */
+    private fun nextAfterWatched(result: MediaItemData): PlaybackIdentity? {
+        if (publicPreview || result.type != "series") return null
+        val finished = history.recent().filter { it.duration > 0 && it.position >= it.duration * 0.95 }.mapNotNull { it.identity }
+            .filter { it.imdbId == result.imdbId && it.type == "series" }.map { it.season to it.episode }
+        val prefix = "${result.imdbId}:"
+        val marked = watched.episodes.filter { it.startsWith(prefix) }.mapNotNull { key ->
+            val parts = key.split(':')
+            if (parts.size != 3) null else parts[1].toIntOrNull()?.let { season -> parts[2].toIntOrNull()?.let { season to it } }
+        }
+        return EpisodePresentation.nextAfterWatched(result.episodes, finished + marked)
+            ?.let { PlaybackIdentity(result.imdbId, "series", result.title, it.season, it.episode) }
+    }
+
+    /** Where Play should start on a show: the episode in progress, the one after the last watched, else the first released one of the chosen season. */
     private fun playTarget(result: MediaItemData): Pair<PlaybackIdentity, Boolean>? {
         if (result.type != "series") return null
         savedFor(result)?.identity?.takeIf { it.season > 0 || it.episode > 0 }?.let { return it to true }
+        nextAfterWatched(result)?.let { return it to false }
         val season = EpisodePresentation.selectedSeason(result.episodes, selectedSeasons[result.imdbId]) ?: return null
         val first = result.episodes.filter { it.season == season }.sortedBy { it.episode }.firstOrNull { !EpisodePresentation.future(it.released) } ?: return null
         return PlaybackIdentity(result.imdbId, "series", result.title, first.season, first.episode) to false
@@ -3372,7 +3398,22 @@ class MainActivity : Activity() {
             // On the phone the season tabs sit above the episode list.
             if (DeviceLayout.phone) body.addView(host, margin(-1, -2, top = 8))
         } else { body.addView(selector, margin(370, 44, top = 15)); body.addView(host) }
-        render(EpisodePresentation.selectedSeason(result.episodes, selectedSeasons[result.imdbId])!!)
+        // Open on the season of the episode to play next, so the row can land on it; else the season last shown.
+        // Coming back to the page (a focus to restore) keeps the season that was being browsed.
+        val target = playTarget(result)
+        val next = target?.first?.season?.takeIf { it in seasons }
+        val start = if (pendingFocus != null) selectedSeasons[result.imdbId] ?: next else next ?: selectedSeasons[result.imdbId]
+        render(EpisodePresentation.selectedSeason(result.episodes, start)!!)
+        // TV, a show already under way (an episode to resume, or one after the last watched): open with that episode
+        // focused, not Play, so OK plays it and Left/Right step through its neighbours.
+        val progressed = target != null && (target.second || nextAfterWatched(result) == target.first)
+        if (flix && DeviceLayout.tv && progressed && pendingFocus == null) {
+            val id = generation
+            // Twice posted: after focusAfterRender's own post, which focuses the first button.
+            body.post { body.post {
+                if (id == generation && !isDestroyed) episodeDownTarget?.takeIf { it.isAttachedToWindow }?.let { if (it.requestFocus()) wantsContentFocus = false }
+            } }
+        }
     }
 
     private fun seasonWatchMenu(show: MediaItemData, season: Int) {
@@ -3467,7 +3508,15 @@ class MainActivity : Activity() {
         items.forEach { (identity, episode, label) -> row.addView(episodeCard(identity, episode, show, label), margin(width, height, right = 14)) }
         // The next episode to watch (or the first): the row opens on it, the header shows it, and Down lands on it.
         val index = focusOn?.let { target -> items.indexOfFirst { it.first.season == target.season && it.first.episode == target.episode } } ?: -1
-        if (index > 0) scroll.post { row.getChildAt(index)?.let { scroll.scrollTo((it.left - dp(12)).coerceAtLeast(0), 0) } }
+        // After the row is laid out (a post can run before that, when every card still sits at 0, leaving episode 1).
+        if (index > 0) row.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+            override fun onLayoutChange(view: View, l: Int, t: Int, r: Int, b: Int, ol: Int, ot: Int, or: Int, ob: Int) {
+                val card = row.getChildAt(index) ?: return
+                if (card.width == 0) return
+                row.removeOnLayoutChangeListener(this)
+                scroll.scrollTo((card.left - dp(12)).coerceAtLeast(0), 0)
+            }
+        })
         episodeDownTarget = row.getChildAt(index.coerceAtLeast(0))
         items.getOrNull(index.coerceAtLeast(0))?.let { (identity, episode, _) -> body.post { episodeFocused(identity, episode, show, animate = false) } }
         return scroll
@@ -5292,6 +5341,14 @@ class MainActivity : Activity() {
         val actions = mutableListOf<Pair<String, () -> Unit>>(
             getString(R.string.t_edit) to { editNewsProvider(provider, null) },
             getString(R.string.t_test_the_login) to { testNewsProvider(provider) },
+            getString(R.string.t_auto_tune_menu) to { chooseAutoTune(provider) },
+            getString(R.string.t_allow_plain_x, getString(if (provider.allowPlain) R.string.t_on else R.string.t_off)) to {
+                if (provider.allowPlain) saveNewsProviders(all.map { if (it.id == provider.id) it.copy(allowPlain = false) else it }, focus)
+                else AlertDialog.Builder(this).setTitle(getString(R.string.t_allow_plain_x, getString(R.string.t_on)))
+                    .setMessage(getString(R.string.t_allow_plain_warning, provider.name))
+                    .setPositiveButton(getString(R.string.t_allow)) { _, _ -> saveNewsProviders(all.map { if (it.id == provider.id) it.copy(allowPlain = true) else it }, focus) }
+                    .setNegativeButton(getString(R.string.t_cancel), null).show()
+            },
             (if (provider.enabled) getString(R.string.t_turn_off) else getString(R.string.t_turn_on)) to { saveNewsProviders(all.map { if (it.id == provider.id) it.copy(enabled = !provider.enabled) else it }, focus) },
             (if (provider.backup) getString(R.string.t_use_as_a_main_provider) else getString(R.string.t_use_as_a_backup_only)) to { saveNewsProviders(all.map { if (it.id == provider.id) it.copy(backup = !provider.backup) else it }, focus) })
         if (index > 0) actions += getString(R.string.t_move_up_asked_earlier) to { saveNewsProviders(all.toMutableList().apply { add(index - 1, removeAt(index)) }, focus) }
@@ -5299,6 +5356,73 @@ class MainActivity : Activity() {
         actions += getString(R.string.t_remove) to { confirm(getString(R.string.t_remove_x_from_this_device, provider.name)) { saveNewsProviders(all.filter { it.id != provider.id }) } }
         AlertDialog.Builder(this).setTitle(provider.name).setItems(actions.map { it.first }.toTypedArray()) { _, picked -> actions[picked].second() }
             .setNegativeButton(getString(R.string.t_cancel), null).show()
+    }
+
+    /**
+     * Provider → Auto-tune: measures ports, then pipeline depths, then connection counts, a few seconds each, and saves
+     * the best. The line under the results says what is being measured now, so the wait never looks frozen.
+     */
+    /** Provider → Auto-tune…: tick what to tune (port, pipeline, connections; all by default), then start. */
+    private fun chooseAutoTune(provider: NewsProvider) {
+        val rounds = PipelineAutoTune.Round.entries
+        val labels = arrayOf(getString(R.string.t_auto_tune_round_port), getString(R.string.t_auto_tune_round_pipeline), getString(R.string.t_auto_tune_round_connections))
+        val ticked = booleanArrayOf(true, true, true)
+        val dialog = AlertDialog.Builder(this).setTitle(getString(R.string.t_auto_tune_choose, provider.name))
+            .setMultiChoiceItems(labels, ticked) { _, index, on -> ticked[index] = on }
+            .setPositiveButton(getString(R.string.t_auto_tune_start)) { _, _ ->
+                val chosen = rounds.filterIndexed { index, _ -> ticked[index] }.toSet()
+                if (chosen.isNotEmpty()) autoTunePipeline(provider, chosen)
+            }
+            .setNegativeButton(getString(R.string.t_cancel), null).show()
+        dialog.listView?.setOnItemClickListener { _, _, index, _ ->
+            ticked[index] = !ticked[index]; dialog.listView.setItemChecked(index, ticked[index])
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = ticked.any { it }
+        }
+    }
+
+    private fun autoTunePipeline(provider: NewsProvider, rounds: Set<PipelineAutoTune.Round>) {
+        val shown = StringBuilder(getString(R.string.t_auto_tune_about)).appendLine().appendLine()
+        var testing = ""
+        val lines = TextView(this).apply { setPadding(dp(18), dp(10), dp(18), dp(10)); textSize = 14f; setTextColor(Color.WHITE); text = shown }
+        val stop = java.util.concurrent.atomic.AtomicBoolean()
+        val dialog = AlertDialog.Builder(this).setTitle(getString(R.string.t_auto_tune_x, provider.name)).setView(ScrollView(this).apply { addView(lines) })
+            .setPositiveButton(getString(R.string.t_close), null).setOnDismissListener { stop.set(true); autoTuneDialog = null }.show()
+        autoTuneDialog = dialog
+        fun show() { lines.text = if (testing.isEmpty()) shown else "$shown$testing" }
+        fun add(line: String) = runOnUiThread { if (dialog.isShowing) { testing = ""; shown.appendLine(line); show() } }
+        fun now(line: String) = runOnUiThread { if (dialog.isShowing) { testing = line; show() } }
+        UsenetSessions.close()                                        // a paused stream's connections would share the account
+        fun ssl(on: Boolean) = if (on) "SSL" else getString(R.string.t_no_ssl)
+        Thread({
+            // Reading the saved article lists unzips whole NZBs: off the main thread.
+            val articles = PipelineAutoTune.articles(cacheDir)
+            if (articles == null) { add(getString(R.string.t_auto_tune_no_articles)); return@Thread }
+            val result = PipelineAutoTune.run(provider, articles, rounds, { stop.get() },
+                onTesting = { setting, step ->
+                    now(if (setting.round == 0) getString(R.string.t_auto_tune_testing_port, setting.port, ssl(setting.tls), step)
+                        else getString(R.string.t_auto_tune_testing, setting.depth, setting.connections, step)) },
+                onStep = { step ->
+                    add((if (step.setting.round == 0) getString(R.string.t_auto_tune_port_result, step.port, ssl(step.tls), "%.0f".format(step.mbps), step.firstMs)
+                        else getString(R.string.t_auto_tune_result, step.depth, step.connections, "%.0f".format(step.mbps))) +
+                        if (step.failed > 0) " · " + getString(R.string.t_auto_tune_missing, step.failed) else "") },
+                onLimit = { allowed -> add(getString(R.string.t_auto_tune_limit, allowed)) },
+                onError = { setting, message ->
+                    add(if (setting.round == 0) getString(R.string.t_auto_tune_port_failed, setting.port, ssl(setting.tls), message.take(80))
+                        else getString(R.string.t_auto_tune_failed, setting.depth, setting.connections, message.take(80))) })
+            if (stop.get()) return@Thread
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (result == null) { add(getString(R.string.t_auto_tune_none)); return@runOnUiThread }
+                val all = runCatching { NewsProviders(store).load() }.getOrDefault(emptyList())
+                saveNewsProviders(all.map { if (it.id == provider.id) it.copy(port = result.port, tls = result.tls, pipelineDepth = result.depth, connections = result.connections) else it },
+                    "setting:${provider.name}")
+                UsenetLog.i("auto-tune: ${provider.name} saved port ${result.port}${if (result.tls) " SSL" else ""} · pipeline ${result.depth} · " +
+                    "${result.connections} connections (%.1f Mbps); was port ${provider.port} · pipeline ${provider.pipelineDepth} · ${provider.connections} connections".format(result.mbps))
+                add(getString(R.string.t_auto_tune_best_port, result.port, ssl(result.tls), result.depth, result.connections, "%.0f".format(result.mbps),
+                    provider.port, provider.pipelineDepth, provider.connections))
+                result.plainFaster?.let { plain -> add(getString(R.string.t_auto_tune_plain_faster, plain.port, "%.0f".format(plain.mbps))) }
+            }
+        }, "pipeline-autotune").start()
     }
 
     private fun testNewsProvider(provider: NewsProvider) {

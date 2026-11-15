@@ -8,7 +8,8 @@ import org.json.JSONObject
  * What an account backup holds, in two layers.
  *  - Settings: Home rows, appearance, playback, subtitles, audio, source sorting, skip buttons, player and preview
  *    choices, and local watch progress. A password reset by email alone brings these back.
- *  - Secrets: everything else in the encrypted account store — debrid services, add-on addresses, TMDB, Easynews,
+ *  - Secrets: everything else in the encrypted account store — debrid services, add-ons (with their order and on/off),
+ *    Usenet news providers and indexers (with on/off, order and priorities), TMDB, Easynews,
  *    Seekr and Wyzie keys, WeTrakr and Simkl logins. Only the password or the recovery key opens these.
  * Caches, the tracker outboxes and the account's own keys are never included.
  */
@@ -19,7 +20,9 @@ object BackupSnapshot {
     val SETTINGS_FILES = listOf("pov_home_rows", "pov_appearance", "pov_playback", "pov_subtitles", "pov_audio",
         "pov_sources", "pov_skip", "pov_player", "pov_seek_previews", "pov_video", PLAYBACK_FILE,
         // Search goal, max search time (all and per add-on), auto-play mode; badge style and compact list; trailer switches.
-        "pov_source_search", "pov_ui", "pov_hero_trailers")
+        "pov_source_search", "pov_ui", "pov_hero_trailers",
+        // App language, player screen fit, and the release group remembered per show.
+        "pov_language", "pov_player_screen", "pov_last_group")
     private const val PLAYBACK_FILE = "playback"
     /** From the playback file only local progress and hidden Continue Watching items; tracker outboxes stay per device. */
     private val PLAYBACK_KEYS = setOf("recent", "hiddenContinue")
@@ -27,8 +30,13 @@ object BackupSnapshot {
     /** Encrypted-store keys that are preferences rather than credentials. Anything not listed is treated as secret. */
     private val SETTING_PREFIXES = listOf("settings.", "home.", "home_rows.", "sources.autoplay", "sources.hide_uncached",
         "tmdb.region", "theme", "tracker.service", "tracking.", "updates.", "playback.priority", "playback.service",
-        "easynews.connections", "easynews.server", "easynews.off")
-    private val EXCLUDED_PREFIXES = listOf("account.", "wetrakr.continue_cache", "playback.last_links", "offcloud.transfers")
+        "easynews.connections", "easynews.server", "easynews.off", "easynews.nntp",
+        // Which debrid services are on, and the Usenet choices that hold no login (the providers and indexers
+        // themselves, with their on/off, order and priorities, hold passwords and keys, so they stay with the secrets).
+        "debrid.off.", "usenet.warm", "usenet.nextTierQuality", "usenet.fallbackOnly", "usenet.header.")
+    /** Never backed up: the account's own keys, caches, and per-device daily counters (indexer searches and grabs today). */
+    private val EXCLUDED_PREFIXES = listOf("account.", "wetrakr.continue_cache", "playback.last_links", "offcloud.transfers",
+        "usenet.searches.", "usenet.grabs.", "usenet.usage.")
 
     fun excluded(key: String) = EXCLUDED_PREFIXES.any(key::startsWith)
     fun isSetting(key: String) = !excluded(key) && SETTING_PREFIXES.any(key::startsWith)

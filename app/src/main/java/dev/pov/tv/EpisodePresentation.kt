@@ -10,6 +10,17 @@ internal object EpisodePresentation {
         .sortedWith(compareBy<Int> { it == 0 }.thenBy { it })
     fun selectedSeason(episodes: List<EpisodeData>, preferred: Int?): Int? =
         preferred?.takeIf { it in seasons(episodes) } ?: seasons(episodes).firstOrNull()
+
+    /**
+     * The episode to offer when nothing is half-watched: the first aired one after the furthest episode [watched]
+     * (season to episode; finished on this device or marked watched on the tracker). Specials are left out. Null when
+     * nothing was watched yet, or everything aired was.
+     */
+    fun nextAfterWatched(episodes: List<EpisodeData>, watched: List<Pair<Int, Int>>, now: Instant = Instant.now()): EpisodeData? {
+        val furthest = watched.filter { it.first > 0 }.maxWithOrNull(compareBy({ it.first }, { it.second })) ?: return null
+        return episodes.filter { it.season > 0 && !future(it.released, now) }.sortedWith(compareBy({ it.season }, { it.episode }))
+            .firstOrNull { it.season > furthest.first || (it.season == furthest.first && it.episode > furthest.second) }
+    }
     private val longDate get() = java.time.format.DateTimeFormatter.ofPattern("d MMMM yyyy", java.util.Locale.getDefault())
     private val shortDate get() = java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", java.util.Locale.getDefault())
 

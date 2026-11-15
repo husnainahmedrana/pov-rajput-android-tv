@@ -182,8 +182,15 @@ object InAppPlaybackSession {
     /** A saved Continue Watching link on its first try: fail fast so a dead one falls through to a fresh search. */
     @Volatile private var cachedReplay = false
     private fun isNetworkFailure(failure: PlaybackException) =
-        failure.errorCode in PlaybackException.ERROR_CODE_IO_UNSPECIFIED..PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
-            failure.errorCode == PlaybackException.ERROR_CODE_TIMEOUT
+        (failure.errorCode in PlaybackException.ERROR_CODE_IO_UNSPECIFIED..PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
+            failure.errorCode == PlaybackException.ERROR_CODE_TIMEOUT) && !refusedUsenet(failure)
+
+    /** A Usenet link already found unplayable this session: no retry of any kind brings it back. */
+    private fun refusedUsenet(error: Throwable?): Boolean {
+        var cause = error
+        while (cause != null) { if (cause is dev.pov.tv.usenet.UsenetRefusedException) return true; cause = cause.cause }
+        return false
+    }
 
     fun initialize(context: Context) {
         if (application != null) return
@@ -321,8 +328,13 @@ object InAppPlaybackSession {
                 // Easynews links get the saved login inside the player; it is never in the link or the intent.
                 EasynewsRoutingDataSource.Factory(http, { if (easynewsSingle) 1 else dev.pov.tv.data.Easynews.connections(secureStore) },
                     usenet = { address -> UsenetPlayback.session(address, secureStore, application?.cacheDir) { note -> handler.post { application?.let { android.widget.Toast.makeText(it, note, android.widget.Toast.LENGTH_LONG).show() } } } }) { dev.pov.tv.data.Easynews.credentials(secureStore)?.let { (user, password) ->
-                    runCatching { dev.pov.tv.data.Easynews.auth(user, password) }.getOrNull() } })))
-            .setLoadControl(ReadAheadPreferences(application!!).loadControl())
+                    runCatching { dev.pov.tv.data.Easynews.auth(user, password) }.getOrNull() } }))
+                // A Usenet link already found unplayable fails straight away instead of being asked three more times.
+                .setLoadErrorHandlingPolicy(object : androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy() {
+                    override fun getRetryDelayMsFor(info: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo): Long =
+                        if (refusedUsenet(info.exception)) C.TIME_UNSET else super.getRetryDelayMsFor(info)
+                }))
+            .setLoadControl(ReadAheadPreferences(application!!).loadControl(usenet = dev.pov.tv.data.UsenetLinks.isNzb(playing)))
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
             .setHandleAudioBecomingNoisy(true)
             .setSeekBackIncrementMs(10_000).setSeekForwardIncrementMs(10_000).build()
@@ -436,7 +448,7 @@ object InAppPlaybackSession {
                 val sourceFailure = failureType == androidx.media3.exoplayer.ExoPlaybackException.TYPE_SOURCE ||
                     (aioStreams && failureType == androidx.media3.exoplayer.ExoPlaybackException.TYPE_UNEXPECTED)
                 val maxRetries = if (aioStreams) AIO_SOURCE_RETRIES else MAX_SOURCE_RETRIES
-                if (sourceFailure && !cachedReplay && error == null && sourceRetries < maxRetries &&
+                if (sourceFailure && !cachedReplay && error == null && sourceRetries < maxRetries && !refusedUsenet(failure) &&
                     failure.errorCode !in setOf(PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS, PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
                         PlaybackException.ERROR_CODE_IO_NO_PERMISSION)) {
                     sourceRetries++
