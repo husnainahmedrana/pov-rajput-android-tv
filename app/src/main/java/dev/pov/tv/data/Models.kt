@@ -84,6 +84,8 @@ data class SourceItem(
     val addonCached: Boolean? = null,
     /** A torrent from a scraper add-on (Torrentio, Comet…) that POV's own debrid plays: the scraper, for its logo. */
     val scraper: String? = null,
+    /** Usenet: days since the release was posted (newer posts are less likely to miss articles); null when unknown. */
+    val ageDays: Long? = null,
 )
 
 /** A selected source either streams directly or offers stable TorBox file identities. */

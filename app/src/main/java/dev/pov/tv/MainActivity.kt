@@ -5239,7 +5239,7 @@ class MainActivity : Activity() {
     /** Downloads from the Easynews news server at several connection counts and lists the speeds; takes about 90 seconds. */
     private fun nntpSpeedTest() {
         val lines = TextView(this).apply { setPadding(dp(18), dp(10), dp(18), dp(10)); textSize = 14f; setTextColor(Color.WHITE); text = getString(R.string.t_starting) }
-        val dialog = AlertDialog.Builder(this).setTitle(getString(R.string.t_nntp_speed_test)).setView(ScrollView(this).apply { addView(lines) })
+        val dialog = AlertDialog.Builder(this).setTitle(getString(R.string.t_nntp_speed_test)).setView(cappedScroll(0.6f).apply { addView(lines) })
             .setPositiveButton(getString(R.string.t_close), null).show()
         val shown = StringBuilder()
         Thread({
@@ -5384,11 +5384,25 @@ class MainActivity : Activity() {
         val shown = StringBuilder(getString(R.string.t_auto_tune_about)).appendLine().appendLine()
         var testing = ""
         val lines = TextView(this).apply { setPadding(dp(18), dp(10), dp(18), dp(10)); textSize = 14f; setTextColor(Color.WHITE); text = shown }
+        // At most 60% of the screen: a long run used to grow the window past the bottom and cut off Share and Close.
+        val results = cappedScroll(0.6f).apply { addView(lines) }
         val stop = java.util.concurrent.atomic.AtomicBoolean()
-        val dialog = AlertDialog.Builder(this).setTitle(getString(R.string.t_auto_tune_x, provider.name)).setView(ScrollView(this).apply { addView(lines) })
-            .setPositiveButton(getString(R.string.t_close), null).setOnDismissListener { stop.set(true); autoTuneDialog = null }.show()
+        // The full record for Share (phone): every step with its first-article time and failures, why rounds ended.
+        val report = StringBuilder().appendLine("Nabrio ${BuildConfig.VERSION_NAME} auto-tune · ${provider.name} (${provider.host})")
+            .appendLine("Was: port ${provider.port}${if (provider.tls) " SSL" else ""} · pipeline ${provider.pipelineDepth} · ${provider.connections} connections")
+        val builder = AlertDialog.Builder(this).setTitle(getString(R.string.t_auto_tune_x, provider.name)).setView(results)
+            .setPositiveButton(getString(R.string.t_close), null).setOnDismissListener { stop.set(true); autoTuneDialog = null }
+        // Phones share the results (a phone's own log may show none of them); a TV has nowhere to send them.
+        if (DeviceLayout.phone) builder.setNeutralButton(getString(R.string.t_share), null)
+        val dialog = builder.show()
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener {
+            val text = synchronized(report) { report.toString() }
+            runCatching { startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), getString(R.string.t_share))) }
+        }
+        fun log(line: String) { synchronized(report) { report.appendLine(line) } }
         autoTuneDialog = dialog
-        fun show() { lines.text = if (testing.isEmpty()) shown else "$shown$testing" }
+        // The newest line stays in view as results come in.
+        fun show() { lines.text = if (testing.isEmpty()) shown else "$shown$testing"; results.post { results.fullScroll(View.FOCUS_DOWN) } }
         fun add(line: String) = runOnUiThread { if (dialog.isShowing) { testing = ""; shown.appendLine(line); show() } }
         fun now(line: String) = runOnUiThread { if (dialog.isShowing) { testing = line; show() } }
         UsenetSessions.close()                                        // a paused stream's connections would share the account
@@ -5402,27 +5416,75 @@ class MainActivity : Activity() {
                     now(if (setting.round == 0) getString(R.string.t_auto_tune_testing_port, setting.port, ssl(setting.tls), step)
                         else getString(R.string.t_auto_tune_testing, setting.depth, setting.connections, step)) },
                 onStep = { step ->
+                    log("round ${step.setting.round}: port ${step.port}${if (step.tls) " SSL" else ""} · pipeline ${step.depth} · ${step.connections} connections: " +
+                        "%.1f Mbps, first article ${step.firstMs} ms, ${step.failed} failed".format(step.mbps))
                     add((if (step.setting.round == 0) getString(R.string.t_auto_tune_port_result, step.port, ssl(step.tls), "%.0f".format(step.mbps), step.firstMs)
                         else getString(R.string.t_auto_tune_result, step.depth, step.connections, "%.0f".format(step.mbps))) +
                         if (step.failed > 0) " · " + getString(R.string.t_auto_tune_missing, step.failed) else "") },
-                onLimit = { allowed -> add(getString(R.string.t_auto_tune_limit, allowed)) },
-                onError = { setting, message ->
-                    add(if (setting.round == 0) getString(R.string.t_auto_tune_port_failed, setting.port, ssl(setting.tls), message.take(80))
-                        else getString(R.string.t_auto_tune_failed, setting.depth, setting.connections, message.take(80))) })
+                onLimit = { allowed -> log("limit: $allowed connections"); add(getString(R.string.t_auto_tune_limit, allowed)) },
+                onFailed = { setting, failure, message ->
+                    log("round ${setting.round}: port ${setting.port}${if (setting.tls) " SSL" else ""} · pipeline ${setting.depth} · ${setting.connections} connections: $failure $message")
+                    val why = when (failure) {
+                        PipelineAutoTune.Failure.TOO_SLOW -> getString(R.string.t_auto_tune_too_slow)
+                        PipelineAutoTune.Failure.MISSING -> getString(R.string.t_auto_tune_articles_missing)
+                        else -> message.take(80)
+                    }
+                    add(if (setting.round == 0) getString(R.string.t_auto_tune_port_failed, setting.port, ssl(setting.tls), why)
+                        else getString(R.string.t_auto_tune_failed, setting.depth, setting.connections, why)) },
+                onStop = { reason ->
+                    log("connections round stopped: $reason")
+                    add(getString(when (reason) {
+                        PipelineAutoTune.Stop.LIMIT -> R.string.t_auto_tune_stop_limit
+                        PipelineAutoTune.Stop.NOT_HELPING -> R.string.t_auto_tune_stop_not_helping
+                        PipelineAutoTune.Stop.TOO_SLOW -> R.string.t_auto_tune_stop_too_slow
+                        PipelineAutoTune.Stop.FAILED -> R.string.t_auto_tune_stop_failed
+                    })) })
             if (stop.get()) return@Thread
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
-                if (result == null) { add(getString(R.string.t_auto_tune_none)); return@runOnUiThread }
-                val all = runCatching { NewsProviders(store).load() }.getOrDefault(emptyList())
-                saveNewsProviders(all.map { if (it.id == provider.id) it.copy(port = result.port, tls = result.tls, pipelineDepth = result.depth, connections = result.connections) else it },
-                    "setting:${provider.name}")
-                UsenetLog.i("auto-tune: ${provider.name} saved port ${result.port}${if (result.tls) " SSL" else ""} · pipeline ${result.depth} · " +
-                    "${result.connections} connections (%.1f Mbps); was port ${provider.port} · pipeline ${provider.pipelineDepth} · ${provider.connections} connections".format(result.mbps))
-                add(getString(R.string.t_auto_tune_best_port, result.port, ssl(result.tls), result.depth, result.connections, "%.0f".format(result.mbps),
-                    provider.port, provider.pipelineDepth, provider.connections))
+                if (result == null) { log("nothing saved"); add(getString(R.string.t_auto_tune_none)); return@runOnUiThread }
+                fun save() {
+                    val all = runCatching { NewsProviders(store).load() }.getOrDefault(emptyList())
+                    saveNewsProviders(all.map { if (it.id == provider.id) it.copy(port = result.port, tls = result.tls, pipelineDepth = result.depth, connections = result.connections) else it },
+                        "setting:${provider.name}")
+                    UsenetLog.i("auto-tune: ${provider.name} saved port ${result.port}${if (result.tls) " SSL" else ""} · pipeline ${result.depth} · " +
+                        "${result.connections} connections (%.1f Mbps); was port ${provider.port} · pipeline ${provider.pipelineDepth} · ${provider.connections} connections".format(result.mbps))
+                    log("saved: port ${result.port}${if (result.tls) " SSL" else ""} · pipeline ${result.depth} · ${result.connections} connections " +
+                        "(%.1f Mbps)${if (result.unsteady) " · UNSTEADY, saved anyway" else ""}".format(result.mbps))
+                }
                 result.plainFaster?.let { plain -> add(getString(R.string.t_auto_tune_plain_faster, plain.port, "%.0f".format(plain.mbps))) }
+                if (!result.unsteady) {
+                    save()
+                    add(getString(R.string.t_auto_tune_best_port, result.port, ssl(result.tls), result.depth, result.connections, "%.0f".format(result.mbps),
+                        provider.port, provider.pipelineDepth, provider.connections))
+                    return@runOnUiThread
+                }
+                // An unsteady run is mostly luck: nothing changes unless the viewer chooses to save it.
+                add(getString(R.string.t_auto_tune_best_unsaved, result.port, ssl(result.tls), result.depth, result.connections, "%.0f".format(result.mbps)))
+                add(getString(R.string.t_auto_tune_unsteady))
+                log("UNSTEADY: best measured port ${result.port}${if (result.tls) " SSL" else ""} · pipeline ${result.depth} · ${result.connections} connections " +
+                    "(%.1f Mbps), not saved unless chosen".format(result.mbps))
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_auto_tune_x, provider.name))
+                    .setMessage(getString(R.string.t_auto_tune_unsteady_ask, result.depth, result.connections, result.port,
+                        provider.pipelineDepth, provider.connections, provider.port))
+                    .setPositiveButton(getString(R.string.t_auto_tune_keep_current)) { _, _ -> log("kept the current settings"); add(getString(R.string.t_auto_tune_kept)) }
+                    .setNegativeButton(getString(R.string.t_auto_tune_save_anyway)) { _, _ ->
+                        save()
+                        add(getString(R.string.t_auto_tune_best_port, result.port, ssl(result.tls), result.depth, result.connections, "%.0f".format(result.mbps),
+                            provider.port, provider.pipelineDepth, provider.connections))
+                    }.show()
             }
         }, "pipeline-autotune").start()
+    }
+
+    /** A ScrollView no taller than [share] of the screen, for dialogs whose text keeps growing. */
+    private fun cappedScroll(share: Float): ScrollView = object : ScrollView(this) {
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            val cap = (resources.displayMetrics.heightPixels * share).toInt()
+            val size = MeasureSpec.getSize(heightMeasureSpec)
+            val limit = if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED) cap else minOf(cap, size)
+            super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(limit, MeasureSpec.AT_MOST))
+        }
     }
 
     private fun testNewsProvider(provider: NewsProvider) {

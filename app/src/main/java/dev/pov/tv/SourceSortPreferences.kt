@@ -21,13 +21,14 @@ internal class SourceSortPreferences(private val context: Context) {
     var order: SourceSortOrder
         get() = SourceSortOrder(prefs.getBoolean("quality_descending", true), prefs.getBoolean("size_ascending", false),
             SourceSortOrder.priority(prefs.getString("priority", null)), prefs.getBoolean("library_first", true),
+            prefs.getBoolean("newest_first", false),
             rules.takeIf { preferredFirst && it.preferActive }?.let { rules ->
                 val ranks = HashMap<String, Int>()
                 val rank: (SourceItem) -> Int = { source -> ranks.getOrPut(source.title) { rules.rank(source.title) } }
                 rank
             })
         set(value) { prefs.edit().putBoolean("quality_descending", value.qualityDescending).putBoolean("size_ascending", value.sizeAscending)
-            .putString("priority", value.priority.joinToString(",")).apply() }
+            .putBoolean("newest_first", value.newestFirst).putString("priority", value.priority.joinToString(",")).apply() }
     /** Links already in a library (AIOStreams, StreamNZB, AltMount) lead everything else, still in this sort order. */
     var libraryFirst: Boolean
         get() = prefs.getBoolean("library_first", true)
@@ -71,6 +72,7 @@ internal class SourceSortPreferences(private val context: Context) {
             SourceSortOrder.LANGUAGE -> languageLabel
             SourceSortOrder.PREFERRED -> L10n.tr(R.string.t_preferred_first, "Preferred first").takeIf { preferredFirst && rules.preferActive }
             SourceSortOrder.QUALITY -> if (order.qualityDescending) L10n.tr(R.string.t_highest_quality, "Highest quality") else L10n.tr(R.string.t_lowest_quality, "Lowest quality")
+            SourceSortOrder.AGE -> L10n.tr(R.string.t_newest_posts_first, "Newest NZBs first").takeIf { order.newestFirst }
             else -> if (order.sizeAscending) L10n.tr(R.string.t_smallest_first, "Smallest first") else L10n.tr(R.string.t_largest_first, "Largest first")
         }
     }.joinToString(" · ")
@@ -111,7 +113,7 @@ internal class SourceSortPreferences(private val context: Context) {
             val audio = AudioPreferences(context).language; val subtitle = SubtitlePreferences(context).language.takeUnless { it == "off" }.orEmpty()
             val languageSummary = listOfNotNull(audio.takeIf { it.isNotEmpty() }?.let { "${languageName(it)} audio" },
                 subtitle.takeIf { it.isNotEmpty() }?.let { "${languageName(it)} subtitles" }).joinToString(", ").ifEmpty { L10n.tr(R.string.t_set_an_audio_or_subtitle_language, "set an audio or subtitle language in Settings") }
-            fun name(key: String) = when (key) { SourceSortOrder.LIBRARY -> L10n.tr(R.string.t_library, "Library"); SourceSortOrder.LANGUAGE -> L10n.tr(R.string.t_language, "Language"); SourceSortOrder.PREFERRED -> L10n.tr(R.string.t_preferred, "Preferred"); SourceSortOrder.QUALITY -> L10n.tr(R.string.t_quality, "Quality"); else -> L10n.tr(R.string.t_file_size, "File size") }
+            fun name(key: String) = when (key) { SourceSortOrder.LIBRARY -> L10n.tr(R.string.t_library, "Library"); SourceSortOrder.LANGUAGE -> L10n.tr(R.string.t_language, "Language"); SourceSortOrder.PREFERRED -> L10n.tr(R.string.t_preferred, "Preferred"); SourceSortOrder.QUALITY -> L10n.tr(R.string.t_quality, "Quality"); SourceSortOrder.AGE -> L10n.tr(R.string.t_age, "NZB age"); else -> L10n.tr(R.string.t_file_size, "File size") }
             var dialog: AlertDialog? = null
             val list = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(6), dp(20), dp(4)) }
             var modified = false
@@ -144,8 +146,9 @@ internal class SourceSortPreferences(private val context: Context) {
                         text = "${index + 1}.  ${name(key)}"; setTextColor(Color.WHITE); setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
                         typeface = Typeface.create("sans-serif", Typeface.BOLD)
                     })
-                    if (key == SourceSortOrder.LANGUAGE || key == SourceSortOrder.LIBRARY || key == SourceSortOrder.PREFERRED) words.addView(TextView(context).apply {
+                    if (key == SourceSortOrder.LANGUAGE || key == SourceSortOrder.LIBRARY || key == SourceSortOrder.PREFERRED || key == SourceSortOrder.AGE) words.addView(TextView(context).apply {
                         text = when (key) { SourceSortOrder.LIBRARY -> L10n.tr(R.string.t_links_already_in_your_aiostreams_streamnzb, "Links already in your AIOStreams, StreamNZB or AltMount library")
+                            SourceSortOrder.AGE -> L10n.tr(R.string.t_usenet_links_newer_posts_miss, "Usenet links: newer NZBs are less likely to miss articles")
                             SourceSortOrder.PREFERRED -> preferredSummary(preferences.rules); else -> languageSummary }; setTextColor(0xFF9AA3B2.toInt()); setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f); maxLines = if (DeviceLayout.phone) 2 else 1
                         ellipsize = android.text.TextUtils.TruncateAt.END
                     })
@@ -155,6 +158,7 @@ internal class SourceSortPreferences(private val context: Context) {
                         SourceSortOrder.LANGUAGE -> if (preferences.languageFirst) L10n.tr(R.string.t_preferred_first, "Preferred first") else L10n.tr(R.string.t_off, "Off")
                         SourceSortOrder.PREFERRED -> if (preferences.preferredFirst) L10n.tr(R.string.t_first, "First") else L10n.tr(R.string.t_off, "Off")
                         SourceSortOrder.QUALITY -> if (order.qualityDescending) L10n.tr(R.string.t_highest_first, "Highest first") else L10n.tr(R.string.t_lowest_first, "Lowest first")
+                        SourceSortOrder.AGE -> if (order.newestFirst) L10n.tr(R.string.t_newest_first, "Newest first") else L10n.tr(R.string.t_off, "Off")
                         else -> if (order.sizeAscending) L10n.tr(R.string.t_smallest_first, "Smallest first") else L10n.tr(R.string.t_largest_first, "Largest first")
                     }
                     // The Preferred row's Edit shares the direction button's width, so every row's buttons line up.
@@ -165,6 +169,7 @@ internal class SourceSortPreferences(private val context: Context) {
                             SourceSortOrder.LANGUAGE -> preferences.languageFirst = !preferences.languageFirst
                             SourceSortOrder.PREFERRED -> preferences.preferredFirst = !preferences.preferredFirst
                             SourceSortOrder.QUALITY -> preferences.order = preferences.order.copy(qualityDescending = !order.qualityDescending)
+                            SourceSortOrder.AGE -> preferences.order = preferences.order.copy(newestFirst = !order.newestFirst)
                             else -> preferences.order = preferences.order.copy(sizeAscending = !order.sizeAscending)
                         }
                         modified = true; render("way:$key")

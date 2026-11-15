@@ -61,6 +61,14 @@ object SourceMetadata {
     }
 
     fun qualityLabel(height: Int?): String = when (height?.takeIf { it > 0 }) { null -> L10n.tr(R.string.t_quality_unavailable, "Quality unavailable"); 4320 -> "8K"; 2160 -> "4K"; else -> "${height}p" }
+    /** A short NZB age: "Today", then days up to two months ("45d"), months up to two years ("14mo"), then years ("3y"). */
+    fun ageLabel(days: Long): String = when {
+        days <= 0 -> L10n.tr(R.string.t_nzb_age_today, "Today")
+        days < 60 -> L10n.tr(R.string.t_nzb_age_days, "%1${'$'}sd", days)
+        days < 730 -> L10n.tr(R.string.t_nzb_age_months, "%1${'$'}smo", days / 30)
+        else -> L10n.tr(R.string.t_nzb_age_years, "%1${'$'}sy", days / 365)
+    }
+
     fun sizeLabel(bytes: Long?): String {
         if (bytes == null || bytes <= 0) return L10n.tr(R.string.t_size_unavailable, "Size unavailable")
         val units = listOf("B", "KB", "MB", "GB", "TB")
@@ -76,6 +84,8 @@ object SourceMetadata {
  */
 data class SourceSortOrder(val qualityDescending: Boolean = true, val sizeAscending: Boolean = false,
                            val priority: List<String> = DEFAULT_PRIORITY, val libraryFirst: Boolean = true,
+                           /** The Age row: newer Usenet posts first (less likely to miss articles); off by default. */
+                           val newestFirst: Boolean = false,
                            /** The Preferred row (Link sorting): lower ranks first; null when the row is off or has no rules. */
                            val preferredRank: ((SourceItem) -> Int)? = null) {
     fun sorted(sources: List<SourceItem>, languageRank: ((SourceItem) -> Int)? = null): List<SourceItem> = sources.sortedWith { left, right ->
@@ -88,6 +98,8 @@ data class SourceSortOrder(val qualityDescending: Boolean = true, val sizeAscend
                 PREFERRED -> preferredRank?.let { rank -> rank(left).compareTo(rank(right)) } ?: 0
                 QUALITY -> compareKnown(left.qualityHeight?.takeIf { it > 0 }, right.qualityHeight?.takeIf { it > 0 }, !qualityDescending)
                 SIZE -> compareKnown(left.sizeBytes?.takeIf { it > 0 }, right.sizeBytes?.takeIf { it > 0 }, sizeAscending)
+                // Fewer days since posting first; links without an age (debrid, add-ons that don't say) after them.
+                AGE -> if (!newestFirst) 0 else compareKnown(left.ageDays, right.ageDays, ascending = true)
                 else -> 0
             }
             if (result != 0) break
@@ -97,7 +109,8 @@ data class SourceSortOrder(val qualityDescending: Boolean = true, val sizeAscend
 
     companion object {
         const val LIBRARY = "library"; const val LANGUAGE = "language"; const val QUALITY = "quality"; const val SIZE = "size"; const val PREFERRED = "preferred"
-        val DEFAULT_PRIORITY = listOf(LIBRARY, LANGUAGE, QUALITY, PREFERRED, SIZE)
+        const val AGE = "age"
+        val DEFAULT_PRIORITY = listOf(LIBRARY, LANGUAGE, QUALITY, PREFERRED, AGE, SIZE)
         /**
          * A saved order, repaired: each key once, unknown keys dropped, missing ones added at the end. Library joined
          * the order later; library links always came first before, so an order saved without it gets it on top.
@@ -107,6 +120,8 @@ data class SourceSortOrder(val qualityDescending: Boolean = true, val sizeAscend
                 .let { if (it.isNotEmpty() && LIBRARY !in it) listOf(LIBRARY) + it else it }
                 // Preferred joined later still: an older order gets it just before file size (within a quality).
                 .let { if (PREFERRED !in it && SIZE in it) it.toMutableList().apply { add(indexOf(SIZE), PREFERRED) } else it }
+                // Age joined later: just before file size (within a quality), off until the viewer switches it on.
+                .let { if (AGE !in it && SIZE in it) it.toMutableList().apply { add(indexOf(SIZE), AGE) } else it }
             return keys + DEFAULT_PRIORITY.filterNot { it in keys }
         }
     }

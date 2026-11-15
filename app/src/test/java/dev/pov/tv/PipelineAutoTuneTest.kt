@@ -67,6 +67,27 @@ class PipelineAutoTuneTest {
         assertEquals(1, PipelineAutoTune.withinLimit(5, 1))
     }
 
+    @Test fun `a reading far below both neighbours is taken again, a real slope is not`() {
+        val dip = listOf(step(1, 12, 34.0), step(2, 12, 33.0), step(4, 12, 37.0), step(8, 12, 42.0), step(12, 12, 41.0), step(16, 12, 21.0), step(20, 12, 44.0))
+        assertEquals(listOf(16), PipelineAutoTune.outliers(dip) { it.depth })
+        val slope = listOf(step(1, 12, 10.0), step(2, 12, 20.0), step(4, 12, 30.0))
+        assertEquals(emptyList<Int>(), PipelineAutoTune.outliers(slope) { it.depth })
+    }
+
+    @Test fun `the same setting measured very differently marks the run unsteady`() {
+        assertEquals(true, PipelineAutoTune.unsteady(listOf(step(20, 12, 44.0), step(20, 12, 2.0))))
+        assertEquals(false, PipelineAutoTune.unsteady(listOf(step(20, 12, 44.0), step(20, 12, 40.0), step(8, 12, 10.0))))
+    }
+
+    @Test fun `a deeper pipeline must beat pipeline 1 by 10 percent, else pipelining stays off`() {
+        // 4 is only 6% better than 1: stays at 1.
+        assertEquals(1, PipelineAutoTune.pickPipeline(listOf(step(1, 4, 20.0), step(2, 4, 20.5), step(4, 4, 21.2), step(8, 4, 19.0))))
+        // 4 and 8 beat 1 by 25-30%: the smallest within 5% of the best of them, 4.
+        assertEquals(4, PipelineAutoTune.pickPipeline(listOf(step(1, 4, 20.0), step(2, 4, 21.0), step(4, 4, 25.0), step(8, 4, 26.0))))
+        // Averages count: 8 read 30 then 18 (24, only 20% over 1) and 4 read 24 and 24 (20%): 4 is the smallest near the best.
+        assertEquals(4, PipelineAutoTune.pickPipeline(listOf(step(1, 4, 20.0), step(4, 4, 24.0), step(4, 4, 24.0), step(8, 4, 30.0), step(8, 4, 18.0))))
+    }
+
     @Test fun `nothing downloaded means no change`() {
         assertNull(PipelineAutoTune.pick(emptyList()))
         assertNull(PipelineAutoTune.pick(listOf(step(1, 20, 0.0), step(2, 20, 0.0))))

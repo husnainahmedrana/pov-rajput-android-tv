@@ -47,7 +47,7 @@ class Newznab(
         return releases.take(150).map { release ->
             val age = release.postedAt?.let { ((now() - it) / 86_400_000L).coerceAtLeast(0) }
             SourceItem(title = release.title.take(500), provider = indexer.name, directUrl = UsenetLinks.mark(release.link),
-                sizeBytes = release.size, qualityHeight = SourceMetadata.qualityHeight(release.title), usenet = true, indexer = indexer.name, newsProvider = newsProvider,
+                sizeBytes = release.size, qualityHeight = SourceMetadata.qualityHeight(release.title), usenet = true, indexer = indexer.name, newsProvider = newsProvider, ageDays = age,
                 detail = listOfNotNull("Usenet", indexer.name, age?.let { if (it == 0L) L10n.tr(R.string.t_today_lower, "today") else if (it == 1L) L10n.tr(R.string.t_1_day_old, "1 day old") else L10n.tr(R.string.t_x_days_old, "%1\$s days old", it) },
                     release.grabs?.takeIf { it > 0 }?.let { "$it grabs" }).joinToString(" · "))
         }

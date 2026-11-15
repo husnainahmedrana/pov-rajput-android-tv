@@ -171,6 +171,8 @@ internal object SourceBadges {
         }
         val mbps = AutoplayLimit.mbps(source.sizeBytes, runtimeMinutes)
         group(listOfNotNull(SourceMetadata.sizeLabel(source.sizeBytes), mbps?.let { "≈${Math.round(it)} Mbps" }), SourceBadgeTone.SIZE, mbps)
+        // NZB age (Usenet links from your indexers): how long ago it was posted, as "Today", "12d", "5mo" or "2y".
+        source.ageDays?.let { add(SourceBadge(SourceMetadata.ageLabel(it), SourceBadgeTone.SIZE)) }
         val metadata = "${source.title} ${source.detail}".take(4000)
         fun has(pattern: String) = Regex("(?i)(?<![a-z0-9])(?:$pattern)(?![a-z0-9])").containsMatchIn(metadata)
         group(buildList {
