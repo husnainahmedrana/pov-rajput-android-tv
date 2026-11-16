@@ -23,7 +23,9 @@ internal class StreamSwitcher(context: Context) {
     private val resolver = SourceResolver(store, torbox)
 
     sealed interface Result {
-        data class Ready(val url: String, val headers: Map<String, String>, val service: String?, val name: String, val size: Long) : Result
+        data class Ready(val url: String, val headers: Map<String, String>, val service: String?, val name: String, val size: Long,
+                         /** The link that plays (check-on-play may have moved on from the one picked). */
+                         val source: SourceItem? = null) : Result
         data class ChooseFile(val prepared: PreparedSource, val files: List<Triple<Long, String, Long>>) : Result
         data class Failed(val message: String) : Result
     }
@@ -42,24 +44,24 @@ internal class StreamSwitcher(context: Context) {
     /** The file to play from [prepared]: [fileId] when the viewer chose one, else the only or preferred file. */
     fun file(prepared: PreparedSource, source: SourceItem, fileId: Long?): Result = when (prepared) {
         is PreparedSource.Direct -> Result.Ready(prepared.url, prepared.headers, null,
-            source.title.lineSequence().firstOrNull().orEmpty(), source.sizeBytes ?: 0L)
+            source.title.lineSequence().firstOrNull().orEmpty(), source.sizeBytes ?: 0L, source)
         is PreparedSource.OffcloudFiles -> {
             val chosen = pick(prepared.files, fileId, prepared.preferredFileId) { it.id }
             when {
                 chosen == null -> Result.ChooseFile(prepared, prepared.files.map { Triple(it.id, it.name, it.size) })
                 !OffcloudApi(store).owns(prepared) -> Result.Failed(L10n.tr(R.string.t_connect_offcloud_and_pick_the_link, "Connect Offcloud and pick the link again."))
-                else -> Result.Ready(chosen.url, emptyMap(), "offcloud", chosen.name, chosen.size)
+                else -> Result.Ready(chosen.url, emptyMap(), "offcloud", chosen.name, chosen.size, source)
             }
         }
         is PreparedSource.Links -> {
             val chosen = pick(prepared.files, fileId, prepared.preferredFileId) { it.id }
             if (chosen == null) Result.ChooseFile(prepared, prepared.files.map { Triple(it.id, it.name, it.size) })
-            else Result.Ready(resolver.streamUrl(prepared, chosen), emptyMap(), prepared.service, chosen.name, chosen.size)
+            else Result.Ready(resolver.streamUrl(prepared, chosen), emptyMap(), prepared.service, chosen.name, chosen.size, prepared.source ?: source)
         }
         is PreparedSource.Files -> {
             val chosen = pick(prepared.files, fileId, prepared.preferredFileId) { it.id }
             if (chosen == null) Result.ChooseFile(prepared, prepared.files.map { Triple(it.id, it.name, it.size) })
-            else Result.Ready(torBoxUrl(prepared, chosen), emptyMap(), "torbox", chosen.name, chosen.size)
+            else Result.Ready(torBoxUrl(prepared, chosen), emptyMap(), "torbox", chosen.name, chosen.size, source)
         }
     }
 

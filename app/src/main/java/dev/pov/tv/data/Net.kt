@@ -27,6 +27,13 @@ class ApiException(
 object Net {
     fun encode(value: String): String = URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
+    /**
+     * Rewrites an API call before it is sent, or returns null to send it as it is: the viewer's MediaFlow Proxy relays
+     * calls to the debrid services they ticked, so those services see the server's IP (see MediaFlowProxy.forward).
+     * Gets (address, headers, body content type or null) and returns (address, headers).
+     */
+    @Volatile var apiRoute: ((String, Map<String, String>, String?) -> Pair<String, Map<String, String>>?)? = null
+
     fun json(
         url: String, method: String = "GET", headers: Map<String, String> = emptyMap(),
         body: JSONObject? = null
@@ -70,8 +77,10 @@ object Net {
 
     private fun request(
         address: String, method: String, headers: Map<String, String>, bytes: ByteArray?, contentType: String,
-        publicMetadata: Boolean = false, redirectsLeft: Int = 5
+        publicMetadata: Boolean = false, redirectsLeft: Int = 5, relayed: Boolean = false
     ): String {
+        val routed = if (publicMetadata || relayed) null else apiRoute?.invoke(address, headers, contentType.takeIf { bytes != null })
+        if (routed != null) return request(routed.first, method, routed.second, bytes, contentType, redirectsLeft = 0, relayed = true)
         val target = try { URL(address) } catch (_: Exception) {
             throw ApiException(0, L10n.tr(R.string.t_the_service_address_is_invalid, "The service address is invalid."))
         }

@@ -44,6 +44,12 @@ internal class SlidingFocusPill(
     init {
         if (ring != null) row.foreground = pill else row.background = pill
         if (fadeText) buttons.forEach { button -> button.background = null; paint(button, Color.WHITE) }
+        // A child that changes size or place on focus (a player action that shows its label) moves the highlight with it.
+        buttons.forEach { button ->
+            button.addOnLayoutChangeListener { view, l, t, r, b, ol, ot, or, ob ->
+                if (view.isFocused && (l != ol || t != ot || r != or || b != ob)) moveTo(view)
+            }
+        }
     }
 
     /** Call from each child's focus listener. */

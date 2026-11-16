@@ -140,6 +140,8 @@ class MainActivity : Activity() {
     private var playingMedia: Pair<String, Long?>? = null
     /** The add-on badge (PenguPlay) for the direct link about to play. */
     private var playingAddon: String? = null
+    /** MediaFlowProxy.Origin of the link being started (add-on, serving debrid, Usenet), for the proxy route. */
+    private var playingOrigin = ""
     private fun mediaFile(name: String, size: Long?) {
         playingMedia = listOf(name, playingSourceText).filter { it.isNotBlank() }.distinct().joinToString(" · ") to size?.takeIf { it > 0 }
     }
@@ -193,6 +195,8 @@ class MainActivity : Activity() {
         if (DeviceLayout.tv) window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         else { window.statusBarColor = 0xFF141414.toInt(); window.navigationBarColor = PHONE_BAR_COLOR }
         store = SecureStore(this)
+        // Debrid API calls of the services ticked under MediaFlow Proxy go through the viewer's server.
+        MediaFlowProxy.install(store)
         // Saved accounts the device can no longer decrypt (its Keystore key was lost) would crash every read below.
         val lostAccounts = runCatching { store.recoverUnreadable() }.getOrDefault(0)
         if (lostAccounts > 0) window.decorView.post { toast(getString(R.string.t_saved_accounts_unreadable, lostAccounts)) }
@@ -1934,6 +1938,7 @@ class MainActivity : Activity() {
         playingMedia = link.name to link.size
         // The logos it played with (an add-on's, or Usenet's provider and indexer) come back with it.
         playingAddon = link.addon.ifBlank { null }
+        playingOrigin = link.origin
         play(link.url, identity.title, identity, link.key, link.service, resumeImmediately = true, headers = link.headers)
     }
     private fun retainedRoots(): List<View> = listOf(body) + backStack.flatMap { it.retained?.children.orEmpty() }
@@ -3713,6 +3718,8 @@ class MainActivity : Activity() {
         var answered = 0; var total = 0; var waiting: List<String> = emptyList(); var finished = false
         var autoplay = SourceSearchPreferences.OFF; var countdownSeconds = SourceSearchPreferences.COUNTDOWN_SECONDS
         var autoplayDone = false; var waitOver = false; var showHidden = false; var showAll = false; var rendered = false
+        /** The viewer asked to see the links Real-Debrid's copyright filter refuses (hidden when only it could play them). */
+        var showRefused = false
         /** The source the header logos are filtering to (debrid service or add-on id), or null for all links. */
         var sourceFilter: String? = null
         /** Stop early because Best per quality filled up (not because of the Stop early count). */
@@ -3916,8 +3923,11 @@ class MainActivity : Activity() {
         val rules = SourceSortPreferences(this).rules
         val ruleCaps = DeviceVideoSupport.caps()
         val ruleYear = movieYear(identity)
-        val ruleHidden = filtered.count { hiddenByRules(it, rules, ruleCaps, identity, ruleYear) }
-        val playable = if (search?.showHidden == true) filtered else filtered.filterNot { hiddenByRules(it, rules, ruleCaps, identity, ruleYear) }
+        // Names Real-Debrid's copyright filter refuses, when only Real-Debrid could play them: hidden, and counted for the button below.
+        val refused = filtered.size - RealDebridFilter.visible(filtered, connected).size
+        val allowed = if (search?.showRefused == true) filtered else RealDebridFilter.visible(filtered, connected)
+        val ruleHidden = allowed.count { hiddenByRules(it, rules, ruleCaps, identity, ruleYear) }
+        val playable = if (search?.showHidden == true) allowed else allowed.filterNot { hiddenByRules(it, rules, ruleCaps, identity, ruleYear) }
         val lowOnly = hideLow && playable.isEmpty() && sources.any(LowQualityReleases::matches)
         val suffix = if (identity.type == "series") "  ·  S${identity.season} E${identity.episode}" else ""
         val artShown = flix && heroBackdrop.visibility == View.VISIBLE
@@ -3965,6 +3975,8 @@ class MainActivity : Activity() {
         else if (sources.isEmpty()) body.addView(text(getString(R.string.t_no_sources_were_returned_try_again), 15, muted))
         else if (lowOnly) {
             body.addView(text(getString(R.string.t_only_cam_or_other_low_quality), 15, muted))
+        } else if (playable.isEmpty() && refused > 0 && search?.showRefused != true) {
+            body.addView(text(getString(R.string.t_rd_refuses_all_x, refused), 15, muted))
         } else if (playable.isEmpty() && hideUncached) {
             body.addView(text(getString(R.string.t_only_uncached_links_were_found_turn), 15, muted))
         } else if (playable.isEmpty()) {
@@ -3997,9 +4009,17 @@ class MainActivity : Activity() {
         val rowSources = HashMap<View, SourceItem>()
         val chips = mutableListOf<View>()
         val chipKeys = HashMap<View, String?>()
+        val proxySettings = MediaFlowProxy(store).load().takeIf { it.ready }
+        val logoCache = HashMap<SourceItem, Pair<List<Int>, Set<Int>>>()
+        fun rowLogos(source: SourceItem) = logoCache.getOrPut(source) { PlaybackDebrid.rowLogos(source, checkOnPlay, proxySettings) }
+        // Check-on-play services shown as "~N": their chip lists the torrents they would try.
+        val tryChips = mutableSetOf<String>()
+        fun wouldTry(source: SourceItem, service: String) = source.directUrl.isEmpty() && source.infoHash.isNotBlank() && service !in source.cachedServices &&
+            !(service == RealDebridFilter.SERVICE && RealDebridFilter.refused(source))
         fun matchesSource(source: SourceItem, key: String?): Boolean = key == null || when (key) {
             PlaybackDebrid.EASYNEWS -> Easynews.isHost(source.directUrl)
-            in DebridServices.IDS -> key in source.cachedServices || source.servedBy == key && source.directUrl.isNotEmpty()
+            in DebridServices.IDS -> key in source.cachedServices || source.servedBy == key && source.directUrl.isNotEmpty() ||
+                key in tryChips && wouldTry(source, key)
             else -> PlaybackDebrid.addon(source) == key
         }
         val total = text("", 14, muted, true)
@@ -4035,7 +4055,7 @@ class MainActivity : Activity() {
             }
         }
         fun count(service: String, value: String, description: String) {
-            val filters = value != "?" && value != "0"
+            val filters = value != "?" && value != "0" && value != "~0"
             val holder = chip(service, description, filters)
             holder.addView(ImageView(this).apply {
                 setImageResource(PlaybackDebrid.logo(service)); adjustViewBounds = true; maxWidth = dp(72)
@@ -4055,7 +4075,14 @@ class MainActivity : Activity() {
             val name = DebridServices.name(service)
             val fromAddons = ordered.count { viaAddon(it, service) }
             // Real-Debrid-style services can't say in advance what is cached (unless a debrid add-on already did).
-            if (service in checkOnPlay && fromAddons == 0) { if (torrents) count(service, "?", getString(R.string.t_x_checks_the_cache_when_a, name)) }
+            if (service in checkOnPlay && fromAddons == 0) {
+                // How many torrents it would try (Real-Debrid leaves out names its copyright filter refuses); "~" because
+                // whether they are cached is only known when one is played.
+                if (torrents) ordered.count { wouldTry(it, service) }.let { tries ->
+                    tryChips += service
+                    count(service, "~$tries", getString(R.string.t_x_links_x_can_try, tries, name))
+                }
+            }
             else ordered.count { service in it.cachedServices || viaAddon(it, service) }.takeIf { it > 0 }?.let { count(service, "$it", getString(R.string.t_x_links_cached_on_x, it, name)) }
         }
         if (Easynews.active(store)) ordered.count { Easynews.isHost(it.directUrl) }.let { count(PlaybackDebrid.EASYNEWS, "$it", getString(R.string.t_x_easynews_links, it)) }
@@ -4085,7 +4112,7 @@ class MainActivity : Activity() {
             // Only the badges, the release name and the source's own name: the scrapers' extra lines are left out.
             choices.addChoice(TvChoiceRow(this, TvChoiceKeys.source(source), SourceBadges.name(source), SourceBadges.origin(source),
                 limitNote.removePrefix(" · "), theme.palette, SourceBadges.forRow(source, languages, minutes, checkOnPlay, logos = true),
-                logos = SourceBadges.cachedOn(source).map(PlaybackDebrid::logo), glass = flix) {
+                logos = rowLogos(source).first, fadedLogos = rowLogos(source).second, glass = flix) {
                 if (!source.cached && source.directUrl.isEmpty()) {
                     if (checkOnPlay.isNotEmpty()) resolveFirstCached(ordered.dropWhile { it !== source }.filterNot(::tooTall), identity, source)
                     else offerTransfer(source, identity)
@@ -4124,6 +4151,10 @@ class MainActivity : Activity() {
         if (search != null && ruleHidden > 0) body.addView(button(if (search.showHidden) getString(R.string.t_hide_the_x_filtered_x_again, ruleHidden, if (ruleHidden == 1) "link" else "links")
             else getString(R.string.t_show_x_hidden_x_link_filters, ruleHidden, if (ruleHidden == 1) "link" else "links")) {
             search.showHidden = !search.showHidden; renderSearch(search)
+        }, margin(-1, 40, top = 8))
+        if (search != null && refused > 0) body.addView(button(if (search.showRefused) getString(R.string.t_hide_the_x_rd_refused, refused)
+            else getString(R.string.t_show_x_rd_refused, refused)) {
+            search.showRefused = !search.showRefused; renderSearch(search)
         }, margin(-1, 40, top = 8))
         focusAfterRender(id)
         if (animate && flix) sourcesRiseIn(choices)
@@ -4217,6 +4248,7 @@ class MainActivity : Activity() {
         val playable = (if (connected.isEmpty()) sources.filter { it.directUrl.isNotEmpty() } else sources)
             .let { all -> if (hideUncached) all.filter(::playsAtOnce) else all }
             .let { all -> if (LowQualityReleases.hidden(store)) all.filterNot(LowQualityReleases::matches) else all }
+            .let { all -> RealDebridFilter.visible(all, connected) }
             .let { all -> val year = movieYear(identity); all.filterNot { hiddenByRules(it, rules, fit, identity, year) } }
         fun tooTall(source: SourceItem) = DeviceVideoSupport.problem(source, fit) != null
         return playable.distinctBy(TvChoiceKeys::source).let { unique -> sorting.languages?.sorted(unique, sorting.order) ?: sorting.order.sorted(unique) }
@@ -4285,21 +4317,38 @@ class MainActivity : Activity() {
         val progress = text(getString(R.string.t_checking_links), 14, accent); body.addView(progress, margin(-1, -2, top = 14))
         worker.execute {
             try {
-                val prepared = resolver.prepareFirstCached(candidates, identity) { number, total, service ->
+                fun attempt() = resolver.prepareFirstCached(candidates, identity) { number, total, service ->
                     runOnUiThread { if (request == generation) progress.text = getString(R.string.t_checking_link_x_of_x_on, number, total, DebridServices.name(service)) }
                 }
+                // Real-Debrid pausing adds on the account: wait and try again (30 s, 90 s, 3 min), counting down on screen;
+                // leaving the page (Back) ends it. Each try is one add, so waiting beats burning the other links.
+                var found: PreparedSource.Links? = null
+                val holds = listOf(30, 90, 180)
+                var round = 0
+                while (true) {
+                    try { found = attempt(); break }
+                    catch (paused: RealDebridPausedException) {
+                        if (round >= holds.size) throw paused
+                        for (left in holds[round] downTo 1) {
+                            if (request != generation || isFinishing || isDestroyed) return@execute
+                            runOnUiThread { if (request == generation) progress.text = getString(R.string.t_rd_paused_retrying_x, left) }
+                            Thread.sleep(1_000)
+                        }
+                        round++
+                    }
+                }
+                val prepared = found
                 runOnUiThread {
                     if (request == generation && !isFinishing && !isDestroyed) {
                         resolvingGeneration = null; body.removeView(progress)
                         when {
                             prepared == null -> {
-                                val tried = minOf(candidates.count { it.infoHash.isNotBlank() }, LinkDebrids.CHECK_LIMIT)
+                                val tried = minOf(candidates.count { it.infoHash.isNotBlank() }, LinkDebrids.checkLimit(resolver.checkOnPlayServices()))
                                 toast(getString(R.string.t_none_of_the_first_x_links, tried))
                                 if (picked != null && DebridServices.connected(store).any { it in DebridServices.TRANSFERS }) offerTransfer(picked, identity)
                                 focusAfterRender(request)
                             }
-                            prepared.files.size == 1 -> playLinkFile(prepared, prepared.files.single())
-                            else -> navigate { linkFiles(prepared) }
+                            else -> { nextLinkNote(picked, prepared); if (prepared.files.size == 1) playLinkFile(prepared, prepared.files.single()) else navigate { linkFiles(prepared) } }
                         }
                     }
                 }
@@ -4307,6 +4356,16 @@ class MainActivity : Activity() {
                 if (request == generation && !isFinishing && !isDestroyed) { resolvingGeneration = null; body.removeView(progress); showError(error); focusAfterRender(request) }
             } }
         }
+    }
+
+    /**
+     * The picked link was skipped (not cached, or a name Real-Debrid refuses) and a later one plays: say which, briefly.
+     * A system toast, so it still shows once the player has opened over this screen.
+     */
+    private fun nextLinkNote(picked: SourceItem?, prepared: PreparedSource.Links) {
+        val played = prepared.source ?: return
+        if (picked == null || played === picked || TvChoiceKeys.source(played) == TvChoiceKeys.source(picked)) return
+        Toast.makeText(applicationContext, getString(R.string.t_playing_the_next_link_x, SourceBadges.name(played).ifBlank { played.title }.take(80)), Toast.LENGTH_SHORT).show()
     }
 
     private fun linkFiles(prepared: PreparedSource.Links) {
@@ -4326,6 +4385,12 @@ class MainActivity : Activity() {
 
     private fun playLinkFile(prepared: PreparedSource.Links, file: DebridFile) {
         mediaFile(file.name, file.size)
+        // Check-on-play tried several links: the one that played brings its scraper's logo (Torrentio, Meteor) and its
+        // add-on's MediaFlow choice, as a link tapped on a cached service does.
+        prepared.source?.let { played ->
+            if (playingAddon == null) playingAddon = played.scraper
+            playingOrigin = MediaFlowProxy.Origin.of(played).encode()
+        }
         val identity = prepared.identity
         val request = generation
         worker.execute {
@@ -4354,6 +4419,7 @@ class MainActivity : Activity() {
                         resolvingGeneration = null; body.removeView(progress)
                         // A scraper's torrent played by POV's own debrid: the scraper's logo goes before the service's in the player.
                         playingAddon = if (prepared is PreparedSource.Direct) PlaybackDebrid.tag(source) else source.scraper
+                        playingOrigin = MediaFlowProxy.Origin.of(source).encode()
                         when (prepared) {
                             is PreparedSource.Direct -> play(prepared.url, prepared.identity.title, prepared.identity,
                                 "media:${prepared.identity.imdbId}:${prepared.identity.season}:${prepared.identity.episode}",
@@ -5018,7 +5084,8 @@ class MainActivity : Activity() {
                 .putExtra("playback_account", LastPlayedLinks(store).scope(PlaybackDebrid.normalize(debridService)))
                 .putExtra("media_name", playingMedia?.first.orEmpty()).putExtra("media_size", playingMedia?.second ?: 0L)
                 .putExtra("headers", org.json.JSONObject(headers).toString()).putExtra("source_addon", playingAddon)
-            playingMedia = null; playingSourceText = ""; switchResumeMs = null; playingAddon = null
+                .putExtra("source_origin", playingOrigin)
+            playingMedia = null; playingSourceText = ""; switchResumeMs = null; playingAddon = null; playingOrigin = ""
             @Suppress("DEPRECATION")
             startActivityForResult(intent, PLAYBACK_REQUEST)
             identity?.let { searchStreamsInBackground(it) }
@@ -5131,6 +5198,60 @@ class MainActivity : Activity() {
     }
 
     /** Settings → Debrid services: order, switch on or off, and connect or remove each account. */
+    /** Settings → Sources → MediaFlow Proxy: the viewer's own server, and which debrid services and add-ons stream through it. */
+    private fun mediaFlowPage(focusTag: String? = null) {
+        val keepScroll = scroller.scrollY
+        current = { mediaFlowPage() }
+        destination = "settings"; refreshNavigation()
+        page(getString(R.string.t_mediaflow_proxy), getString(R.string.t_mediaflow_page_intro))
+        val proxy = MediaFlowProxy(store)
+        val saved = proxy.load()
+        val server = settingsGroup(getString(R.string.t_mediaflow_server), "library")
+        settingsRow(server, getString(R.string.t_mediaflow_server_address),
+            if (saved.server.isBlank()) getString(R.string.t_not_set) else runCatching { java.net.URI(saved.server).host }.getOrNull().orEmpty()) {
+            inputSetting(getString(R.string.t_mediaflow_server_address), getString(R.string.t_mediaflow_address_hint), saved.server) { value ->
+                runCatching { proxy.saveServer(value, saved.password) }.onFailure { showError(it as? Exception ?: IllegalStateException(it.message)) }.onSuccess { mediaFlowPage("setting:" + getString(R.string.t_mediaflow_server_address)) }
+            }
+        }
+        settingsRow(server, getString(R.string.t_mediaflow_api_password), if (saved.password.isBlank()) getString(R.string.t_not_set) else "••••••",
+            getString(R.string.t_mediaflow_password_hint)) {
+            inputSetting(getString(R.string.t_mediaflow_api_password), getString(R.string.t_mediaflow_password_hint), "", true) { value ->
+                runCatching { proxy.saveServer(saved.server.ifBlank { error(getString(R.string.t_mediaflow_add_server_first)) }, value) }
+                    .onFailure { showError(it as? Exception ?: IllegalStateException(it.message)) }.onSuccess { mediaFlowPage("setting:" + getString(R.string.t_mediaflow_api_password)) }
+            }
+        }
+        if (saved.server.isNotBlank()) {
+            settingsRow(server, getString(R.string.t_mediaflow_use_proxy), if (saved.on) getString(R.string.t_on) else getString(R.string.t_off), status = saved.on) {
+                proxy.setOn(!saved.on); mediaFlowPage("setting:" + getString(R.string.t_mediaflow_use_proxy))
+            }
+            settingsRow(server, getString(R.string.t_mediaflow_test)) {
+                load(generation, { proxy.test() }, readOnly = true) { ip -> toast(getString(R.string.t_mediaflow_connected_ip, ip)) }
+            }
+            settingsRow(server, getString(R.string.t_mediaflow_remove), danger = true) {
+                confirm(getString(R.string.t_mediaflow_remove_confirm)) { proxy.forget(); mediaFlowPage() }
+            }
+        }
+        val debrids = settingsGroup(getString(R.string.t_mediaflow_debrid_heading), "library")
+        val linked = DebridServices.linked(store)
+        if (linked.isEmpty()) debrids.addView(text(getString(R.string.t_mediaflow_no_debrid), 13, muted).apply { setPadding(dp(14), 0, dp(14), 0) }, margin(-1, -2, top = 10, bottom = 10))
+        linked.forEach { id ->
+            val on = id in saved.debrid
+            settingsRow(debrids, DebridServices.name(id), if (on) getString(R.string.t_on) else getString(R.string.t_off),
+                getString(R.string.t_mediaflow_debrid_desc), status = on) { proxy.setDebrid(id, !on); mediaFlowPage("setting:" + DebridServices.name(id)) }
+        }
+        val addons = settingsGroup(getString(R.string.t_mediaflow_addons_heading), "library")
+        val providers = runCatching { SourceProviders(store).load() }.getOrDefault(emptyList())
+        if (providers.isEmpty()) addons.addView(text(getString(R.string.t_mediaflow_no_addons), 13, muted).apply { setPadding(dp(14), 0, dp(14), 0) }, margin(-1, -2, top = 10, bottom = 10))
+        providers.forEach { provider ->
+            val on = provider.id in saved.addons
+            settingsRow(addons, provider.name, if (on) getString(R.string.t_on) else getString(R.string.t_off),
+                getString(R.string.t_mediaflow_addon_desc), status = on) { proxy.setAddon(provider.id, !on); mediaFlowPage("setting:" + provider.name) }
+        }
+        body.addView(text(getString(R.string.t_mediaflow_note), 11, muted).apply { setLineSpacing(dp(1).toFloat(), 1f) }, margin(-1, -2, top = 12))
+        body.addView(View(this), margin(-1, 24))
+        if (focusTag != null) keepPlace(generation, focusTag, keepScroll) else focusAfterRender(generation)
+    }
+
     private fun debridServicesPage(focusTag: String? = null) {
         val keepScroll = scroller.scrollY
         current = { debridServicesPage() }
@@ -5163,7 +5284,7 @@ class MainActivity : Activity() {
             list.addView(line, margin(-1, -2))
         }
         body.addView(text(getString(R.string.t_real_debrid_alldebrid_and_debrid_link) +
-            getString(R.string.t_the_first_cached_one_of_the, LinkDebrids.CHECK_LIMIT), 11, muted).apply {
+            getString(R.string.t_the_first_cached_one_of_the, LinkDebrids.checkLimit(DebridServices.connected(store))), 11, muted).apply {
             setLineSpacing(dp(1).toFloat(), 1f) }, margin(-1, -2, top = 12))
         body.addView(View(this), margin(-1, 24))
         if (focusTag != null) keepPlace(generation, focusTag, keepScroll) else focusAfterRender(generation)
@@ -6043,6 +6164,10 @@ class MainActivity : Activity() {
             settingsRow(sources, getString(R.string.t_debrid_services), if (linkedDebrids.isEmpty()) getString(R.string.t_none_connected) else getString(R.string.t_x_of_x_on, activeDebrids.size, linkedDebrids.size),
                 if (activeDebrids.isEmpty()) getString(R.string.t_connect_offcloud_torbox_real_debrid_and)
                 else getString(R.string.t_cached_links_play_from_x, activeDebrids.joinToString(" → ") { DebridServices.name(it) }), status = activeDebrids.isNotEmpty()) { navigate { debridServicesPage() } }
+            val mediaFlow = MediaFlowProxy(store).load()
+            settingsRow(sources, getString(R.string.t_mediaflow_proxy),
+                if (!mediaFlow.ready) getString(R.string.t_off) else getString(R.string.t_mediaflow_x_items, mediaFlow.debrid.size, mediaFlow.addons.size),
+                getString(R.string.t_mediaflow_row_desc), status = mediaFlow.ready && (mediaFlow.debrid.isNotEmpty() || mediaFlow.addons.isNotEmpty())) { navigate { mediaFlowPage() } }
             val easynewsLinked = Easynews.credentials(store) != null
             settingsRow(sources, getString(R.string.t_easynews), if (!easynewsLinked) getString(R.string.t_not_connected) else if (Easynews.enabled(store)) getString(R.string.t_on) else getString(R.string.t_off),
                 getString(R.string.t_search_usenet_with_your_easynews_account),
@@ -6120,6 +6245,7 @@ class MainActivity : Activity() {
                 Triple(R.drawable.wetrakr_logo, getString(R.string.t_wetrakr), getString(R.string.t_tracking_and_lists)),
                 Triple(R.drawable.pov_about_simkl, getString(R.string.t_simkl), getString(R.string.t_tracking_and_lists)),
                 Triple(R.drawable.pov_about_introdb, getString(R.string.t_theintrodb), getString(R.string.t_skip_intro_recap_and_credits_times)),
+                Triple(R.drawable.pov_about_skipdb, getString(R.string.t_skipdb), getString(R.string.t_skipdb_credit)),
                 Triple(0, getString(R.string.t_aniskip), getString(R.string.t_anime_skip_times)),
                 Triple(R.drawable.pov_about_opensubtitles, getString(R.string.t_opensubtitles), getString(R.string.t_subtitles_found_online)),
                 Triple(R.drawable.pov_about_subdl, getString(R.string.t_subdl), getString(R.string.t_subtitles_found_online)),
@@ -6525,7 +6651,7 @@ class MainActivity : Activity() {
             settingsToggle(playback, getString(R.string.t_mini_player), getString(R.string.t_leaving_the_player_keeps_the_video),
                 MiniPlayerPreferences(this).enabled) { on -> MiniPlayerPreferences(this).enabled = on }
             settingsToggle(playback, getString(R.string.t_skip_buttons_2), getString(R.string.t_skip_intro_skip_recap_and_skip) +
-                getString(R.string.t_times_come_from_theintrodb_and_aniskip),
+                getString(R.string.t_times_come_from_theintrodb_skipdb_and_aniskip),
                 SkipButtonPreferences(this).enabled) { on -> SkipButtonPreferences(this).enabled = on }
             settingsToggle(playback, getString(R.string.t_seek_previews_seekr), getString(R.string.t_shows_a_thumbnail_of_the_scene),
                 SeekrPreferences(this).enabled) { on -> SeekrPreferences(this).enabled = on }

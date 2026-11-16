@@ -43,7 +43,11 @@
             <TextView android:id="@id/exo_duration" android:layout_width="50dp" android:layout_height="wrap_content"
                 android:gravity="end" android:text="0:00" android:textSize="12sp" android:textColor="#B3FFFFFF" android:fontFamily="sans-serif-medium" />
         </LinearLayout>
-        <LinearLayout android:id="@+id/pov_player_actions" android:layout_width="match_parent"
+        <!-- Scrolls only if the row is ever wider than the screen (a long label in another language): the focused
+             button is always brought into view. -->
+        <HorizontalScrollView android:id="@+id/pov_player_actions_scroll" android:layout_width="match_parent"
+            android:layout_height="44dp" android:fillViewport="true" android:scrollbars="none" android:overScrollMode="never">
+        <LinearLayout android:id="@+id/pov_player_actions" android:layout_width="wrap_content"
             android:layout_height="44dp" android:orientation="horizontal" android:gravity="center_vertical">
             <!-- Stop, then Play, then Next episode (series). Back/Forward 10 s stay hidden (PlayerActivity): the seek bar
                  seeks with previews and the phone double-taps to skip. -->
@@ -76,19 +80,20 @@
             <Button android:id="@+id/pov_jump_120" style="@style/POVPlayerAction" android:text="2h" android:visibility="gone"
                 android:contentDescription="@string/t_cd_jump_2h" android:nextFocusUp="@id/exo_progress" />
             <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
-            <Button android:id="@+id/pov_audio" style="@style/POVPlayerAction" android:text="@string/t_audio_subtitles"
+            <dev.pov.tv.PlayerActionButton android:id="@+id/pov_audio" style="@style/POVPlayerAction" android:text="@string/t_audio_subtitles"
                 android:drawableStart="@drawable/pov_ic_subtitles" android:nextFocusUp="@id/exo_progress" />
-            <Button android:id="@+id/pov_speed" style="@style/POVPlayerAction" android:text="@string/t_speed_1x"
+            <dev.pov.tv.PlayerActionButton android:id="@+id/pov_speed" style="@style/POVPlayerAction" android:text="@string/t_speed_1x"
                 android:drawableStart="@drawable/pov_ic_speed" android:nextFocusUp="@id/exo_progress" />
-            <Button android:id="@+id/pov_screen_fit" style="@style/POVPlayerAction" android:text="@string/t_screen_fit_default"
+            <dev.pov.tv.PlayerActionButton android:id="@+id/pov_screen_fit" style="@style/POVPlayerAction" android:text="@string/t_screen_fit_default"
                 android:drawableStart="@drawable/pov_ic_screen" android:nextFocusUp="@id/exo_progress" />
-            <Button android:id="@+id/pov_browse" style="@style/POVPlayerAction" android:text="@string/t_browse"
+            <dev.pov.tv.PlayerActionButton android:id="@+id/pov_browse" style="@style/POVPlayerAction" android:text="@string/t_browse"
                 android:drawableStart="@drawable/pov_ic_browse" android:nextFocusUp="@id/exo_progress" />
-            <Button android:id="@+id/pov_info" style="@style/POVPlayerAction" android:text="@string/t_info"
+            <dev.pov.tv.PlayerActionButton android:id="@+id/pov_info" style="@style/POVPlayerAction" android:text="@string/t_info"
                 android:drawableStart="@drawable/pov_ic_info" android:nextFocusUp="@id/exo_progress" android:visibility="gone" />
-            <Button android:id="@+id/pov_episodes" style="@style/POVPlayerAction" android:text="@string/t_episodes"
+            <dev.pov.tv.PlayerActionButton android:id="@+id/pov_episodes" style="@style/POVPlayerAction" android:text="@string/t_episodes"
                 android:drawableStart="@drawable/pov_ic_episodes" android:nextFocusUp="@id/exo_progress" android:visibility="gone" />
         </LinearLayout>
+        </HorizontalScrollView>
     </LinearLayout>
 </FrameLayout>
 

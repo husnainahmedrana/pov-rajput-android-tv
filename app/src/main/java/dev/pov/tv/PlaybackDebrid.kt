@@ -22,7 +22,7 @@ internal object PlaybackDebrid {
     fun addon(source: SourceItem): String? = source.addon ?: if (source.directUrl.isNotEmpty()) AddonBadges.of("", source.provider) else null
     /** A logo id's name; unknown ids give the id itself. */
     fun describe(id: String) = label(id)
-    private fun label(id: String) = when (id) { EASYNEWS -> "Easynews"; PENGUPLAY -> "PenguPlay"; CNCVERSE -> "CNCVerse"; PLAVIO -> "PlavioHD"; AIOSTREAMS -> "AIOStreams"; AddonBadges.ALTMOUNT -> "AltMount"; AddonBadges.STREAMNZB -> "StreamNZB"; AddonBadges.DEBRIDIO -> "Debridio"; AddonBadges.TORRENTIO -> "Torrentio"; AddonBadges.COMET -> "Comet"; AddonBadges.METEOR -> "Meteor"; AddonBadges.STREMTHRU -> "StremThru";in AddonBadges.NEWS_PROVIDER_IDS -> AddonBadges.NEWS_PROVIDERS.first { it.first == id }.second
+    private fun label(id: String) = when (id) { EASYNEWS -> "Easynews"; dev.pov.tv.data.MediaFlowProxy.LOGO -> "MediaFlow Proxy"; PENGUPLAY -> "PenguPlay"; CNCVERSE -> "CNCVerse"; PLAVIO -> "PlavioHD"; AIOSTREAMS -> "AIOStreams"; AddonBadges.ALTMOUNT -> "AltMount"; AddonBadges.STREAMNZB -> "StreamNZB"; AddonBadges.DEBRIDIO -> "Debridio"; AddonBadges.TORRENTIO -> "Torrentio"; AddonBadges.COMET -> "Comet"; AddonBadges.METEOR -> "Meteor"; AddonBadges.STREMTHRU -> "StremThru";in AddonBadges.NEWS_PROVIDER_IDS -> AddonBadges.NEWS_PROVIDERS.first { it.first == id }.second
         in AddonBadges.INDEXER_NAMES -> AddonBadges.INDEXER_NAMES.getValue(id)
         // Never crash on a logo id without a name (it only feeds the spoken description).
         else -> if (id in DebridServices.IDS) DebridServices.name(id) else id }
@@ -36,6 +36,7 @@ internal object PlaybackDebrid {
         "premiumize" -> R.drawable.pov_premiumize_logo
         EASYNEWS -> R.drawable.pov_easynews_logo
         PENGUPLAY -> R.drawable.pov_penguplay_logo
+        dev.pov.tv.data.MediaFlowProxy.LOGO -> R.drawable.pov_mediaflow_logo
         CNCVERSE -> R.drawable.pov_cncverse_logo
         PLAVIO -> R.drawable.pov_plavio_logo
         AIOSTREAMS -> R.drawable.pov_aiostreams_logo
@@ -96,7 +97,24 @@ internal object PlaybackDebrid {
         return if (more.isEmpty()) addon else "$addon|${more.joinToString(",")}"
     }
 
-    fun bind(root: View, service: String?, url: String = "", addon: String? = null) {
+    /**
+     * A link row's logos: where it plays from (add-on, cache), then, faded, the check-on-play services that would try
+     * it (Real-Debrid only for names its copyright filter takes), then MediaFlow when it will stream through the proxy.
+     * Returns the logos and the ones drawn faded.
+     */
+    fun rowLogos(source: SourceItem, checkOnPlay: List<String>, proxy: dev.pov.tv.data.MediaFlowProxy.Settings?): Pair<List<Int>, Set<Int>> {
+        val base = SourceBadges.cachedOn(source)
+        val torrent = source.directUrl.isEmpty() && source.infoHash.isNotBlank()
+        val tryOn = if (!torrent) emptyList() else checkOnPlay.filter { it !in source.cachedServices && it !in base &&
+            !(it == dev.pov.tv.data.RealDebridFilter.SERVICE && dev.pov.tv.data.RealDebridFilter.refused(source)) }
+        val playOn = if (torrent) source.cachedServices.firstOrNull() ?: tryOn.firstOrNull() else null
+        // A torrent no connected service would play (a name Real-Debrid refuses, nothing cached) streams nowhere: no MediaFlow logo.
+        val proxied = proxy != null && !(torrent && playOn == null) && dev.pov.tv.data.MediaFlowProxy.routes(source, playOn, proxy)
+        val ids = (base + tryOn + listOfNotNull(dev.pov.tv.data.MediaFlowProxy.LOGO.takeIf { proxied })).map(::logo)
+        return ids to tryOn.map(::logo).toSet()
+    }
+
+    fun bind(root: View, service: String?, url: String = "", addon: String? = null, proxied: Boolean = false) {
         val tagged = addon?.substringBefore('|')
         val badge0 = root.findViewById<android.view.ViewGroup>(R.id.pov_debrid_badge)
         val name0 = root.findViewById<TextView>(R.id.pov_debrid_name)
@@ -151,7 +169,9 @@ internal object PlaybackDebrid {
         }
         // The extra logos from a previous video are replaced.
         (badge.childCount - 1 downTo 0).map(badge::getChildAt).filter { it.tag == EXTRA_LOGO }.forEach(badge::removeView)
-        extras.forEach { extra ->
+        // Streaming through the viewer's MediaFlow Proxy: its logo after the service's.
+        if (proxied) badge.visibility = View.VISIBLE
+        (extras + listOfNotNull(dev.pov.tv.data.MediaFlowProxy.LOGO.takeIf { proxied })).forEach { extra ->
             badge.addView(ImageView(root.context).apply {
                 tag = EXTRA_LOGO; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 scaleType = ImageView.ScaleType.FIT_CENTER; adjustViewBounds = true; maxWidth = (120 * density).toInt()

@@ -546,7 +546,8 @@ class PlayerActivity : Activity() {
             val start = if (logoShown) 0 else dp(16)
             if (params.marginStart != start) { params.marginStart = start; badges.layoutParams = params }
         }
-        PlaybackDebrid.bind(view, InAppPlaybackSession.debridService, InAppPlaybackSession.sourceUrl, InAppPlaybackSession.sourceAddon)
+        PlaybackDebrid.bind(view, InAppPlaybackSession.debridService, InAppPlaybackSession.sourceUrl, InAppPlaybackSession.sourceAddon,
+            InAppPlaybackSession.proxied)
         // Usenet links end the row with a USENET badge; their provider and indexer logos sit with the service logos.
         val usenet = InAppPlaybackSession.sourceAddon?.substringBefore('|') == PlaybackDebrid.USENET
         view.findViewById<PlayerBadgeRow>(R.id.pov_media_badges)?.show(PlayerMediaBadges.from(PlayerMediaFacts.from(
@@ -805,6 +806,7 @@ class PlayerActivity : Activity() {
                 val languages = SourceSortPreferences(this).languages
                 val minutes = player?.duration?.takeIf { it > 0 }?.let { (it / 60_000).toInt() }
                 val checkOnPlay = dev.pov.tv.data.DebridServices.connected(dev.pov.tv.data.SecureStore(this)).filter { it in dev.pov.tv.data.LinkDebrids.CHECK_ON_PLAY }
+                val proxy = dev.pov.tv.data.MediaFlowProxy(dev.pov.tv.data.SecureStore(this)).load().takeIf { it.ready }
                 val playingUrl = InAppPlaybackSession.sourceUrl
                 fun isPlaying(source: dev.pov.tv.data.SourceItem): Boolean {
                     val name = SourceBadges.name(source)
@@ -820,7 +822,8 @@ class PlayerActivity : Activity() {
                     // Only the badges, the release name and the source's own name, as in the source list.
                     StreamsPanel.Entry(source.provider.split(" + ").map(String::trim).filter(String::isNotBlank).ifEmpty { listOf(getString(R.string.t_other)) }, PlayerSheetChoice(name.ifBlank { source.title }, detail = SourceBadges.origin(source),
                         badges = SourceBadges.forRow(source, languages, minutes, checkOnPlay, logos = true),
-                        logos = SourceBadges.cachedOn(source).map(PlaybackDebrid::logo), playing = current,
+                        logos = PlaybackDebrid.rowLogos(source, checkOnPlay, proxy).first,
+                        fadedLogos = PlaybackDebrid.rowLogos(source, checkOnPlay, proxy).second, playing = current,
                         hold = PlaybackDebrid.choices(source, checkOnPlay).takeIf { it.isNotEmpty() }?.let { services -> { pickDebrid(media, source, services) } }) {
                         if (!current) pickStream(media, source)
                     }, current)
@@ -868,7 +871,13 @@ class PlayerActivity : Activity() {
                 switching = false
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 when (result) {
-                    is StreamSwitcher.Result.Ready -> startSwitchedStream(media, result, at)
+                    is StreamSwitcher.Result.Ready -> {
+                        // The picked link was skipped and a later one plays: say which, briefly.
+                        result.source?.takeIf { it !== source && TvChoiceKeys.source(it) != TvChoiceKeys.source(source) }?.let { played ->
+                            Toast.makeText(this, getString(R.string.t_playing_the_next_link_x, SourceBadges.name(played).ifBlank { played.title }.take(80)), Toast.LENGTH_SHORT).show()
+                        }
+                        startSwitchedStream(media, result, at, source)
+                    }
                     is StreamSwitcher.Result.Failed -> Toast.makeText(this, result.message, Toast.LENGTH_LONG).show()
                     is StreamSwitcher.Result.ChooseFile -> showSheet(getString(R.string.t_choose_a_file), getString(R.string.t_this_link_has_several_videos_pick),
                         result.files.map { (id, name, size) ->
@@ -882,7 +891,7 @@ class PlayerActivity : Activity() {
     }
 
     /** Starts the new link in this player at [at]; the session's old link is saved and released first. */
-    private fun startSwitchedStream(media: PlaybackIdentity, ready: StreamSwitcher.Result.Ready, at: Long) {
+    private fun startSwitchedStream(media: PlaybackIdentity, ready: StreamSwitcher.Result.Ready, at: Long, source: dev.pov.tv.data.SourceItem) {
         val service = PlaybackDebrid.normalize(ready.service)
         val intent = Intent().putExtra("url", ready.url).putExtra("title", InAppPlaybackSession.title.ifBlank { media.title })
             .putExtra("identity", media.toJson().toString()).putExtra("key", "media:${media.imdbId}:${media.season}:${media.episode}")
@@ -890,6 +899,9 @@ class PlayerActivity : Activity() {
             .putExtra("playback_account", dev.pov.tv.data.LastPlayedLinks(dev.pov.tv.data.SecureStore(this)).scope(service))
             .putExtra("media_name", ready.name).putExtra("media_size", ready.size)
             .putExtra("headers", org.json.JSONObject(ready.headers).toString())
+            .putExtra("source_origin", dev.pov.tv.data.MediaFlowProxy.Origin.of(ready.source ?: source).encode())
+            // The playing link's logos: an add-on's own (and the service behind it), or the scraper that found the torrent.
+            .putExtra("source_addon", (ready.source ?: source).let { played -> if (played.directUrl.isNotEmpty()) PlaybackDebrid.tag(played) else played.scraper })
         observedError = null
         if (!InAppPlaybackSession.start(this, intent)) {
             Toast.makeText(this, getString(R.string.t_this_link_did_not_return_a), Toast.LENGTH_LONG).show(); return

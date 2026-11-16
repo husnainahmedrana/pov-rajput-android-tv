@@ -86,6 +86,13 @@ data class SourceItem(
     val scraper: String? = null,
     /** Usenet: days since the release was posted (newer posts are less likely to miss articles); null when unknown. */
     val ageDays: Long? = null,
+    /** The add-on (SourceProvider id) the link came from; empty for the app's own Usenet and Easynews search. */
+    val providerId: String = "",
+    /**
+     * A torrent's own name when the add-on also sends the file's (Torrentio: a season pack "From [S01] WEB-DL 1080p"
+     * holding "From.S01E01.mkv"). Real-Debrid judges this name, so its copyright filter checks it too.
+     */
+    val torrentName: String = "",
 )
 
 /** A selected source either streams directly or offers stable TorBox file identities. */
@@ -109,7 +116,9 @@ sealed interface PreparedSource {
         val files: List<DebridFile>,
         override val identity: PlaybackIdentity,
         val preferredFileId: Long?,
-        val accountTag: String
+        val accountTag: String,
+        /** The link that was prepared (check-on-play tries several): its add-on and scraper logo go with the video. */
+        val source: SourceItem? = null
     ) : PreparedSource
 
     data class Files(

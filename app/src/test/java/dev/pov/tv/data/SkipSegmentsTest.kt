@@ -11,7 +11,7 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class SkipSegmentsTest {
-    private val requests = mutableListOf<String>()
+    private val requests: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf())
     private fun api(responses: Map<String, String>) = SkipSegmentsApi { url, _ ->
         requests += url
         responses.entries.firstOrNull { url.contains(it.key) }?.value ?: throw ApiException(404, "none")
@@ -26,6 +26,33 @@ class SkipSegmentsTest {
         val cleaned = SkipSegmentsApi.clean(api.parseIntroDb(json), 3_300_000)
         assertEquals(listOf(SkipSegment(SkipKind.RECAP, 0, 45_000), SkipSegment(SkipKind.INTRO, 320_575, 481_033),
             SkipSegment(SkipKind.CREDITS, 3_167_532, null)), cleaned)
+    }
+
+    @Test fun `SkipDB intro, recap and open-ended outro, doubtful and none left out`() {
+        val api = api(emptyMap())
+        val json = JSONObject("""{"imdb_id":"tt0903747","season":1,"episode":1,"intro_length_estimate_ms":60000,"segments":{
+            "intro":{"start_ms":60000,"end_ms":115000,"match":"exact","adjusted":false,"offset_ms":0,"confidence":0.9},
+            "recap":{"start_ms":0,"end_ms":0,"match":"exact","confidence":1},
+            "outro":{"start_ms":2700000,"match":"shifted","adjusted":true,"offset_ms":1200,"confidence":0.8},
+            "preview":{"start_ms":2790000,"end_ms":2820000,"match":"exact","confidence":0.9}}}""")
+        assertEquals(listOf(SkipSegment(SkipKind.INTRO, 60_000, 115_000), SkipSegment(SkipKind.CREDITS, 2_700_000, null)), api.parseSkipDb(json))
+        val doubtful = JSONObject("""{"segments":{"intro":{"start_ms":60000,"end_ms":115000,"match":"exact","confidence":0.2},
+            "outro":{"start_ms":2700000,"end_ms":2820000,"match":"out-of-range","confidence":0.9},"recap":null,"preview":null}}""")
+        assertTrue(api.parseSkipDb(doubtful).isEmpty())
+    }
+
+    @Test fun `TheIntroDB wins each kind it has, SkipDB fills the rest, both asked`() {
+        requests.clear()
+        val api = api(mapOf(
+            "api.theintrodb.org/v4/media?imdb_id=tt7654321&season=2&episode=4" to """{"intro":[{"start_ms":30000,"end_ms":90000}]}""",
+            "api.skipdb.tv/api/segments?imdb_id=tt7654321&season=2&episode=4&duration=3000" to """{"segments":{
+                "intro":{"start_ms":40000,"end_ms":100000,"match":"exact","confidence":0.9},
+                "recap":{"start_ms":0,"end_ms":25000,"match":"exact","confidence":0.9},
+                "outro":{"start_ms":2800000,"match":"exact","confidence":0.9},"preview":null}}"""))
+        val found = api.segments(PlaybackIdentity("tt7654321", "series", "Show", 2, 4), 3_000_000, null)
+        assertEquals(listOf(SkipSegment(SkipKind.RECAP, 0, 25_000), SkipSegment(SkipKind.INTRO, 30_000, 90_000),
+            SkipSegment(SkipKind.CREDITS, 2_800_000, null)), found)
+        assertTrue(requests.any { it.contains("api.skipdb.tv") } && requests.any { it.contains("api.theintrodb.org") })
     }
 
     @Test fun `AniSkip openings and endings`() {
@@ -56,7 +83,7 @@ class SkipSegmentsTest {
         assertTrue(requests.any { it.contains("episodeLength=1435") })
         val show = api.segments(PlaybackIdentity("tt0903747", "series", "Breaking Bad", 1, 2), 2_900_000, null)
         assertEquals(listOf(SkipSegment(SkipKind.INTRO, 314_568, 330_969)), show)
-        assertTrue(requests.last().contains("duration_ms=2900000"))
+        assertTrue(requests.any { it.contains("api.theintrodb.org") && it.contains("duration_ms=2900000") })
     }
 
     @Test fun `anime without AniSkip data falls back to TheIntroDB`() {

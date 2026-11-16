@@ -19,7 +19,9 @@ class LastPlayedLinks internal constructor(
     data class Link(val identity: PlaybackIdentity, val url: String, val key: String, val service: String?, val account: String, val savedAt: Long,
                     val name: String = "", val size: Long? = null, val headers: Map<String, String> = emptyMap(),
                     /** The player's source tag (add-on, or "usenet|provider,indexer"), so a resumed video shows the same logos. */
-                    val addon: String = "")
+                    val addon: String = "",
+                    /** Where the link came from (MediaFlowProxy.Origin), so a resumed video takes the same proxy route. */
+                    val origin: String = "")
     private fun token(identity: PlaybackIdentity) = "${identity.type}:${identity.imdbId}:${identity.season}:${identity.episode}"
     private fun account(service: String?): String {
         val credential = when (service) { null -> return "direct"; in DebridServices.IDS -> get(DebridServices.credential(service)); else -> return "" }
@@ -34,17 +36,17 @@ class LastPlayedLinks internal constructor(
                 it.optString("service").ifBlank { null }, it.getString("account"), it.getLong("savedAt"),
                 it.optString("name"), it.optLong("size").takeIf { size -> size > 0 },
                 it.optJSONObject("headers")?.let { json -> json.keys().asSequence().associateWith { name -> json.getString(name) } }.orEmpty(),
-                it.optString("addon"))
+                it.optString("addon"), it.optString("origin"))
         } }.filter { it.savedAt <= now() && now() - it.savedAt < KEEP_FOR && secure(it.url) }
     }.getOrDefault(emptyList())
     fun find(identity: PlaybackIdentity): Link? = synchronized(lock) {
         entries().firstOrNull { token(it.identity) == token(identity) && it.account.isNotBlank() && it.account == account(it.service) }
     }
     fun save(identity: PlaybackIdentity, url: String, key: String, service: String?, expectedAccount: String? = null,
-             name: String = "", size: Long? = null, headers: Map<String, String> = emptyMap(), addon: String? = null) = synchronized(lock) {
+             name: String = "", size: Long? = null, headers: Map<String, String> = emptyMap(), addon: String? = null, origin: String = "") = synchronized(lock) {
         if (!secure(url) || !identity.imdbId.matches(Regex("tt[0-9]{5,12}"))) return@synchronized
         val scope = account(service).takeIf { it.isNotBlank() && (expectedAccount == null || expectedAccount == it) } ?: return@synchronized
-        write(listOf(Link(identity, url, key, service, scope, now(), name.take(4000), size?.takeIf { it > 0 }, headers, addon.orEmpty().take(200))) +
+        write(listOf(Link(identity, url, key, service, scope, now(), name.take(4000), size?.takeIf { it > 0 }, headers, addon.orEmpty().take(200), origin.take(200))) +
             entries().filterNot { token(it.identity) == token(identity) })
     }
     fun remove(identity: PlaybackIdentity) = synchronized(lock) { write(entries().filterNot { token(it.identity) == token(identity) }) }
@@ -54,7 +56,8 @@ class LastPlayedLinks internal constructor(
             .put("service", it.service.orEmpty()).put("account", it.account).put("savedAt", it.savedAt)
             .put("name", it.name).also { item -> it.size?.let { size -> item.put("size", size) } }
             .also { item -> if (it.headers.isNotEmpty()) item.put("headers", JSONObject(it.headers)) }
-            .also { item -> if (it.addon.isNotEmpty()) item.put("addon", it.addon) }) }
+            .also { item -> if (it.addon.isNotEmpty()) item.put("addon", it.addon) }
+            .also { item -> if (it.origin.isNotEmpty()) item.put("origin", it.origin) }) }
         put(STORAGE, array.toString())
     }
     // Add-on direct links may be plain HTTP (debrid links are always HTTPS); embedded credentials and local files never replay.

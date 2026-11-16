@@ -24,6 +24,8 @@ internal data class PlayerSheetChoice(
     val badges: List<SourceBadge> = emptyList(),
     /** Service logos (drawable ids) on the row's right, as in the source list: where a link is cached, or its add-on. */
     val logos: List<Int> = emptyList(),
+    /** Of [logos], the ones drawn faded: services that only find out when the link is played. */
+    val fadedLogos: Set<Int> = emptySet(),
     /** Holding OK on the row (e.g. a link: play it on another debrid service). */
     val hold: (() -> Unit)? = null,
     /** The link now playing: a green "Now playing" mark, and choosing it just closes the panel. */
@@ -168,6 +170,7 @@ internal object PlayerOptionSheet {
                     addView(android.widget.ImageView(context).apply {
                         setImageResource(logo); adjustViewBounds = true; maxWidth = dp(70)
                         scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                        if (logo in choice.fadedLogos) alpha = FADED_LOGO
                     }, LinearLayout.LayoutParams(-2, dp(22)).apply { leftMargin = dp(8) })
                 }
             }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })

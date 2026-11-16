@@ -20,8 +20,10 @@ data class AnimeEpisodeRef(val kitsuId: String, val episode: Int)
 
 /**
  * Intro, recap and credits times from public community databases:
- *  - anime: AniSkip (by MyAnimeList ID, mapped from Kitsu), then TheIntroDB;
- *  - shows and movies: TheIntroDB (api.theintrodb.org, by IMDb ID; no key, 5,000 lookups a day per IP).
+ *  - anime: AniSkip (by MyAnimeList ID, mapped from Kitsu), then the two below;
+ *  - shows and movies: TheIntroDB (api.theintrodb.org, by IMDb ID; no key, 5,000 lookups a day per IP) and SkipDB
+ *    (api.skipdb.tv, by IMDb ID; no key, 120 lookups a minute; data under ODbL 1.0, credited in About), asked together:
+ *    each kind (intro, recap, credits) comes from TheIntroDB when it has one, else from SkipDB.
  * Nothing is sent but the title's public IDs, episode numbers and the video's length.
  */
 class SkipSegmentsApi internal constructor(
@@ -33,8 +35,24 @@ class SkipSegmentsApi internal constructor(
         if (!identity.imdbId.matches(Regex("tt\\d{7,8}")) || durationMs <= 0) return emptyList()
         val key = "${identity.imdbId}:${identity.season}:${identity.episode}:${durationMs / 60_000}:${anime?.kitsuId}"
         cache[key]?.let { return it }
-        val found = anime?.let { aniSkip(it, durationMs) }.orEmpty().ifEmpty { introDb(identity, durationMs) }
+        val found = anime?.let { aniSkip(it, durationMs) }.orEmpty().ifEmpty { communityDbs(identity, durationMs) }
         return clean(found, durationMs).also { cache[key] = it }
+    }
+
+    /** TheIntroDB and SkipDB at the same time (no extra wait), merged by [merge]. */
+    private fun communityDbs(identity: PlaybackIdentity, durationMs: Long): List<SkipSegment> {
+        val second = java.util.concurrent.FutureTask { skipDb(identity, durationMs) }
+        Thread(second, "pov-skipdb").apply { isDaemon = true }.start()
+        val first = introDb(identity, durationMs)
+        val other = try { second.get(12, java.util.concurrent.TimeUnit.SECONDS) } catch (_: Exception) { second.cancel(true); emptyList() }
+        return merge(first, other)
+    }
+
+    private fun skipDb(identity: PlaybackIdentity, durationMs: Long): List<SkipSegment> {
+        val episode = if (identity.type == "series") "&season=${identity.season}&episode=${identity.episode}" else ""
+        val text = try { get("https://api.skipdb.tv/api/segments?imdb_id=${identity.imdbId}$episode&duration=${durationMs / 1000}", emptyMap()) }
+            catch (_: Exception) { return emptyList() }
+        return try { parseSkipDb(JSONObject(text)) } catch (_: Exception) { emptyList() }
     }
 
     private fun introDb(identity: PlaybackIdentity, durationMs: Long): List<SkipSegment> {
@@ -82,6 +100,24 @@ class SkipSegmentsApi internal constructor(
         read("credits", SkipKind.CREDITS, false)
     }
 
+    /**
+     * SkipDB's answer: `segments` holds one best `intro`, `recap`, `outro` (credits) and `preview` (unused), each null when
+     * it has none. Times in ms; 0–0 means "confirmed none"; an outro without `end_ms` runs to the end. Segments it could
+     * not fit to this video's length (`match` "out-of-range") or that voters doubt (`confidence` under 0.4) are left out.
+     */
+    internal fun parseSkipDb(json: JSONObject): List<SkipSegment> {
+        val segments = json.optJSONObject("segments") ?: return emptyList()
+        return listOf("intro" to SkipKind.INTRO, "recap" to SkipKind.RECAP, "outro" to SkipKind.CREDITS).mapNotNull { (name, kind) ->
+            val item = segments.optJSONObject(name) ?: return@mapNotNull null
+            if (item.optString("match") == "out-of-range") return@mapNotNull null
+            if (item.has("confidence") && !item.isNull("confidence") && item.optDouble("confidence", 1.0) < MIN_SKIPDB_CONFIDENCE) return@mapNotNull null
+            val start = item.optLong("start_ms", -1).takeIf { it >= 0 } ?: return@mapNotNull null
+            val end = if (item.isNull("end_ms") || !item.has("end_ms")) (if (kind == SkipKind.CREDITS) null else return@mapNotNull null) else item.optLong("end_ms")
+            if (start == 0L && end == 0L) return@mapNotNull null // confirmed none
+            SkipSegment(kind, start, end)
+        }
+    }
+
     internal fun parseAniSkip(json: JSONObject): List<SkipSegment> {
         if (!json.optBoolean("found")) return emptyList()
         val results = json.optJSONArray("results") ?: return emptyList()
@@ -101,6 +137,13 @@ class SkipSegmentsApi internal constructor(
     companion object {
         private val cache = ConcurrentHashMap<String, List<SkipSegment>>()
         private val malIds = ConcurrentHashMap<String, String>()
+        private const val MIN_SKIPDB_CONFIDENCE = 0.4
+
+        /** Each kind from TheIntroDB ([first]) when it has that kind, otherwise SkipDB's ([second]). */
+        internal fun merge(first: List<SkipSegment>, second: List<SkipSegment>): List<SkipSegment> {
+            val have = first.map { it.kind }.toSet()
+            return first + second.filter { it.kind !in have }
+        }
 
         /**
          * Drops impossible or useless segments (under 3 s, outside the video, credits in the first third) and joins

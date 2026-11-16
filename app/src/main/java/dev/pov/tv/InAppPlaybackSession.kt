@@ -67,6 +67,9 @@ object InAppPlaybackSession {
         private set
     private var sourceKey = ""
     private var sourceHeaders = emptyMap<String, String>()
+    /** MediaFlowProxy.Origin of the link, encoded; [proxied] is true while it streams through the viewer's MediaFlow Proxy. */
+    private var sourceOrigin = ""
+    var proxied = false; private set
     private var playbackAccount: String? = null
     private var lastLinkSaved = false
     /** The automatic forced-subtitle check runs once per video. */
@@ -198,6 +201,7 @@ object InAppPlaybackSession {
         application = app
         history = PlaybackStore(app)
         secureStore = SecureStore(app)
+        dev.pov.tv.data.MediaFlowProxy.install(secureStore)
         weTrakrApi = WeTrakrApi(secureStore); simklApi = dev.pov.tv.data.SimklApi(secureStore)
         weTrakrOutbox = PlaybackStore(app, dev.pov.tv.data.Trackers.outboxKey(dev.pov.tv.data.Trackers.WETRAKR))
         simklOutbox = PlaybackStore(app, dev.pov.tv.data.Trackers.outboxKey(dev.pov.tv.data.Trackers.SIMKL))
@@ -235,6 +239,7 @@ object InAppPlaybackSession {
         lastLinkSaved = false
         debridService = PlaybackDebrid.normalize(saved?.getString("debrid_service") ?: intent.getStringExtra("debrid_service"))
         sourceAddon = saved?.getString("source_addon") ?: intent.getStringExtra("source_addon")
+        sourceOrigin = saved?.getString("source_origin") ?: intent.getStringExtra("source_origin").orEmpty()
         title = intent.getStringExtra("title").orEmpty()
         if (saved == null) SubtitleSync.reset()
         subtitlesChecked = saved != null
@@ -317,12 +322,16 @@ object InAppPlaybackSession {
         // Direct links often redirect http <-> https (e.g. 307 to a CDN); ExoPlayer refuses
         // cross-protocol redirects by default, while Stremio and VLC follow them.
         val playing = sourceUrl
+        // Chosen debrid services and add-ons stream through the viewer's MediaFlow Proxy; the saved link stays the original.
+        val routed = dev.pov.tv.data.MediaFlowProxy(secureStore).route(playing, sourceHeaders, debridService,
+            dev.pov.tv.data.MediaFlowProxy.Origin.decode(sourceOrigin))
+        proxied = routed.proxied
         // Debrid and Usenet-backed links can take well over the default 8 s to send their first bytes.
         // AIOStreams (Usenet especially) fetches a seek's new spot from the news server first: it gets twice as long.
         val http = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(if (cachedReplay) CACHED_CONNECT_TIMEOUT_MS else 15_000).setReadTimeoutMs(if (aioStreams) 60_000 else 30_000)
-            .setTransferListener(sizeFromServer(playing))
-            .setDefaultRequestProperties(sourceHeaders)
+            .setTransferListener(sizeFromServer(playing, routed.url))
+            .setDefaultRequestProperties(routed.headers)
         val exo = ExoPlayer.Builder(application!!, renderers)
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(application!!,
                 // Easynews links get the saved login inside the player; it is never in the link or the intent.
@@ -395,7 +404,7 @@ object InAppPlaybackSession {
                     val media = identity; val account = playbackAccount
                     // Header-bound links keep their headers; if those have expired, resuming falls back to a fresh search.
                     if (media != null && account != null) runCatching {
-                        dev.pov.tv.data.LastPlayedLinks(SecureStore(application!!)).save(media, sourceUrl, sourceKey, debridService, account, mediaName, mediaSize, sourceHeaders, sourceAddon)
+                        dev.pov.tv.data.LastPlayedLinks(SecureStore(application!!)).save(media, sourceUrl, sourceKey, debridService, account, mediaName, mediaSize, sourceHeaders, sourceAddon, sourceOrigin)
                     }
                 }
                 if (state == Player.STATE_READY && remotePercent > 0 && exo.duration > 0) {
@@ -475,7 +484,7 @@ object InAppPlaybackSession {
                 notifyChanged()
             }
         })
-        exo.setMediaItem(MediaItem.Builder().setUri(address)
+        exo.setMediaItem(MediaItem.Builder().setUri(routed.url)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build())
         exo.seekTo(position)
         exo.prepare()
@@ -551,7 +560,7 @@ object InAppPlaybackSession {
         mediaSession?.release(); mediaSession = null
         exo?.release(); player = null
         UsenetSessions.close()
-        sourceUrl = ""; sourceKey = ""; sourceHeaders = emptyMap(); title = ""; mediaName = ""; mediaSize = null; identity = null; debridService = null; sourceAddon = null; playbackAccount = null; lastLinkSaved = false
+        sourceUrl = ""; sourceKey = ""; sourceHeaders = emptyMap(); title = ""; mediaName = ""; mediaSize = null; identity = null; debridService = null; sourceAddon = null; sourceOrigin = ""; proxied = false; playbackAccount = null; lastLinkSaved = false
         remotePercent = 0.0; error = null
         if (notify) notifyChanged()
     }
@@ -561,6 +570,7 @@ object InAppPlaybackSession {
         out.putLong("position", exo.currentPosition.coerceAtLeast(0))
         out.putString("debrid_service", debridService)
         out.putString("source_addon", sourceAddon)
+        out.putString("source_origin", sourceOrigin)
         out.putString("playback_account", playbackAccount)
         out.putBoolean("playWhenReady", exo.playWhenReady && exo.playbackState != Player.STATE_ENDED)
         out.putDouble("remotePercent", remotePercent)
@@ -574,6 +584,7 @@ object InAppPlaybackSession {
             .putExtra("headers", JSONObject(sourceHeaders).toString())
             .putExtra("media_name", mediaName).putExtra("media_size", mediaSize ?: 0L)
             .putExtra("debrid_service", debridService).putExtra("playback_account", playbackAccount).putExtra("source_addon", sourceAddon)
+            .putExtra("source_origin", sourceOrigin)
             .putExtra("resume", exo.currentPosition).putExtra("resume_percent", remotePercent)
             .putExtra("playWhenReady", exo.playWhenReady)
             .also { value -> identity?.let { value.putExtra("identity", it.toJson().toString()) } }
@@ -716,10 +727,10 @@ object InAppPlaybackSession {
      * Without a known size (a link saved before sizes were kept), the size the server reports for the video file
      * itself fills the badge. Playlists and subtitles are other addresses, and anything under 50 MB is ignored.
      */
-    private fun sizeFromServer(playing: String) = object : androidx.media3.datasource.TransferListener {
+    private fun sizeFromServer(playing: String, opened: String = playing) = object : androidx.media3.datasource.TransferListener {
         override fun onTransferInitializing(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean) {}
         override fun onTransferStart(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean) {
-            if (mediaSize != null || dataSpec.uri.toString() != playing) return
+            if (mediaSize != null || dataSpec.uri.toString() != opened) return
             val headers = (source as? androidx.media3.datasource.HttpDataSource)?.responseHeaders ?: return
             fun header(name: String) = headers.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value?.firstOrNull()
             // "Content-Range: bytes 0-1023/4567890" carries the whole file's size; otherwise a full response's length.

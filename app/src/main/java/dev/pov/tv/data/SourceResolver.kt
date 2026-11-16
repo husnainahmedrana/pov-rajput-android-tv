@@ -93,7 +93,7 @@ class SourceResolver internal constructor(
         try {
             providers.forEachIndexed { index, provider -> done.submit {
                 val began = System.nanoTime()
-                val items = try { parseStreams(publicJson("${endpoints[index]}/stream/${identity.type}/$id.json"), provider.name, identity, AddonBadges.of(endpoints[index], provider.name), provider.newsProvider) }
+                val items = try { parseStreams(publicJson("${endpoints[index]}/stream/${identity.type}/$id.json"), provider.name, identity, AddonBadges.of(endpoints[index], provider.name), provider.newsProvider, provider.id) }
                 catch (error: InterruptedException) { throw error }
                 catch (error: java.util.concurrent.CancellationException) { throw error }
                 catch (_: Exception) { null }
@@ -155,7 +155,7 @@ class SourceResolver internal constructor(
         return SearchResult(results, failures, late, stoppedEarly && pending.isNotEmpty())
     }
 
-    private fun parseStreams(payload: JSONObject, provider: String, identity: PlaybackIdentity, addon: String? = null, newsProvider: String = ""): List<SourceItem> {
+    private fun parseStreams(payload: JSONObject, provider: String, identity: PlaybackIdentity, addon: String? = null, newsProvider: String = "", providerId: String = ""): List<SourceItem> {
         val streams = payload.optJSONArray("streams") ?: return emptyList()
         return (0 until minOf(streams.length(), 300)).mapNotNull { index ->
             val stream = streams.optJSONObject(index) ?: return@mapNotNull null
@@ -184,7 +184,9 @@ class SourceResolver internal constructor(
             // An add-on that holds the viewer's debrid key says which service in the link's name ("[TB+] Torrentio").
             val debridTag = if (direct.isBlank()) null else AddonDebridTag.of(stream.optString("name"))
             val fileIndex = if (stream.has("fileIdx") && !stream.isNull("fileIdx")) stream.optInt("fileIdx", -1).takeIf { it >= 0 } else null
-            SourceItem(title = title, provider = provider, infoHash = hash, fileIndex = fileIndex, directUrl = direct,
+            SourceItem(title = title, provider = provider, providerId = providerId,
+                torrentName = if (hash.isBlank()) "" else torrentNameOf(stream, title),
+                infoHash = hash, fileIndex = fileIndex, directUrl = direct,
                 sizeBytes = SourceMetadata.sizeBytes(stream), qualityHeight = SourceMetadata.qualityHeight(stream), headers = headers,
                 addon = linkAddon?.takeIf { direct.isNotBlank() },
                 scraper = linkAddon?.takeIf { direct.isBlank() && it in AddonBadges.SCRAPERS },
@@ -360,16 +362,21 @@ class SourceResolver internal constructor(
         if (services.isEmpty()) return null
         val api = checkNotNull(links)
         val tries = candidates.filter { HASH.matches(it.infoHash.lowercase(Locale.ROOT)) &&
-            !(identity.type == "series" && EpisodeFilename.isExplicitMismatch(it.title, identity.season, identity.episode)) }
-            .take(LinkDebrids.CHECK_LIMIT)
+            !(identity.type == "series" && EpisodeFilename.isExplicitMismatch(it.title, identity.season, identity.episode)) &&
+            // Names Real-Debrid's copyright filter refuses would only use up the tries.
+            services.any { service -> service != RealDebridFilter.SERVICE || !RealDebridFilter.refused(it) } }
+            .take(LinkDebrids.checkLimit(services))
         tries.forEachIndexed { index, source ->
             for (service in services) {
                 if (Thread.currentThread().isInterrupted) throw InterruptedException(L10n.tr(R.string.t_source_preparation_cancelled, "Source preparation cancelled."))
+                if (service == RealDebridFilter.SERVICE && RealDebridFilter.refused(source)) continue
                 progress(index + 1, tries.size, service)
                 val prepared = try { api.prepare(service, source, identity) }
                     catch (error: InterruptedException) { throw error }
                     // A rejected key fails every link the same way; say so instead of trying the rest.
                     catch (error: ApiException) { if (error.code == 401 || error.code == 403) throw error; null }
+                    // Real-Debrid is refusing every add on the account for a while: the other links would only be refused too.
+                    catch (error: RealDebridPausedException) { throw error }
                     catch (_: IllegalStateException) { null }
                 if (prepared != null && prepared.files.isNotEmpty()) return prepared
             }
@@ -463,6 +470,20 @@ class SourceResolver internal constructor(
     }
 }
 
+/**
+ * A torrent's own name, which Real-Debrid judges, when the add-on sends it apart from the file name (checked against
+ * live answers 2026-11-17): `behaviorHints.folderName` (Meteor, MediaFusion, AIOStreams), else the first line of the
+ * old `title` field (Torrentio and its forks: TorrentsDB, KnightCrawler). Formatted `description`s (Comet, StremThru
+ * Torz) hold tags such as "WEB-DL · HEVC", never the name, so they are not read; Comet's file name already is the
+ * torrent's title.
+ */
+internal fun torrentNameOf(stream: JSONObject, title: String): String {
+    val folder = stream.optJSONObject("behaviorHints")?.optString("folderName").orEmpty().trim()
+    val legacy = if (stream.optString("description").isBlank()) stream.optString("title").lineSequence().firstOrNull().orEmpty().trim() else ""
+    return folder.ifBlank { legacy }.take(500).takeIf { it != title }.orEmpty()
+}
+
+
 internal data class VideoCandidate(val id: Long, val name: String, val size: Long)
 
 /** The adapter never treats a provider's zero-based file index as a TorBox file ID. */
@@ -535,6 +556,9 @@ internal object EpisodeFilename {
     }
 
     /** Preserve every eligible edition, in service order; choice belongs to the user. */
+    /** The playable video files (no samples) among [files]. */
+    fun videos(files: List<VideoCandidate>) = files.filter { it.id >= 0 && videoExtension.containsMatchIn(it.name) && !sample.containsMatchIn(it.name) }
+
     fun choices(files: List<VideoCandidate>, sourceTitle: String, identity: PlaybackIdentity): List<VideoCandidate> {
         val videos = files.filter { it.id >= 0 && videoExtension.containsMatchIn(it.name) && !sample.containsMatchIn(it.name) }
         if (videos.isEmpty()) throw IllegalStateException(L10n.tr(R.string.t_this_transfer_does_not_contain_a, "This transfer does not contain a playable video file yet."))

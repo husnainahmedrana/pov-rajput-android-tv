@@ -52,6 +52,9 @@ internal class TvChoiceList(context: Context) : LinearLayout(context) {
 }
 
 /** The card owns focus; bounded, non-interactive text cannot scroll itself or intercept the D-pad. */
+/** How strongly a "checked when played" service logo shows. */
+internal const val FADED_LOGO = 0.45f
+
 internal class TvChoiceRow(
     context: Context,
     key: String,
@@ -63,6 +66,8 @@ internal class TvChoiceRow(
     withPoster: Boolean = false,
     /** Service logos (drawable ids) shown in the card's right side, such as where a link is cached. */
     logos: List<Int> = emptyList(),
+    /** Of [logos], the ones drawn faded: services that only find out when the link is played. */
+    fadedLogos: Set<Int> = emptySet(),
     /** See-through cards, for lists over artwork. */
     glass: Boolean = false,
     action: () -> Unit,
@@ -126,6 +131,7 @@ internal class TvChoiceRow(
                 marks.addView(android.widget.ImageView(context).apply {
                     // Wide wordmarks (Newshosting, NewsDemon, AllDebrid) get room to stay readable; square logos are unaffected.
                     setImageResource(logo); adjustViewBounds = true; maxWidth = px(130); scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                    if (logo in fadedLogos) alpha = FADED_LOGO
                 }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, px(24)).apply { leftMargin = px(8) })
             }
             line.addView(marks, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))

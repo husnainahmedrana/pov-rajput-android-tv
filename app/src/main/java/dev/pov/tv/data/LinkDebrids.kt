@@ -59,7 +59,14 @@ class LinkDebrids internal constructor(
         require(HASH.matches(hash)) { "This source has no valid torrent hash." }
         val key = credential(service)
         val files = when (service) {
-            "realdebrid" -> realDebrid(key, hash, source, identity)
+            "realdebrid" -> try { realDebrid(key, hash, source, identity) }
+                catch (error: ApiException) {
+                    if (!RealDebridFilter.refusal(error)) throw error
+                    // A name it refuses fails every time; any other refusal is Real-Debrid pausing adds on the account.
+                    if (RealDebridFilter.refused(source)) { log(source, hash, "refused (name)"); throw IllegalStateException(refusedMessage()) }
+                    log(source, hash, "refused (account paused)")
+                    throw RealDebridPausedException(L10n.tr(R.string.t_rd_paused, "Real-Debrid is pausing adds on your account for a moment. Try again in a minute."))
+                }
             "alldebrid" -> allDebrid(key, hash)
             "premiumize" -> premiumize(key, hash)
             "debridlink" -> debridLink(key, hash)
@@ -69,7 +76,7 @@ class LinkDebrids internal constructor(
             catch (_: IllegalStateException) { return null }
         check(keyFor(service) == key) { L10n.tr(R.string.t_the_x_account_changed_please_try, "The %1\$s account changed. Please try again.", DebridServices.name(service)) }
         return PreparedSource.Links(service, files.filter { file -> eligible.any { it.id == file.id } }, identity,
-            EpisodeFilename.preferredId(eligible, source.title), tag(key))
+            EpisodeFilename.preferredId(eligible, source.title), tag(key), source)
     }
 
     /** A playable HTTPS address for one prepared file. Real-Debrid and AllDebrid hand out hoster links that must be unlocked first. */
@@ -77,7 +84,7 @@ class LinkDebrids internal constructor(
         check(ownsTag(prepared.service, prepared.accountTag)) { L10n.tr(R.string.t_the_x_account_changed_select_the, "The %1\$s account changed. Select the source again.", DebridServices.name(prepared.service)) }
         val key = credential(prepared.service)
         val url = when (prepared.service) {
-            "realdebrid" -> json(transport.form("POST", "$REAL_DEBRID/unrestrict/link", bearer(key), listOf("link" to file.link))).optString("download")
+            "realdebrid" -> unrestrict(key, file.link)
             "alldebrid" -> {
                 val data = allDebridData(transport.get("$ALL_DEBRID/v4/link/unlock?agent=$AGENT&link=${Net.encode(file.link)}", bearer(key)))
                 data.optString("link").ifBlank {
@@ -106,28 +113,54 @@ class LinkDebrids internal constructor(
         try {
             var info = waitFor(4_000) { json(transport.get("$REAL_DEBRID/torrents/info/$id", auth)).takeIf { it.optString("status") != "magnet_conversion" } }
                 ?: return null
+            var wantedIds = emptySet<Long>()
             if (info.optString("status") == "waiting_files_selection") {
                 val all = info.optJSONArray("files") ?: return null
                 val files = (0 until all.length()).mapNotNull { all.optJSONObject(it) }
                     .map { VideoCandidate(it.optLong("id"), it.optString("path"), it.optLong("bytes")) }
-                // Select only this title's videos: a cached pack is ready at once, anything else starts downloading.
-                val wanted = try { EpisodeFilename.choices(files, source.title, identity) } catch (_: IllegalStateException) { return null }
-                transport.form("POST", "$REAL_DEBRID/torrents/selectFiles/$id", auth, listOf("files" to wanted.joinToString(",") { it.id.toString() }))
+                // This title's videos must be in it; then every video is selected, as Debrid Media Manager does: a season
+                // pack is cached with all its episodes, and one episode on its own may not be ready at once.
+                val wanted = try { EpisodeFilename.choices(files, source.title, identity) } catch (_: IllegalStateException) { log(source, hash, "no file for this title"); return null }
+                wantedIds = wanted.map { it.id }.toSet()
+                val videos = EpisodeFilename.videos(files).ifEmpty { wanted }
+                transport.form("POST", "$REAL_DEBRID/torrents/selectFiles/$id", auth, listOf("files" to videos.joinToString(",") { it.id.toString() }))
                 info = waitFor(4_000) { json(transport.get("$REAL_DEBRID/torrents/info/$id", auth)).takeIf { it.optString("status") != "waiting_files_selection" && it.optString("status") != "magnet_conversion" } }
                     ?: return null
             }
-            if (info.optString("status") != "downloaded") return null
+            if (info.optString("status") != "downloaded") { log(source, hash, "not cached (${info.optString("status")})", info.optString("filename")); return null }
             val all = info.optJSONArray("files") ?: return null
             val selected = (0 until all.length()).mapNotNull { all.optJSONObject(it) }.filter { it.optInt("selected") == 1 }.sortedBy { it.optLong("id") }
             val links = info.optJSONArray("links") ?: return null
             // Links follow the selected files in order; a mismatch means the files were packed into an archive.
             if (links.length() != selected.size) return null
+            // Real-Debrid's copyright filter also judges each file's own name at unrestrict time: a file named like
+            // that never plays, and a torrent that looks cached may still be refused, so ask once for the main file.
+            val files = selected.mapIndexed { index, file -> DebridFile(file.optLong("id"), file.optString("path").substringAfterLast('/'), file.optLong("bytes"), links.getString(index)) }
+                .filterNot { RealDebridFilter.refusedName(it.name) }
+            // Ask once for the file that will play (this title's, when a whole pack was selected).
+            val main = files.filter { wantedIds.isEmpty() || it.id in wantedIds }.maxByOrNull { it.size } ?: files.maxByOrNull { it.size } ?: return null
+            try { unrestrict(key, main.link) }
+            catch (error: ApiException) { if (RealDebridFilter.refusal(error)) { log(source, hash, "refused (file name)", main.name); return null } else throw error }
             keep = true
-            return selected.mapIndexed { index, file -> DebridFile(file.optLong("id"), file.optString("path").substringAfterLast('/'), file.optLong("bytes"), links.getString(index)) }
+            log(source, hash, "ready (${files.size} file${if (files.size == 1) "" else "s"})", info.optString("filename"))
+            return files
         } finally {
             if (!keep) runCatching { transport.delete("$REAL_DEBRID/torrents/delete/$id", auth) }
         }
     }
+
+    /** One line per Real-Debrid try (no key): which torrent, and what Real-Debrid said. */
+    private fun log(source: SourceItem, hash: String, outcome: String, torrent: String = "") {
+        runCatching { android.util.Log.i(LOG_TAG, "${hash.take(8)} ${outcome}: ${(torrent.ifBlank { source.torrentName.ifBlank { source.title } }).take(120)}") }
+    }
+
+    private fun unrestrict(key: String, link: String): String = try {
+        json(transport.form("POST", "$REAL_DEBRID/unrestrict/link", bearer(key), listOf("link" to link))).optString("download")
+    } catch (error: ApiException) {
+        if (RealDebridFilter.refusal(error)) throw ApiException(451, refusedMessage(), "infringing_file") else throw error
+    }
+
+    private fun refusedMessage() = L10n.tr(R.string.t_real_debrid_refuses_this_release, "Real-Debrid refuses this release because of its name (copyright filter). Pick another link.")
 
     private fun allDebrid(key: String, hash: String): List<DebridFile>? {
         val auth = bearer(key)
@@ -215,6 +248,13 @@ class LinkDebrids internal constructor(
         val CHECK_ON_PLAY = setOf("realdebrid", "alldebrid", "debridlink")
         /** How many links a check-on-play attempt tries before giving up. */
         const val CHECK_LIMIT = 7
+        /**
+         * Real-Debrid refuses every add on an account for a while after a few new torrents in a row, so it gets fewer
+         * tries; the other services keep [CHECK_LIMIT].
+         */
+        const val REAL_DEBRID_CHECK_LIMIT = 3
+        fun checkLimit(services: List<String>) = if (RealDebridFilter.SERVICE in services) REAL_DEBRID_CHECK_LIMIT else CHECK_LIMIT
+        const val LOG_TAG = "PovDebrid"
         private const val REAL_DEBRID = "https://api.real-debrid.com/rest/1.0"
         private const val ALL_DEBRID = "https://api.alldebrid.com"
         private const val PREMIUMIZE = "https://www.premiumize.me/api"
@@ -248,3 +288,6 @@ internal interface LinkTransport {
 }
 
 data class DebridFile(val id: Long, val name: String, val size: Long, val link: String)
+
+/** Real-Debrid is refusing every add on the account for a while (its 451 on names it otherwise takes). */
+class RealDebridPausedException(message: String) : IllegalStateException(message)

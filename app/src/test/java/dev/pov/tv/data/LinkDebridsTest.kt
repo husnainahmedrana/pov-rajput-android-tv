@@ -31,7 +31,12 @@ class LinkDebridsTest {
             return answer("GET", url)
         }
         override fun delete(url: String, headers: Map<String, String>) = answer("DELETE", url)
-        override fun form(method: String, url: String, headers: Map<String, String>, fields: List<Pair<String, String>>) = answer(method, url)
+        /** Requests ("METHOD url" prefix) that fail with this error, like Real-Debrid's 451 copyright refusal. */
+        var refuse = emptyMap<String, ApiException>()
+        override fun form(method: String, url: String, headers: Map<String, String>, fields: List<Pair<String, String>>): String {
+            refuse.entries.firstOrNull { (prefix, _) -> "$method $url".startsWith(prefix) }?.let { calls += "$method $url"; throw it.value }
+            return answer(method, url)
+        }
         override fun json(method: String, url: String, headers: Map<String, String>, body: JSONObject) = answer(method, url)
     }
 
@@ -95,6 +100,55 @@ class LinkDebridsTest {
         assertEquals(listOf("Movie.2024.1080p.mkv"), prepared.files.map { it.name })
         assertEquals("https://cdn.real-debrid.com/file.mkv", api(fake).streamUrl(prepared, prepared.files.single()))
         assertTrue(fake.calls.none { it.startsWith("DELETE") })
+    }
+
+    private fun infringing() = ApiException(451, "The service request failed (HTTP 451).", "infringing_file")
+
+    @Test fun `real-debrid skips and removes a cached torrent its copyright filter refuses at unrestrict`() {
+        val fake = Fake(mapOf(
+            "POST https://api.real-debrid.com/rest/1.0/torrents/addMagnet" to """{"id":"T3"}""",
+            "GET https://api.real-debrid.com/rest/1.0/torrents/info/T3" to
+                """{"status":"downloaded","files":[{"id":1,"path":"/Movie.2024.1080p.mkv","bytes":5,"selected":1}],"links":["https://real-debrid.com/d/X"]}""")
+        ).apply { refuse = mapOf("POST https://api.real-debrid.com/rest/1.0/unrestrict/link" to infringing()) }
+        assertNull(api(fake).prepare("realdebrid", source, movie))
+        assertTrue("DELETE https://api.real-debrid.com/rest/1.0/torrents/delete/T3" in fake.calls)
+    }
+
+    @Test fun `real-debrid add refusal of a refused name reads as copyright, of a clean name as the account pause`() {
+        val fake = Fake(emptyMap()).apply { refuse = mapOf("POST https://api.real-debrid.com/rest/1.0/torrents/addMagnet" to infringing()) }
+        val named = assertThrows(IllegalStateException::class.java) {
+            api(fake).prepare("realdebrid", SourceItem("Movie.2024.1080p.mkv", "Torrentio", hash, torrentName = "Movie [2024] WEB-DL 1080p"), movie)
+        }
+        assertTrue(named !is RealDebridPausedException && named.message!!.contains("copyright"))
+        assertThrows(RealDebridPausedException::class.java) { api(fake).prepare("realdebrid", source, movie) }
+    }
+
+    @Test fun `real-debrid selects every video of a pack and plays this episode`() {
+        val episode = PlaybackIdentity("tt9813792", "series", "From", 1, 1)
+        val fake = Fake(mapOf(
+            "POST https://api.real-debrid.com/rest/1.0/torrents/addMagnet" to """{"id":"T5"}""",
+            "GET https://api.real-debrid.com/rest/1.0/torrents/info/T5" to
+                """{"status":"waiting_files_selection","files":[{"id":1,"path":"/From.S01E01.mkv","bytes":9,"selected":0},{"id":2,"path":"/From.S01E02.mkv","bytes":8,"selected":0},{"id":3,"path":"/info.nfo","bytes":1,"selected":0}],"links":[]}"""))
+        val calls = mutableListOf<List<Pair<String, String>>>()
+        var clock = 0L
+        val api = LinkDebrids({ "key-12345678" }, { _, _ -> }, object : LinkTransport by fake {
+            override fun form(method: String, url: String, headers: Map<String, String>, fields: List<Pair<String, String>>): String {
+                if (url.contains("selectFiles")) calls += fields
+                return fake.form(method, url, headers, fields)
+            }
+        }, now = { clock += 1_000_000_000L; clock }, pause = {})
+        api.prepare("realdebrid", SourceItem("From.S01E01.mkv", "Torrentio", hash), episode)
+        assertEquals(listOf(listOf("files" to "1,2")), calls)
+    }
+
+    @Test fun `real-debrid drops pack files whose own names it refuses`() {
+        val fake = Fake(mapOf(
+            "POST https://api.real-debrid.com/rest/1.0/torrents/addMagnet" to """{"id":"T4"}""",
+            "GET https://api.real-debrid.com/rest/1.0/torrents/info/T4" to
+                """{"status":"downloaded","files":[{"id":1,"path":"/Movie.2024.1080p.WEB-DL.mkv","bytes":9,"selected":1},{"id":2,"path":"/Movie.2024.1080p.BluRay.x265.mkv","bytes":5,"selected":1}],"links":["https://real-debrid.com/d/A","https://real-debrid.com/d/B"]}""",
+            "POST https://api.real-debrid.com/rest/1.0/unrestrict/link" to """{"download":"https://cdn.real-debrid.com/b.mkv"}"""))
+        val prepared = api(fake).prepare("realdebrid", SourceItem("Movie 2024 pack", "Torrentio", hash), movie)!!
+        assertEquals(listOf("Movie.2024.1080p.BluRay.x265.mkv"), prepared.files.map { it.name })
     }
 
     @Test fun `real-debrid removes a torrent that is not cached`() {
