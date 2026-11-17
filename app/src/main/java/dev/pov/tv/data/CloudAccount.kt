@@ -45,6 +45,11 @@ class CloudAccount(private val context: Context, private val store: Store) {
     class ResetSession(val email: String, val token: String, val wrappedRecovery: String, val settingsKey: ByteArray,
                        val settings: String, val secrets: String)
     class ResetResult(val newRecoveryKey: String?, val restored: Restored)
+    /** The account's backup as the server holds it now, opened with this device's keys. [updated] is the server's time. */
+    class Remote(val updated: Long, val restored: Restored)
+    /** Another device saved a newer backup: uploading now would overwrite it. */
+    class NewerElsewhere(val remote: Remote) : IllegalStateException(
+        L10n.tr(R.string.bk_newer_elsewhere, "Another device saved newer settings to your account. Load them or keep this device's first."))
 
     val signedIn get() = email.isNotBlank() && store.get(AUTH).isNotBlank()
     val email: String get() = store.get(EMAIL)
@@ -110,12 +115,17 @@ class CloudAccount(private val context: Context, private val store: Store) {
 
     // ---------- backup ----------
 
-    /** Uploads this device's setup when it changed since the last backup (or always, with [force]). */
-    fun backup(force: Boolean = false): Boolean {
+    /**
+     * Uploads this device's setup when it changed since the last backup (or always, with [force]). A newer backup
+     * from another device is never overwritten unless [overwrite]: [NewerElsewhere] is thrown instead, so the viewer
+     * can choose which one to keep.
+     */
+    fun backup(force: Boolean = false, overwrite: Boolean = false): Boolean {
         check(signedIn) { L10n.tr(R.string.t_sign_in_to_your_x_account, "Sign in to your %1\$s account first.", dev.pov.tv.BuildConfig.APP_SHORT) }
         val layers = collect()
         val fingerprint = layers.fingerprint()
         if (!force && fingerprint == store.get(LAST_HASH)) return false
+        if (!overwrite) fetch().takeIf(::newerElsewhere)?.let { throw NewerElsewhere(it) }
         val dataKey = BackupCrypto.decode(store.get(DATA_KEY)); val settingsKey = BackupCrypto.decode(store.get(SETTINGS_KEY))
         val result = try {
             post("/v1/backup", JSONObject().put("email", email).put("auth", store.get(AUTH))
@@ -128,6 +138,33 @@ class CloudAccount(private val context: Context, private val store: Store) {
         }
         backedUp(fingerprint, result.optLong("updated"))
         return true
+    }
+
+    // ---------- other devices ----------
+
+    /** Reads the account's backup as it is now (signed-in call, so nothing is changed on the server). */
+    fun fetch(): Remote {
+        check(signedIn) { L10n.tr(R.string.t_sign_in_to_your_x_account, "Sign in to your %1\$s account first.", dev.pov.tv.BuildConfig.APP_SHORT) }
+        val result = try { post("/v1/login", JSONObject().put("email", email).put("auth", store.get(AUTH))) }
+        catch (error: ApiException) {
+            if (error.code == 401) { forget(); throw ApiException(401, L10n.tr(R.string.t_your_x_account_password_was_changed, "Your %1\$s account password was changed. Sign in again to keep backing up.", dev.pov.tv.BuildConfig.APP_SHORT)) }
+            throw error
+        }
+        val dataKey = BackupCrypto.decode(store.get(DATA_KEY)); val settingsKey = BackupCrypto.decode(store.get(SETTINGS_KEY))
+        return Remote(result.optLong("updated"), Restored(openLayer(settingsKey, result.optString("settings"), BackupCrypto.SETTINGS),
+            openLayer(dataKey, result.optString("secrets"), BackupCrypto.SECRETS)))
+    }
+
+    /** [remote] was saved by another device after this one last backed up or loaded the account's backup. */
+    fun newerElsewhere(remote: Remote) = remote.restored.hasData && remote.updated > lastBackup
+
+    /** This device has changes it hasn't backed up yet. */
+    fun changedHere() = collect().fingerprint() != store.get(LAST_HASH)
+
+    /** Loads another device's newer backup over this device's setup; the next backup then starts from it. */
+    fun load(remote: Remote) {
+        apply(remote.restored)
+        backedUp(collect().fingerprint(), remote.updated)
     }
 
     // ---------- password ----------

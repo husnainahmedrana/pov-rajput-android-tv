@@ -151,8 +151,40 @@ internal class AccountDialogs(
     fun backupNow() {
         toast(activity.getString(R.string.t_backing_up))
         worker.execute {
-            val message = try { account.backup(force = true); activity.getString(R.string.t_backed_up_to_your_x_account, BuildConfig.APP_SHORT) } catch (error: Exception) { uiErrorMessage(error) }
+            val message = try { account.backup(force = true); activity.getString(R.string.t_backed_up_to_your_x_account, BuildConfig.APP_SHORT) }
+                catch (newer: CloudAccount.NewerElsewhere) { handler.post { newerBackup(newer.remote, true) }; return@execute }
+                catch (error: Exception) { uiErrorMessage(error) }
             handler.post { if (alive()) { toast(message); changed() } }
+        }
+    }
+
+    /**
+     * Another device saved newer settings to the account: load them here (the app restarts so every screen reads
+     * them), or keep this device's, which are then uploaded over them. [changedHere]: this device also has changes
+     * that aren't backed up, which loading would replace.
+     */
+    fun newerBackup(remote: CloudAccount.Remote, changedHere: Boolean) {
+        if (!alive()) return
+        val time = android.text.format.DateUtils.getRelativeTimeSpanString(remote.updated, System.currentTimeMillis(),
+            android.text.format.DateUtils.MINUTE_IN_MILLIS).toString()
+        val message = activity.getString(R.string.bk_newer_message, time) +
+            if (changedHere) "\n\n" + activity.getString(R.string.bk_newer_conflict) else ""
+        SpacedChoiceDialog.show(activity, activity.getString(R.string.bk_newer_title), message,
+            activity.getString(R.string.bk_load), activity.getString(R.string.bk_keep_this),
+            onSecondary = {
+                worker.execute {
+                    val note = try { account.backup(force = true, overwrite = true); activity.getString(R.string.bk_kept) } catch (error: Exception) { uiErrorMessage(error) }
+                    handler.post { if (alive()) { toast(note); changed() } }
+                }
+            }) {
+            toast(activity.getString(R.string.bk_loading))
+            worker.execute {
+                val failure = try { account.load(remote); null } catch (error: Exception) { uiErrorMessage(error) }
+                handler.post {
+                    if (failure != null) { if (alive()) toast(failure) }
+                    else restart(activity.getString(R.string.bk_loaded))
+                }
+            }
         }
     }
 

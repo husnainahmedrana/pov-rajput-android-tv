@@ -30,8 +30,8 @@ object UsenetSearch {
      * far fall short; backup-only indexers only when nothing at all was found. A tier whose every indexer failed counts
      * as finding nothing; when every indexer searched failed, the last failure is reported.
      */
-    fun searchTiers(tiers: List<List<NewznabIndexer>>, backupTier: Boolean, quality: Int,
-                    search: (NewznabIndexer) -> List<SourceItem>): List<SourceItem> {
+    fun <T> searchTiers(tiers: List<List<T>>, backupTier: Boolean, quality: Int,
+                        search: (T) -> List<SourceItem>): List<SourceItem> {
         val found = mutableListOf<SourceItem>()
         var failure: Exception? = null
         var answered = false

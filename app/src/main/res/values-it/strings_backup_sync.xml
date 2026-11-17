@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="bk_newer_title">Impostazioni più recenti da un altro dispositivo</string>
+    <string name="bk_newer_message">Un altro dispositivo con il tuo account ha salvato le sue impostazioni %1$s: add-on, servizi debrid, provider e indexer Usenet e preferenze. Caricarle su questo dispositivo? L\'app si riavvia per usarle.</string>
+    <string name="bk_newer_conflict">Anche questo dispositivo ha modifiche non salvate. Caricare le sostituisce; tenere le impostazioni di questo dispositivo sostituisce quelle dell\'altro nel tuo account.</string>
+    <string name="bk_load">Carica</string>
+    <string name="bk_keep_this">Tieni queste</string>
+    <string name="bk_kept">Le impostazioni di questo dispositivo sono ora nel tuo account.</string>
+    <string name="bk_loading">Caricamento delle impostazioni dell\'altro dispositivo…</string>
+    <string name="bk_loaded">Impostazioni dell\'altro dispositivo caricate.</string>
+    <string name="bk_newer_elsewhere">Un altro dispositivo ha salvato impostazioni più recenti. Caricale o tieni prima quelle di questo.</string>
+</resources>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="bk_newer_title">Nieuwere instellingen van een ander apparaat</string>
+    <string name="bk_newer_message">Een ander apparaat met je account heeft zijn instellingen %1$s opgeslagen: add-ons, debrid-diensten, Usenet-providers en -indexers en voorkeuren. Op dit apparaat laden? De app start opnieuw om ze te gebruiken.</string>
+    <string name="bk_newer_conflict">Dit apparaat heeft ook wijzigingen zonder back-up. Laden vervangt ze; de instellingen van dit apparaat houden vervangt die van het andere apparaat in je account.</string>
+    <string name="bk_load">Laden</string>
+    <string name="bk_keep_this">Deze houden</string>
+    <string name="bk_kept">De instellingen van dit apparaat staan nu in je account.</string>
+    <string name="bk_loading">Instellingen van het andere apparaat laden…</string>
+    <string name="bk_loaded">Instellingen van je andere apparaat geladen.</string>
+    <string name="bk_newer_elsewhere">Een ander apparaat heeft nieuwere instellingen opgeslagen. Laad ze of houd eerst die van dit apparaat.</string>
+</resources>

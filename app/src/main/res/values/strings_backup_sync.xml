@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="bk_newer_title">Newer settings from another device</string>
+    <string name="bk_newer_message">Another device signed in to your account saved its settings %1$s: add-ons, debrid services, Usenet providers and indexers, and preferences. Load them on this device? The app restarts to use them.</string>
+    <string name="bk_newer_conflict">This device also has changes that weren\'t backed up. Loading replaces them; keeping this device\'s settings replaces the other device\'s in your account.</string>
+    <string name="bk_load">Load</string>
+    <string name="bk_keep_this">Keep this device\'s</string>
+    <string name="bk_kept">This device\'s settings are now in your account.</string>
+    <string name="bk_loading">Loading the other device\'s settings…</string>
+    <string name="bk_loaded">Loaded the settings from your other device.</string>
+    <string name="bk_newer_elsewhere">Another device saved newer settings to your account. Load them or keep this device\'s first.</string>
+</resources>

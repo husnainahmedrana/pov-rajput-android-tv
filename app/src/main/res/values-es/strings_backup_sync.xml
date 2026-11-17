@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="bk_newer_title">Ajustes más recientes de otro dispositivo</string>
+    <string name="bk_newer_message">Otro dispositivo con tu cuenta guardó sus ajustes %1$s: complementos, servicios debrid, proveedores e indexadores de Usenet y preferencias. ¿Cargarlos en este dispositivo? La app se reinicia para usarlos.</string>
+    <string name="bk_newer_conflict">Este dispositivo también tiene cambios sin copia de seguridad. Cargar los reemplaza; conservar los ajustes de este dispositivo reemplaza los del otro en tu cuenta.</string>
+    <string name="bk_load">Cargar</string>
+    <string name="bk_keep_this">Conservar las de este</string>
+    <string name="bk_kept">Los ajustes de este dispositivo ya están en tu cuenta.</string>
+    <string name="bk_loading">Cargando los ajustes del otro dispositivo…</string>
+    <string name="bk_loaded">Se cargaron los ajustes de tu otro dispositivo.</string>
+    <string name="bk_newer_elsewhere">Otro dispositivo guardó ajustes más recientes. Cárgalos o conserva primero los de este.</string>
+</resources>

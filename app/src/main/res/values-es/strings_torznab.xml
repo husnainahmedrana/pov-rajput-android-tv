@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tz_torznab">Torznab</string>
+    <string name="tz_subtitle">Jackett, Prowlarr o cualquier URL Torznab</string>
+    <string name="tz_row_desc">Busca torrents en tus indexadores Jackett, Prowlarr o Torznab; se reproducen con tus servicios debrid.</string>
+    <string name="tz_need_debrid">Conecta primero un servicio debrid: los enlaces torrent de estos indexadores se reproducen con él.</string>
+    <string name="tz_results_limit">Resultados por indexador</string>
+    <string name="tz_results_limit_desc">Los enlaces con más seeders de cada indexador; los públicos pueden enviar más de mil.</string>
+    <string name="tz_add">Añadir indexador Torznab</string>
+    <string name="tz_add_desc">Tu Jackett, tu Prowlarr o una dirección Torznab</string>
+    <string name="tz_use_as_backup">Usar solo como respaldo</string>
+    <string name="tz_kind_jackett">Jackett (todos sus indexadores)</string>
+    <string name="tz_kind_prowlarr">Prowlarr (añade cada indexador torrent)</string>
+    <string name="tz_kind_url">Dirección Torznab</string>
+    <string name="tz_jackett_address">Dirección de Jackett, como http://192.168.1.10:9117</string>
+    <string name="tz_prowlarr_address">Dirección de Prowlarr, como http://192.168.1.10:9696</string>
+    <string name="tz_url_address">Dirección Torznab, como https://example.com/api</string>
+    <string name="tz_jackett_hint">La dirección con la que abres Jackett y la clave API de la parte superior de su panel. Se buscan todos sus indexadores juntos.</string>
+    <string name="tz_prowlarr_hint">La dirección con la que abres Prowlarr y su clave API (Settings → General). Se añade cada indexador torrent activado; los de Usenet van en Ajustes → Usenet.</string>
+    <string name="tz_prowlarr_found">Conectado · %1$s indexadores torrent activados. Guarda para añadirlos.</string>
+    <string name="tz_prowlarr_none">Prowlarr no tiene indexadores torrent activados.</string>
+    <string name="tz_prowlarr_added">Se añadieron %1$s indexadores de Prowlarr</string>
+    <string name="tz_not_torznab">Esta dirección no respondió como un indexador Torznab.</string>
+    <string name="tz_not_prowlarr">Esta dirección no respondió como Prowlarr. Revisa la dirección y la clave API.</string>
+    <string name="tz_address_invalid">Introduce la dirección, como https://example.com/api.</string>
+    <string name="tz_saved_unreadable">No se pudieron leer los indexadores Torznab guardados. Revisa Ajustes → Torznab.</string>
+    <string name="tz_seeders">%1$s seeders</string>
+    <string name="tz_moved_from_addons">Es una dirección Torznab, no un complemento de Stremio: añádela aquí en Torznab.</string>
+</resources>

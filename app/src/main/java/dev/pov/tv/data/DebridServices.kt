@@ -47,6 +47,17 @@ object DebridServices {
         if (destination !in order.indices) return order.toList()
         return order.toMutableList().apply { add(destination, removeAt(index)) }
     }
+    /**
+     * Where a link reported cached on [cachedOn] is tried, in [services] order: the check-on-play services (Real-Debrid
+     * and the like, which can't say in advance) ranked above the first service that has it get one try first, so the
+     * priority list holds for them too; the cached services follow. [skip] leaves out a check-on-play service (a name
+     * Real-Debrid refuses). Nothing cached: empty, as those links go through the check-on-play search instead.
+     */
+    internal fun playOrder(services: List<String>, cachedOn: Collection<String>, skip: (String) -> Boolean = { false }): List<String> {
+        val firstCached = services.indexOfFirst { it in cachedOn }
+        if (firstCached < 0) return emptyList()
+        return services.filterIndexed { index, id -> id in cachedOn || (index < firstCached && id in LinkDebrids.CHECK_ON_PLAY && !skip(id)) }
+    }
     fun move(store: SecureStore, index: Int, offset: Int) = setPriority(store, moved(priority(store), index, offset))
     fun prefer(store: SecureStore, first: String) {
         require(first in IDS)

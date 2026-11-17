@@ -1312,7 +1312,7 @@
     <string name="t_the_encrypted_7z_video_ended_early">La vidéo 7z chiffrée s\'est terminée trop tôt.</string>
     <string name="t_the_file_s_articles_don_t">Les articles du fichier ne se suivent pas ; la position %1$s est introuvable.</string>
     <string name="t_the_first_article_doesn_t_describe">Le premier article ne décrit pas le fichier.</string>
-    <string name="t_the_first_cached_one_of_the">le premier en cache parmi les %1$s premiers est lu. Premiumize, Offcloud et TorBox sont vérifiés pendant le chargement de la liste.</string>
+    <string name="t_the_first_cached_one_of_the">le premier en cache parmi les %1$s premiers est lu. Premiumize, Offcloud et TorBox sont vérifiés pendant le chargement de la liste. Placés au-dessus d\'un service qui a le lien en cache, ils l\'essaient d\'abord une fois.</string>
     <string name="t_the_indexer_address_is_invalid">L\'adresse de l\'indexeur n\'est pas valide.</string>
     <string name="t_the_indexer_answered_with_error_x">L\'indexeur a répondu avec l\'erreur %1$s.</string>
     <string name="t_the_indexer_answered_x">L\'indexeur a répondu : %1$s</string>

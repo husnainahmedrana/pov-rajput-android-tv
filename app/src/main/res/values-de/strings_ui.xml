@@ -1312,7 +1312,7 @@
     <string name="t_the_encrypted_7z_video_ended_early">Das verschlüsselte 7z-Video endete zu früh.</string>
     <string name="t_the_file_s_articles_don_t">Die Artikel der Datei passen nicht zusammen; Position %1$s wurde nicht gefunden.</string>
     <string name="t_the_first_article_doesn_t_describe">Der erste Artikel beschreibt die Datei nicht.</string>
-    <string name="t_the_first_cached_one_of_the">der erste gecachte der ersten %1$s spielt. Premiumize, Offcloud und TorBox werden geprüft, während die Linkliste lädt.</string>
+    <string name="t_the_first_cached_one_of_the">der erste gecachte der ersten %1$s spielt. Premiumize, Offcloud und TorBox werden geprüft, während die Linkliste lädt. Stehen sie über einem Dienst, der einen Link gecacht hat, bekommen sie zuerst einen Versuch damit.</string>
     <string name="t_the_indexer_address_is_invalid">Die Indexer-Adresse ist ungültig.</string>
     <string name="t_the_indexer_answered_with_error_x">Der Indexer antwortete mit Fehler %1$s.</string>
     <string name="t_the_indexer_answered_x">Der Indexer antwortete: %1$s</string>

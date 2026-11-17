@@ -22,7 +22,7 @@ internal object PlaybackDebrid {
     fun addon(source: SourceItem): String? = source.addon ?: if (source.directUrl.isNotEmpty()) AddonBadges.of("", source.provider) else null
     /** A logo id's name; unknown ids give the id itself. */
     fun describe(id: String) = label(id)
-    private fun label(id: String) = when (id) { EASYNEWS -> "Easynews"; dev.pov.tv.data.MediaFlowProxy.LOGO -> "MediaFlow Proxy"; PENGUPLAY -> "PenguPlay"; CNCVERSE -> "CNCVerse"; PLAVIO -> "PlavioHD"; AIOSTREAMS -> "AIOStreams"; AddonBadges.ALTMOUNT -> "AltMount"; AddonBadges.STREAMNZB -> "StreamNZB"; AddonBadges.DEBRIDIO -> "Debridio"; AddonBadges.TORRENTIO -> "Torrentio"; AddonBadges.COMET -> "Comet"; AddonBadges.METEOR -> "Meteor"; AddonBadges.STREMTHRU -> "StremThru";in AddonBadges.NEWS_PROVIDER_IDS -> AddonBadges.NEWS_PROVIDERS.first { it.first == id }.second
+    private fun label(id: String) = when (id) { EASYNEWS -> "Easynews"; dev.pov.tv.data.MediaFlowProxy.LOGO -> "MediaFlow Proxy"; PENGUPLAY -> "PenguPlay"; CNCVERSE -> "CNCVerse"; PLAVIO -> "PlavioHD"; AIOSTREAMS -> "AIOStreams"; AddonBadges.ALTMOUNT -> "AltMount"; AddonBadges.STREAMNZB -> "StreamNZB"; AddonBadges.DEBRIDIO -> "Debridio"; AddonBadges.TORRENTIO -> "Torrentio"; AddonBadges.COMET -> "Comet"; AddonBadges.METEOR -> "Meteor"; AddonBadges.STREMTHRU -> "StremThru"; AddonBadges.JACKETT -> "Jackett"; AddonBadges.PROWLARR_TORZNAB -> "Prowlarr";in AddonBadges.NEWS_PROVIDER_IDS -> AddonBadges.NEWS_PROVIDERS.first { it.first == id }.second
         in AddonBadges.INDEXER_NAMES -> AddonBadges.INDEXER_NAMES.getValue(id)
         // Never crash on a logo id without a name (it only feeds the spoken description).
         else -> if (id in DebridServices.IDS) DebridServices.name(id) else id }
@@ -47,6 +47,8 @@ internal object PlaybackDebrid {
         AddonBadges.COMET -> R.drawable.pov_comet_logo
         AddonBadges.METEOR -> R.drawable.pov_meteor_logo
         AddonBadges.STREMTHRU -> R.drawable.pov_stremthru_logo
+        AddonBadges.JACKETT -> R.drawable.pov_jackett_logo
+        AddonBadges.PROWLARR_TORZNAB -> R.drawable.pov_prowlarr_logo
         AddonBadges.NEWSHOSTING -> R.drawable.pov_newshosting_logo
         "eweka" -> R.drawable.pov_eweka_logo
         "giganews" -> R.drawable.pov_giganews_logo

@@ -1312,7 +1312,7 @@
     <string name="t_the_encrypted_7z_video_ended_early">The encrypted 7z video ended early.</string>
     <string name="t_the_file_s_articles_don_t">The file\'s articles don\'t line up; position %1$s can\'t be found.</string>
     <string name="t_the_first_article_doesn_t_describe">The first article doesn\'t describe the file.</string>
-    <string name="t_the_first_cached_one_of_the">the first cached one of the top %1$s plays. Premiumize, Offcloud and TorBox are checked while the link list loads.</string>
+    <string name="t_the_first_cached_one_of_the">the first cached one of the top %1$s plays. Premiumize, Offcloud and TorBox are checked while the link list loads. Placed above a service that has a link cached, they get one try at it first.</string>
     <string name="t_the_indexer_address_is_invalid">The indexer address is invalid.</string>
     <string name="t_the_indexer_answered_with_error_x">The indexer answered with error %1$s.</string>
     <string name="t_the_indexer_answered_x">The indexer answered: %1$s</string>

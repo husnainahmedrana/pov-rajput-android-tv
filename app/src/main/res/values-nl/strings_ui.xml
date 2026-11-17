@@ -1312,7 +1312,7 @@
     <string name="t_the_encrypted_7z_video_ended_early">De versleutelde 7z-video eindigde te vroeg.</string>
     <string name="t_the_file_s_articles_don_t">De artikelen van het bestand sluiten niet aan; positie %1$s is niet te vinden.</string>
     <string name="t_the_first_article_doesn_t_describe">Het eerste artikel beschrijft het bestand niet.</string>
-    <string name="t_the_first_cached_one_of_the">de eerste in de cache van de bovenste %1$s speelt af. Premiumize, Offcloud en TorBox worden gecontroleerd terwijl de linklijst laadt.</string>
+    <string name="t_the_first_cached_one_of_the">de eerste in de cache van de bovenste %1$s speelt af. Premiumize, Offcloud en TorBox worden gecontroleerd terwijl de linklijst laadt. Staan ze boven een dienst die de link in de cache heeft, dan proberen ze die eerst één keer.</string>
     <string name="t_the_indexer_address_is_invalid">Het indexeradres is ongeldig.</string>
     <string name="t_the_indexer_answered_with_error_x">De indexer antwoordde met fout %1$s.</string>
     <string name="t_the_indexer_answered_x">De indexer antwoordde: %1$s</string>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="bk_newer_title">Definições mais recentes de outro dispositivo</string>
+    <string name="bk_newer_message">Outro dispositivo com a sua conta guardou as definições %1$s: add-ons, serviços debrid, fornecedores e indexadores Usenet e preferências. Carregar neste dispositivo? A app reinicia para as usar.</string>
+    <string name="bk_newer_conflict">Este dispositivo também tem alterações sem cópia de segurança. Carregar substitui-as; manter as definições deste dispositivo substitui as do outro na sua conta.</string>
+    <string name="bk_load">Carregar</string>
+    <string name="bk_keep_this">Manter estas</string>
+    <string name="bk_kept">As definições deste dispositivo estão agora na sua conta.</string>
+    <string name="bk_loading">A carregar as definições do outro dispositivo…</string>
+    <string name="bk_loaded">Definições do outro dispositivo carregadas.</string>
+    <string name="bk_newer_elsewhere">Outro dispositivo guardou definições mais recentes. Carregue-as ou mantenha primeiro as deste.</string>
+</resources>

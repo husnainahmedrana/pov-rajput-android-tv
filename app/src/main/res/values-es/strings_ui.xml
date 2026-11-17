@@ -1312,7 +1312,7 @@
     <string name="t_the_encrypted_7z_video_ended_early">El vídeo 7z cifrado terminó antes de tiempo.</string>
     <string name="t_the_file_s_articles_don_t">Los artículos del archivo no encajan; no se encuentra la posición %1$s.</string>
     <string name="t_the_first_article_doesn_t_describe">El primer artículo no describe el archivo.</string>
-    <string name="t_the_first_cached_one_of_the">se reproduce el primero en caché de los %1$s primeros. Premiumize, Offcloud y TorBox se comprueban mientras carga la lista de enlaces.</string>
+    <string name="t_the_first_cached_one_of_the">se reproduce el primero en caché de los %1$s primeros. Premiumize, Offcloud y TorBox se comprueban mientras carga la lista de enlaces. Si están por encima de un servicio que tiene el enlace en caché, lo intentan primero una vez.</string>
     <string name="t_the_indexer_address_is_invalid">La dirección del indexador no es válida.</string>
     <string name="t_the_indexer_answered_with_error_x">El indexador respondió con el error %1$s.</string>
     <string name="t_the_indexer_answered_x">El indexador respondió: %1$s</string>

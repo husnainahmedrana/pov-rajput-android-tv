@@ -48,7 +48,11 @@ class MainActivity : Activity() {
     private val watchedCache by lazy { WatchedCache(java.io.File(filesDir, "watched.json")) }
     @Volatile private var watchedLoading = false
     /** Re-reads the Continue Watching row on Home in place; set while that row exists. */
-    private var refreshContinue: (() -> Unit)? = null
+    /** Refills Home's Continue Watching row; [force] refills it even while it has focus (just back from the player). */
+    private var refreshContinue: ((force: Boolean) -> Unit)? = null
+    /** Something played since the row was last refilled: Home refreshes it when it comes back on screen. */
+    private var continueStale = false
+    private var playerClosedAt = 0L
     /** The local (no tracker) Continue Watching row on Home, and the pageRevision() that Home was built at. */
     private var localContinueRow: LinearLayout? = null
     private var homeRevision = ""
@@ -249,6 +253,32 @@ class MainActivity : Activity() {
         accountDialogs.welcome()
     }
 
+    private var backupCheckedAt = 0L
+    private var backupAskedFor = 0L
+
+    /**
+     * Same account on several devices: when another one saved newer settings, offer to load them here. Checked on
+     * launch and when the app comes back, at most every 5 minutes, never during playback; each newer backup is
+     * offered once per app session (Back leaves it for the next launch).
+     */
+    private fun checkNewerBackup() {
+        if (publicPreview || !::store.isInitialized) return
+        val account = cloud
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!account.signedIn || (backupCheckedAt != 0L && now - backupCheckedAt < 5 * 60_000)) return
+        backupCheckedAt = now
+        worker.execute {
+            val remote = try { account.fetch() } catch (_: Exception) { return@execute }
+            if (!account.newerElsewhere(remote) || remote.updated == backupAskedFor) return@execute
+            val changedHere = runCatching { account.changedHere() }.getOrDefault(false)
+            runOnUiThread {
+                if (isDestroyed || isFinishing || !resumed || InAppPlaybackSession.hasActive() || launchingPlayer) { backupCheckedAt = 0L; return@runOnUiThread }
+                backupAskedFor = remote.updated
+                accountDialogs.newerBackup(remote, changedHere)
+            }
+        }
+    }
+
     /** Automatic backup when the app goes to the background; nothing is sent when nothing changed. */
     private fun backupInBackground() {
         if (publicPreview || !::store.isInitialized) return
@@ -269,7 +299,8 @@ class MainActivity : Activity() {
         if (!publicPreview) { TvContinueWatching.schedule(this); TvContinueWatching.request(this) }
         // Back from approving a sign-in code in the browser: check for it straight away.
         authorization?.takeIf { it.isShowing }?.pollNow()
-        if (playerShown) { playerShown = false; scheduleContinueRefresh() }
+        checkNewerBackup()
+        if (playerShown) { playerShown = false; continueStale = true; playerClosedAt = android.os.SystemClock.elapsedRealtime(); scheduleContinueRefresh() }
         if (!publicPreview && ::store.isInitialized && android.os.SystemClock.elapsedRealtime() - watchedCheckedAt > 60_000) refreshWatched()
         if (::shellRoot.isInitialized) { updateMiniPlayer(); refreshHeroTrailer() }
         if (BackHoldGesture.settingsRequested && ::shellRoot.isInitialized) { BackHoldGesture.settingsRequested = false; openSettingsAnywhere() }
@@ -782,6 +813,20 @@ class MainActivity : Activity() {
         if (cached.heroArt == null) cached.heroAddress?.let { image(backdropArt, it) }
         heroBackdrop.requestLayout(); featureShown = null; backdropArt.alpha = 1f
         body.post { refreshHeroTrailer() }
+        // A kept Home from before playback: its Continue Watching row catches up now that it is on screen again.
+        if (cached.home && continueStale) body.post { refreshContinueAfterPlayback() }
+    }
+
+    /**
+     * Refills Continue Watching after playback, even under focus. A tracker records the stop a few seconds after the
+     * player closes, so a Home shown soon after closing is refreshed once more a little later.
+     */
+    private fun refreshContinueAfterPlayback() {
+        if (isDestroyed || !isHome || publicPreview) return
+        if (!wetrakr.connected() && localContinueRow == null) { if (homeRevision != pageRevision()) home(); return }
+        refreshContinue?.invoke(true)
+        if (wetrakr.connected() && android.os.SystemClock.elapsedRealtime() - playerClosedAt < 9_000)
+            body.postDelayed({ if (!isDestroyed && isHome) refreshContinue?.invoke(true) }, 6_000)
     }
 
     private fun navigate(screen: () -> Unit) {
@@ -1164,14 +1209,17 @@ class MainActivity : Activity() {
         }
         // The last list is kept encrypted with the account revision, so the row shows instantly on launch.
         val revision = wetrakr.accountRevision()
-        refreshContinue = {
+        refreshContinue = { force ->
             val tracker = wetrakr
             worker.execute {
                 val fresh = try { tracker.refreshCaches(); tracker.continueWatching() } catch (_: Exception) { null }
                 runOnUiThread {
                     if (fresh == null || isDestroyed || tracker.accountRevision() != revision || !row.isAttachedToWindow) return@runOnUiThread
                     TvContinueWatching.rememberRemote(this,revision,fresh)
-                    if (!row.hasFocus()) fill(fresh)
+                    // Back from the player, focus is still on the card that was played: refill anyway, and keep focus
+                    // in the row on its first card (the title just watched).
+                    val focused = row.hasFocus()
+                    if (!focused || force) { fill(fresh); continueStale = false; if (focused) row.getChildAt(0)?.requestFocus() }
                 }
             }
         }
@@ -2012,7 +2060,13 @@ class MainActivity : Activity() {
     private fun resumeRow(recent: List<PlaybackStore.Recent>) {
         section(getString(R.string.t_continue_watching))
         val row = horizontalRow(); localContinueRow = row
-        refreshContinue = { if (row.isAttachedToWindow && !row.hasFocus()) { row.removeAllViews(); fillResumeRow(row, history.continueWatching()) } }
+        refreshContinue = { force ->
+            val focused = row.hasFocus()
+            if (row.isAttachedToWindow && (force || !focused)) {
+                row.removeAllViews(); fillResumeRow(row, history.continueWatching()); continueStale = false
+                if (focused) row.getChildAt(0)?.requestFocus()
+            }
+        }
         fillResumeRow(row, recent)
     }
 
@@ -5856,6 +5910,175 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Settings → Torznab: Jackett, Prowlarr's torrent indexers and any Torznab address, searched for torrent links. */
+    private fun torznabPage(focusTag: String? = null) {
+        val keepScroll = scroller.scrollY
+        current = { torznabPage() }
+        destination = "settings"; refreshNavigation()
+        page(getString(R.string.tz_torznab), getString(R.string.tz_subtitle))
+        if (DebridServices.connected(store).isEmpty())
+            body.addView(text(getString(R.string.tz_need_debrid), 13, muted).apply { setLineSpacing(dp(1).toFloat(), 1f) }, margin(-1, -2, bottom = 12))
+        val indexers = try { TorznabIndexers(store).load() } catch (error: Exception) { body.addView(text(uiErrorMessage(error), 15, muted)); emptyList() }
+        val nextTier = TorznabIndexers.nextTierQuality { store.get(it) }
+        val prioritized = indexers.map { it.priority }.distinct().size > 1 || indexers.any { it.backupOnly }
+        val levels = indexers.sortedWith(compareBy({ it.backupOnly }, { it.priority })).groupBy { if (it.backupOnly) -1 else it.priority }
+        var firstCard: LinearLayout? = null
+        linkColumns(levels.entries.flatMapIndexed { index, (level, group) ->
+            val title = when {
+                !prioritized -> getString(R.string.t_indexers)
+                level == -1 -> L10n.tr(R.string.t_indexers_backup_heading, "Backup · only if nothing was found above")
+                index == 0 -> L10n.tr(R.string.t_indexers_first_heading, "Priority %1\$s · searched first, all together", level)
+                else -> L10n.tr(R.string.t_indexers_next_heading, "Priority %1\$s · together, only if the ones above find %2\$s", level, nextTierShortfall(nextTier))
+            }
+            val card = settingsGroup(title, "library")
+            if (index == 0) { holdHint(card, getString(R.string.t_an_indexer)); firstCard = card }
+            group.map { indexer ->
+                val host = runCatching { java.net.URI(indexer.url).host }.getOrNull().orEmpty()
+                switchSettingsRow(card, indexer.name, host, torznabKindName(indexer.kind), indexer.enabled, "torznab-switch",
+                    toggle = { saveTorznab(indexers.map { if (it.id == indexer.id) it.copy(enabled = !indexer.enabled) else it }, "torznab-switch:${indexer.name}") },
+                    menu = { torznabActions(indexer) })
+            }
+        })
+        val options = if (prioritized || firstCard == null) settingsGroup(L10n.tr(R.string.t_indexer_search_order, "Indexer search order"), "library") else firstCard!!
+        val nextLabel = L10n.tr(R.string.t_go_to_next_priority_when, "Go to the next priority when")
+        settingsRow(options, nextLabel, nextTierLabel(nextTier),
+            L10n.tr(R.string.t_priority_how_it_works, "Hold an indexer to set its priority. Lower numbers are searched first; indexers with the same number are searched together. Backup indexers run only when nothing was found.")) {
+            val choices = UsenetSearch.NEXT_TIER_CHOICES
+            store.put(TorznabIndexers.NEXT_TIER_QUALITY, choices[(choices.indexOf(nextTier) + 1) % choices.size].toString())
+            torznabPage("setting:$nextLabel")
+        }
+        val limit = TorznabIndexers.resultLimit { store.get(it) }
+        settingsRow(options, getString(R.string.tz_results_limit), "$limit", getString(R.string.tz_results_limit_desc)) {
+            val choices = TorznabIndexers.RESULT_LIMIT_CHOICES
+            store.put(TorznabIndexers.RESULT_LIMIT, choices[(choices.indexOf(limit) + 1) % choices.size].toString())
+            torznabPage("setting:" + getString(R.string.tz_results_limit))
+        }
+        settingsRow(options, getString(R.string.tz_add), "", getString(R.string.tz_add_desc)) { chooseTorznabKind() }
+        body.addView(View(this), margin(-1, 24))
+        if (focusTag != null) keepPlace(generation, focusTag, keepScroll) else focusAfterRender(generation)
+    }
+
+    private fun torznabKindName(kind: String) = when (kind) { TorznabIndexers.JACKETT -> "Jackett"; TorznabIndexers.PROWLARR -> "Prowlarr"; else -> "Torznab" }
+
+    private fun saveTorznab(indexers: List<TorznabIndexer>, focus: String? = null) {
+        try { TorznabIndexers(store).save(indexers); torznabPage(focus) } catch (error: Exception) { toast(uiErrorMessage(error)) }
+    }
+
+    private fun torznabActions(indexer: TorznabIndexer) {
+        val all = runCatching { TorznabIndexers(store).load() }.getOrDefault(emptyList())
+        val focus = "torznab-switch:${indexer.name}"
+        val actions = listOf<Pair<String, () -> Unit>>(
+            getString(R.string.t_edit) to { editTorznab(indexer, indexer.kind) },
+            getString(R.string.t_test) to {
+                toast(getString(R.string.t_asking_x, indexer.name))
+                worker.execute {
+                    val result = try { "${indexer.name}: " + Torznab().test(indexer, UsenetHeaders.query { store.get(it) }) } catch (error: Exception) { "${indexer.name}: ${error.message ?: L10n.tr(R.string.t_no_answer_lower, "no answer")}" }
+                    runOnUiThread { if (!isFinishing && !isDestroyed) toast(result) }
+                }
+            },
+            (if (indexer.enabled) getString(R.string.t_turn_off) else getString(R.string.t_turn_on)) to { saveTorznab(all.map { if (it.id == indexer.id) it.copy(enabled = !indexer.enabled) else it }, focus) },
+            L10n.tr(R.string.t_priority_x, "Priority %1\$s", indexer.priority) to {
+                NumberStepper.show(this, L10n.tr(R.string.t_priority_of_x, "Priority of %1\$s", indexer.name),
+                    L10n.tr(R.string.t_priority_stepper_detail, "Lower numbers are searched first. Indexers with the same number are searched together."),
+                    indexer.priority, 1..TorznabIndexers.MAX_PRIORITY, { L10n.tr(R.string.t_priority_x, "Priority %1\$s", it) }) { level ->
+                    saveTorznab(all.map { if (it.id == indexer.id) it.copy(priority = level, backupOnly = false) else it }, focus)
+                }
+            },
+            (if (indexer.backupOnly) L10n.tr(R.string.t_use_as_a_main_indexer, "Use as a main indexer") else getString(R.string.tz_use_as_backup)) to {
+                saveTorznab(all.map { if (it.id == indexer.id) it.copy(backupOnly = !indexer.backupOnly) else it }, focus) },
+            getString(R.string.t_remove) to { confirm(getString(R.string.t_remove_x_from_this_device, indexer.name)) { saveTorznab(all.filter { it.id != indexer.id }) } })
+        AlertDialog.Builder(this).setTitle(indexer.name).setItems(actions.map { it.first }.toTypedArray()) { _, picked -> actions[picked].second() }
+            .setNegativeButton(getString(R.string.t_cancel), null).show()
+    }
+
+    private fun chooseTorznabKind() {
+        val kinds = listOf(TorznabIndexers.JACKETT to getString(R.string.tz_kind_jackett), TorznabIndexers.PROWLARR to getString(R.string.tz_kind_prowlarr),
+            TorznabIndexers.URL to getString(R.string.tz_kind_url))
+        AlertDialog.Builder(this).setTitle(getString(R.string.tz_add)).setItems(kinds.map { it.second }.toTypedArray()) { _, picked -> editTorznab(null, kinds[picked].first) }
+            .setNegativeButton(getString(R.string.t_cancel), null).show()
+    }
+
+    /**
+     * Add or edit a Torznab indexer. A new Prowlarr is one address and key: its switched-on torrent indexers are read
+     * from its API and each is added. [prefill] is an address pasted elsewhere (the Source add-ons box).
+     */
+    private fun editTorznab(indexer: TorznabIndexer?, kind: String, prefill: String? = null) {
+        val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
+        val plain = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        val prowlarrServer = indexer == null && kind == TorznabIndexers.PROWLARR
+        val name = usenetField(getString(R.string.t_name), indexer?.name ?: if (kind == TorznabIndexers.JACKETT) "Jackett" else "", plain)
+        val addressHint = when {
+            prowlarrServer -> getString(R.string.tz_prowlarr_address)
+            kind == TorznabIndexers.JACKETT && indexer == null -> getString(R.string.tz_jackett_address)
+            else -> getString(R.string.tz_url_address)
+        }
+        val pasted = prefill?.let(TorznabIndexers::splitKey)
+        val address = usenetField(addressHint, indexer?.url ?: pasted?.first.orEmpty(), InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
+        val key = usenetField(if (kind == TorznabIndexers.URL) getString(R.string.t_api_key_optional_here) else getString(R.string.t_api_key), indexer?.apiKey ?: pasted?.second.orEmpty(), plain)
+        val status = text(when {
+            prowlarrServer -> getString(R.string.tz_prowlarr_hint)
+            kind == TorznabIndexers.JACKETT && indexer == null -> getString(R.string.tz_jackett_hint)
+            else -> ""
+        }, 13, muted)
+        if (!prowlarrServer) content.addView(captioned(name), margin(-1, -2))
+        content.addView(captioned(address), margin(-1, -2, top = 4)); content.addView(captioned(key), margin(-1, -2, top = 4))
+        val title = if (indexer != null) getString(R.string.t_edit_x, indexer.name) else when (kind) {
+            TorznabIndexers.JACKETT -> getString(R.string.tz_kind_jackett); TorznabIndexers.PROWLARR -> getString(R.string.tz_kind_prowlarr); else -> getString(R.string.tz_kind_url) }
+        val dialog = AlertDialog.Builder(this).setTitle(title).setView(formWithStatus(content, status))
+            .setPositiveButton(getString(R.string.t_save), null).setNegativeButton(getString(R.string.t_cancel), null).setNeutralButton(getString(R.string.t_test), null).create()
+            .apply { window?.setSoftInputMode(formInputMode()) }
+        dialog.show()
+        if (prefill != null) key.requestFocus()
+        val agent = UsenetHeaders.query { store.get(it) }
+        fun typed(): TorznabIndexer {
+            val (typedAddress, keyInAddress) = TorznabIndexers.splitKey(address.text.toString())
+            val fallbackName = runCatching { java.net.URI(TorznabIndexers.address(typedAddress)).host }.getOrNull().orEmpty().removePrefix("www.").ifBlank { torznabKindName(kind) }
+            val made = TorznabIndexers.create(name.text.toString().ifBlank { fallbackName }, typedAddress, key.text.toString().ifBlank { keyInAddress },
+                if (indexer == null) kind else TorznabIndexers.URL)
+            return if (indexer == null) made else made.copy(id = indexer.id, enabled = indexer.enabled, priority = indexer.priority, backupOnly = indexer.backupOnly, kind = indexer.kind)
+        }
+        dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
+            status.text = getString(R.string.t_asking_the_indexer)
+            val typedAddress = address.text.toString(); val typedKey = key.text.toString()
+            val candidate = if (prowlarrServer) null else try { typed() } catch (error: Exception) { status.text = uiErrorMessage(error); return@setOnClickListener }
+            worker.execute {
+                val result = try {
+                    if (candidate == null) getString(R.string.tz_prowlarr_found, Torznab().prowlarrIndexers(typedAddress, typedKey, agent).size)
+                    else Torznab().test(candidate, agent) + getString(R.string.t_save_to_keep_it)
+                } catch (error: Exception) { error.message ?: getString(R.string.t_no_answer) }
+                runOnUiThread { if (dialog.isShowing) status.text = result }
+            }
+        }
+        val save = dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE)
+        save.setOnClickListener {
+            if (prowlarrServer) {
+                val typedAddress = address.text.toString(); val typedKey = key.text.toString()
+                status.text = getString(R.string.t_asking_the_indexer); save.isEnabled = false
+                worker.execute {
+                    val outcome = try {
+                        val found = Torznab().prowlarrIndexers(typedAddress, typedKey, agent)
+                        if (found.isEmpty()) Result.failure(IllegalStateException(getString(R.string.tz_prowlarr_none))) else Result.success(TorznabIndexers(store).add(found))
+                    } catch (error: Exception) { Result.failure(error) }
+                    runOnUiThread {
+                        if (isFinishing || isDestroyed || !dialog.isShowing) return@runOnUiThread
+                        save.isEnabled = true
+                        outcome.onSuccess { added -> toast(getString(R.string.tz_prowlarr_added, added)); dialog.dismiss(); torznabPage() }
+                            .onFailure { status.text = uiErrorMessage(it as? Exception ?: Exception(it)) }
+                    }
+                }
+                return@setOnClickListener
+            }
+            try {
+                val saved = typed()
+                val config = TorznabIndexers(store)
+                val existing = config.load()
+                require(existing.none { it.url == saved.url && it.apiKey == saved.apiKey && it.id != saved.id }) { getString(R.string.t_this_indexer_is_already_saved) }
+                config.save(if (indexer == null) existing + saved else existing.map { if (it.id == indexer.id) saved else it })
+                dialog.dismiss(); torznabPage("torznab-switch:${saved.name}")
+            } catch (error: Exception) { status.text = uiErrorMessage(error) }
+        }
+    }
+
     private fun editUsenetHeader(label: String, key: String, default: String) {
         val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
         val field = usenetField(default, store.get(key).ifBlank { default }, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
@@ -6177,6 +6400,9 @@ class MainActivity : Activity() {
             settingsRow(sources, getString(R.string.t_usenet), if (newsOn == 0 && indexersOn == 0) getString(R.string.t_not_set_up) else "$newsOn ${if (newsOn == 1) "provider" else "providers"} · $indexersOn ${if (indexersOn == 1) "indexer" else "indexers"}",
                 getString(R.string.t_stream_straight_from_your_news_providers),
                 status = newsOn > 0 && indexersOn > 0) { navigate { usenetPage() } }
+            val torznab = runCatching { TorznabIndexers(store).load() }.getOrDefault(emptyList())
+            settingsRow(sources, getString(R.string.tz_torznab), if (torznab.isEmpty()) getString(R.string.t_not_set_up) else getString(R.string.t_x_of_x_on, torznab.count { it.enabled }, torznab.size),
+                getString(R.string.tz_row_desc), status = torznab.any { it.enabled } && activeDebrids.isNotEmpty()) { navigate { torznabPage() } }
             val providerList = runCatching { SourceProviders(store).load() }.getOrDefault(emptyList())
             settingsRow(sources, getString(R.string.t_source_providers), if (providerList.isEmpty()) getString(R.string.t_none_added) else getString(R.string.t_x_of_x_on, providerList.count { it.enabled }, providerList.size),
                 getString(R.string.t_your_stremio_scraper_add_ons_such),
@@ -7494,6 +7720,11 @@ class MainActivity : Activity() {
         prefill?.let { fill(it, "") }
         save.setOnClickListener {
             val typedName = name.text.toString(); val typedAddress = address.text.toString()
+            // A Torznab address isn't a Stremio add-on: it belongs in Settings → Torznab, so it goes there.
+            if (provider == null && TorznabIndexers.looksLikeTorznab(typedAddress)) {
+                dialog.dismiss(); toast(getString(R.string.tz_moved_from_addons))
+                navigate { torznabPage() }; editTorznab(null, TorznabIndexers.URL, typedAddress.trim()); return@setOnClickListener
+            }
             try { SourceProviders.name(typedName); SourceProviders.endpoint(typedAddress) }
             catch (error: Exception) { status.text = uiErrorMessage(error); return@setOnClickListener }
             // A bare StremThru server address becomes its Torz torrent search; this needs a quick look at the server.
@@ -7739,7 +7970,7 @@ class MainActivity : Activity() {
     private fun scheduleContinueRefresh() {
         if (publicPreview || !::body.isInitialized) return
         if (!wetrakr.connected()) { body.post { refreshLocalContinue() }; return }
-        listOf(2_500L, 9_000L).forEach { delay -> body.postDelayed({ if (!isDestroyed) refreshContinue?.invoke() }, delay) }
+        listOf(2_500L, 9_000L).forEach { delay -> body.postDelayed({ if (!isDestroyed && isHome) refreshContinue?.invoke(true) }, delay) }
     }
 
     /**
@@ -7750,8 +7981,7 @@ class MainActivity : Activity() {
         if (isDestroyed || !isHome || publicPreview || wetrakr.connected() || homeRevision == pageRevision()) return
         val row = localContinueRow
         if (row != null && row.isAttachedToWindow && history.continueWatching().isNotEmpty()) {
-            if (row.hasFocus()) return
-            refreshContinue?.invoke(); homeRevision = pageRevision()
+            refreshContinue?.invoke(true); homeRevision = pageRevision()
         } else home()
     }
 

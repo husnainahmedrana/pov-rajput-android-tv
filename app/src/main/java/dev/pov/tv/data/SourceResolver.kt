@@ -36,7 +36,7 @@ class SourceResolver internal constructor(
         override fun prepareCached(source: SourceItem, identity: PlaybackIdentity) = torbox.prepareCached(source, identity)
     }, offcloud = { OffcloudApi(store) }, serviceOrder = { DebridServices.connected(store) }, configuredProviders = { SourceProviders(store).load() },
         links = LinkDebrids(store), easynews = { if (Easynews.active(store)) EasynewsApi(store) else null },
-        indexers = { UsenetSearch.sources(store) })
+        indexers = { UsenetSearch.sources(store) + TorznabSearch.sources(store) })
     fun sources(identity: PlaybackIdentity): List<SourceItem> = search(identity).items
 
     internal data class SearchResult(val items: List<SourceItem>, val unavailableProviders: List<String>, val lateProviders: List<String> = emptyList(),
@@ -234,7 +234,17 @@ class SourceResolver internal constructor(
         return (fromUrl ?: ALTMOUNT_INDEXER_LINE.find(description)?.groupValues?.get(1)).orEmpty().trim().take(40)
     }
 
-    private fun deduplicate(items: List<SourceItem>): List<SourceItem> = LibraryCopies.merge(mergeCopies(items))
+    private fun deduplicate(items: List<SourceItem>): List<SourceItem> = LibraryCopies.merge(mergeCopies(withoutBareCopies(items)))
+
+    /**
+     * A torrent named only by its hash (a Torznab result) that an add-on also sent with its file (Torrentio's fileIdx)
+     * is the same link: the add-on's copy, which says which file plays, is kept.
+     */
+    internal fun withoutBareCopies(items: List<SourceItem>): List<SourceItem> {
+        val withFile = items.filter { it.directUrl.isBlank() && it.infoHash.isNotBlank() && it.fileIndex != null }.map { it.infoHash }.toSet()
+        if (withFile.isEmpty()) return items
+        return items.filterNot { it.providerId.startsWith("torznab:") && it.directUrl.isBlank() && it.fileIndex == null && it.infoHash in withFile }
+    }
 
     private fun mergeCopies(items: List<SourceItem>): List<SourceItem> {
         // Never compare filenames or strip signed URL query parameters. A file index distinguishes torrent files.
@@ -325,8 +335,19 @@ class SourceResolver internal constructor(
         val availability = checkCaches(services, listOf(hash))
         val cachedOn = availability.filter { hash in it.hashes }.map { it.service }
         var failure: Exception? = null
-        for (service in cachedOn) {
+        val order = DebridServices.playOrder(services, cachedOn) { it == RealDebridFilter.SERVICE && RealDebridFilter.refused(source) }
+        for (service in order) {
             if (Thread.currentThread().isInterrupted) throw InterruptedException(L10n.tr(R.string.t_source_preparation_cancelled, "Source preparation cancelled."))
+            if (service in LinkDebrids.CHECK_ON_PLAY) {
+                // Ranked above a service that has the link: one try here, and any miss, pause or error moves on to that
+                // service, so putting Real-Debrid first never costs the play.
+                val tried = try { links?.prepare(service, source.copy(cached = true), identity) }
+                    catch (error: InterruptedException) { throw error }
+                    catch (error: java.util.concurrent.CancellationException) { throw error }
+                    catch (_: Exception) { null }
+                if (tried != null) return tried
+                continue
+            }
             try { return prepareWith(service, source.copy(cached = true), identity) }
             catch (error: InterruptedException) { throw error }
             catch (error: java.util.concurrent.CancellationException) { throw error }

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tz_torznab">Torznab</string>
+    <string name="tz_subtitle">Jackett, Prowlarr of elke Torznab-URL</string>
+    <string name="tz_row_desc">Zoekt torrents in je Jackett-, Prowlarr- of Torznab-indexers; ze spelen af via je debrid-diensten.</string>
+    <string name="tz_need_debrid">Verbind eerst een debrid-dienst: torrentlinks van deze indexers spelen daarlangs af.</string>
+    <string name="tz_results_limit">Resultaten per indexer</string>
+    <string name="tz_results_limit_desc">De links met de meeste seeders per indexer; openbare kunnen er meer dan duizend sturen.</string>
+    <string name="tz_add">Torznab-indexer toevoegen</string>
+    <string name="tz_add_desc">Je Jackett, je Prowlarr of een Torznab-adres</string>
+    <string name="tz_use_as_backup">Alleen als reserve gebruiken</string>
+    <string name="tz_kind_jackett">Jackett (al zijn indexers)</string>
+    <string name="tz_kind_prowlarr">Prowlarr (voegt elke torrent-indexer toe)</string>
+    <string name="tz_kind_url">Torznab-adres</string>
+    <string name="tz_jackett_address">Jackett-adres, zoals http://192.168.1.10:9117</string>
+    <string name="tz_prowlarr_address">Prowlarr-adres, zoals http://192.168.1.10:9696</string>
+    <string name="tz_url_address">Torznab-adres, zoals https://example.com/api</string>
+    <string name="tz_jackett_hint">Het adres waarop je Jackett opent en de API-sleutel bovenaan het dashboard. Al zijn indexers worden samen doorzocht.</string>
+    <string name="tz_prowlarr_hint">Het adres waarop je Prowlarr opent en de API-sleutel (Settings → General). Elke ingeschakelde torrent-indexer wordt toegevoegd; Usenet-indexers horen bij Instellingen → Usenet.</string>
+    <string name="tz_prowlarr_found">Verbonden · %1$s torrent-indexers ingeschakeld. Sla op om ze toe te voegen.</string>
+    <string name="tz_prowlarr_none">Prowlarr heeft geen ingeschakelde torrent-indexers.</string>
+    <string name="tz_prowlarr_added">%1$s indexers uit Prowlarr toegevoegd</string>
+    <string name="tz_not_torznab">Dit adres antwoordde niet als een Torznab-indexer.</string>
+    <string name="tz_not_prowlarr">Dit adres antwoordde niet als Prowlarr. Controleer het adres en de API-sleutel.</string>
+    <string name="tz_address_invalid">Voer het adres in, zoals https://example.com/api.</string>
+    <string name="tz_saved_unreadable">Opgeslagen Torznab-indexers konden niet worden gelezen. Controleer Instellingen → Torznab.</string>
+    <string name="tz_seeders">%1$s seeders</string>
+    <string name="tz_moved_from_addons">Dit is een Torznab-adres, geen Stremio-add-on: voeg het hier toe bij Torznab.</string>
+</resources>

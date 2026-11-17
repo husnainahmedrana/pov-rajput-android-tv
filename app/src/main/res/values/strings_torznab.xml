@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tz_torznab">Torznab</string>
+    <string name="tz_subtitle">Jackett, Prowlarr or any Torznab URL</string>
+    <string name="tz_row_desc">Search your Jackett, Prowlarr or Torznab indexers for torrents; they play through your debrid services.</string>
+    <string name="tz_need_debrid">Connect a debrid service first: torrent links from these indexers play through it.</string>
+    <string name="tz_results_limit">Results per indexer</string>
+    <string name="tz_results_limit_desc">The best-seeded links from each indexer; public ones can send over a thousand.</string>
+    <string name="tz_add">Add Torznab indexer</string>
+    <string name="tz_add_desc">Your Jackett, your Prowlarr, or a Torznab address</string>
+    <string name="tz_use_as_backup">Use only as backup</string>
+    <string name="tz_kind_jackett">Jackett (all its indexers)</string>
+    <string name="tz_kind_prowlarr">Prowlarr (adds each torrent indexer)</string>
+    <string name="tz_kind_url">Torznab address</string>
+    <string name="tz_jackett_address">Jackett address, such as http://192.168.1.10:9117</string>
+    <string name="tz_prowlarr_address">Prowlarr address, such as http://192.168.1.10:9696</string>
+    <string name="tz_url_address">Torznab address, such as https://example.com/api</string>
+    <string name="tz_jackett_hint">The address you open Jackett at, and the API key from the top of its dashboard. All its indexers are searched together.</string>
+    <string name="tz_prowlarr_hint">The address you open Prowlarr at, and its API key (Settings → General). Each switched-on torrent indexer is added; Usenet ones belong in Settings → Usenet.</string>
+    <string name="tz_prowlarr_found">Connected · %1$s torrent indexers switched on. Save to add them.</string>
+    <string name="tz_prowlarr_none">Prowlarr has no torrent indexers switched on.</string>
+    <string name="tz_prowlarr_added">Added %1$s indexers from Prowlarr</string>
+    <string name="tz_not_torznab">This address didn\'t answer like a Torznab indexer.</string>
+    <string name="tz_not_prowlarr">This address didn\'t answer like Prowlarr. Check the address and API key.</string>
+    <string name="tz_address_invalid">Enter the address, such as https://example.com/api.</string>
+    <string name="tz_saved_unreadable">Saved Torznab indexers could not be read. Check Settings → Torznab.</string>
+    <string name="tz_seeders">%1$s seeders</string>
+    <string name="tz_moved_from_addons">That\'s a Torznab address, not a Stremio add-on: add it here in Torznab.</string>
+</resources>

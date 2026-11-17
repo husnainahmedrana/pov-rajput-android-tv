@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="bk_newer_title">Neuere Einstellungen von einem anderen Gerät</string>
+    <string name="bk_newer_message">Ein anderes Gerät mit deinem Konto hat seine Einstellungen %1$s gespeichert: Add-ons, Debrid-Dienste, Usenet-Anbieter und -Indexer und Vorlieben. Auf diesem Gerät laden? Die App startet dafür neu.</string>
+    <string name="bk_newer_conflict">Auch dieses Gerät hat nicht gesicherte Änderungen. Laden ersetzt sie; behältst du die Einstellungen dieses Geräts, ersetzen sie die des anderen Geräts in deinem Konto.</string>
+    <string name="bk_load">Laden</string>
+    <string name="bk_keep_this">Diese behalten</string>
+    <string name="bk_kept">Die Einstellungen dieses Geräts sind jetzt in deinem Konto.</string>
+    <string name="bk_loading">Einstellungen des anderen Geräts werden geladen…</string>
+    <string name="bk_loaded">Einstellungen vom anderen Gerät geladen.</string>
+    <string name="bk_newer_elsewhere">Ein anderes Gerät hat neuere Einstellungen gespeichert. Lade sie oder behalte zuerst die dieses Geräts.</string>
+</resources>

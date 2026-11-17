@@ -23,6 +23,20 @@ class DebridPriorityTest {
         assertEquals(listOf("alldebrid", "torbox", "offcloud", "debridlink", "realdebrid"),
             DebridServices.parsePriority("alldebrid,torbox,unknown,torbox", "offcloud", providers))
     }
+    @Test fun `check-on-play services above the cached one get the first try`() {
+        val services = listOf("realdebrid", "torbox", "offcloud")
+        assertEquals(listOf("realdebrid", "torbox"), DebridServices.playOrder(services, listOf("torbox")))
+        assertEquals(listOf("realdebrid", "torbox", "offcloud"), DebridServices.playOrder(services, listOf("torbox", "offcloud")))
+        assertEquals(listOf("realdebrid", "offcloud"), DebridServices.playOrder(services, listOf("offcloud")))
+    }
+    @Test fun `check-on-play services below the cached one are not tried`() {
+        assertEquals(listOf("torbox"), DebridServices.playOrder(listOf("torbox", "realdebrid", "offcloud"), listOf("torbox")))
+        assertEquals(listOf("torbox", "offcloud"), DebridServices.playOrder(listOf("torbox", "realdebrid", "offcloud"), listOf("torbox", "offcloud")))
+    }
+    @Test fun `play order is empty when nothing is cached and honours skip`() {
+        assertEquals(emptyList<String>(), DebridServices.playOrder(listOf("realdebrid", "torbox"), emptyList()))
+        assertEquals(listOf("alldebrid", "torbox"), DebridServices.playOrder(listOf("realdebrid", "alldebrid", "torbox"), listOf("torbox")) { it == "realdebrid" })
+    }
     @Test fun `moving among five providers preserves all other ranks`() {
         val order = listOf("offcloud", "torbox", "debridlink", "realdebrid", "alldebrid")
         val moved = DebridServices.moved(order, 3, -1)

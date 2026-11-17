@@ -25,12 +25,15 @@ object AddonBadges {
     const val COMET = "comet"
     const val METEOR = "meteor"
     const val STREMTHRU = "stremthru"
+    /** Torznab results from the viewer's Jackett, and from one of their Prowlarr's torrent indexers. */
+    const val JACKETT = "jackett"
+    const val PROWLARR_TORZNAB = "prowlarrtz"
     val IDS = setOf(PENGUPLAY, CNCVERSE, PLAVIO, AIOSTREAMS, ALTMOUNT, STREAMNZB, DEBRIDIO, TORRENTIO, COMET, METEOR, STREMTHRU)
     /**
      * Torrent scrapers: their logo goes on their own links only (never in the link list's header), on ready-made debrid
      * links and on plain torrents the viewer's own debrid plays alike, and in the player before the debrid service's logo.
      */
-    val SCRAPERS = setOf(DEBRIDIO, TORRENTIO, COMET, METEOR, STREMTHRU)
+    val SCRAPERS = setOf(DEBRIDIO, TORRENTIO, COMET, METEOR, STREMTHRU, JACKETT, PROWLARR_TORZNAB)
     /** Usenet add-ons on their own (not behind AIOStreams): their logo, the news provider, then the indexer. */
     fun standaloneUsenet(addon: String?) = addon == ALTMOUNT || addon == STREAMNZB
     /** Usenet add-ons whose links show their logo, the news provider and the indexer. */
@@ -57,7 +60,7 @@ object AddonBadges {
     fun indexer(name: String): String? = name.lowercase(Locale.ROOT).let { lower -> INDEXERS.firstOrNull { it.first in lower }?.second }
 
     private val HOSTS = mapOf("pengu.uk" to PENGUPLAY, "cncverse.dpdns.org" to CNCVERSE, "plavio.site" to PLAVIO, "debridio.com" to DEBRIDIO, "torrentio.strem.fun" to TORRENTIO,
-        "meteorfortheweebs.midnightignite.me" to METEOR)
+        "meteorfortheweebs.midnightignite.me" to METEOR, "stremthrufortheweebs.midnightignite.me" to STREMTHRU, "cometfortheweebs.midnightignite.me" to COMET)
     /** Self-hosted and public copies named after the add-on: comet.elfhosted.com, stremthru.example.org… */
     private val HOST_LABELS = listOf("stremthru" to STREMTHRU, "comet" to COMET, "torrentio" to TORRENTIO, "meteor" to METEOR)
 

@@ -14,7 +14,7 @@ import android.widget.TextView
  * phone (stacked "View update" / "Later"); these get a full-width column with a gap on the phone, a row on TV.
  */
 internal object SpacedChoiceDialog {
-    fun show(activity: Activity, title: String, message: String, primary: String, secondary: String, onPrimary: () -> Unit) {
+    fun show(activity: Activity, title: String, message: String, primary: String, secondary: String, onSecondary: () -> Unit = {}, onPrimary: () -> Unit) {
         fun dp(value: Int) = (value * activity.resources.displayMetrics.density).toInt()
         var dialog: AlertDialog? = null
         fun button(label: String, main: Boolean, action: () -> Unit) = TextView(activity).apply {
@@ -41,7 +41,7 @@ internal object SpacedChoiceDialog {
             setPadding(dp(20), dp(4), dp(20), dp(16))
         }
         val main = button(primary, true, onPrimary)
-        val other = button(secondary, false) {}
+        val other = button(secondary, false, onSecondary)
         if (phone) {
             buttons.addView(main, LinearLayout.LayoutParams(-1, -2))
             buttons.addView(other, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })

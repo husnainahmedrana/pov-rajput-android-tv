@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="bk_newer_title">Réglages plus récents d\'un autre appareil</string>
+    <string name="bk_newer_message">Un autre appareil connecté à votre compte a enregistré ses réglages %1$s : modules, services debrid, fournisseurs et indexeurs Usenet, et préférences. Les charger sur cet appareil ? L\'app redémarre pour les utiliser.</string>
+    <string name="bk_newer_conflict">Cet appareil a aussi des modifications non sauvegardées. Charger les remplace ; garder les réglages de cet appareil remplace ceux de l\'autre dans votre compte.</string>
+    <string name="bk_load">Charger</string>
+    <string name="bk_keep_this">Garder celles-ci</string>
+    <string name="bk_kept">Les réglages de cet appareil sont maintenant dans votre compte.</string>
+    <string name="bk_loading">Chargement des réglages de l\'autre appareil…</string>
+    <string name="bk_loaded">Réglages de votre autre appareil chargés.</string>
+    <string name="bk_newer_elsewhere">Un autre appareil a enregistré des réglages plus récents. Chargez-les ou gardez d\'abord ceux de cet appareil.</string>
+</resources>
