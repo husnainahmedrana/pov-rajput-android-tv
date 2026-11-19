@@ -854,7 +854,7 @@
     <string name="t_paste_a_stremio_catalog_add_on">Pega la URL de un complemento de catálogo de Stremio, como tu manifiesto de AIOMetadata, y elige los catálogos que se verán en Inicio.</string>
     <string name="t_paste_an_add_on_link">Pega un enlace de complemento…</string>
     <string name="t_paste_an_api_key">Pega una clave de API</string>
-    <string name="t_paste_an_https_stremio_add_on">Pega la URL HTTPS de un complemento o manifiesto de Stremio, por ejemplo tu complemento de Torrentio o Deepbrid.</string>
+    <string name="t_paste_an_https_stremio_add_on">Pega la URL HTTPS de un complemento o manifiesto de Stremio, por ejemplo tu complemento de Torrentio o Deepbrid. Los complementos de tu red local pueden usar http://.</string>
     <string name="t_paste_your_free_subdl_key">Pega tu clave gratuita de SubDL</string>
     <string name="t_paste_your_free_wyzie_key">Pega tu clave gratuita de Wyzie</string>
     <string name="t_paste_your_key_from_seekr_tv">Pega tu clave de seekr.tv (sk_live_...)</string>
@@ -1831,4 +1831,13 @@
     <string name="t_times_come_from_theintrodb_skipdb_and_aniskip">Los tiempos vienen de TheIntroDB y SkipDB, y de AniSkip para anime; los títulos que no conocen no muestran botón.</string>
     <string name="t_rd_paused">Real-Debrid está pausando las incorporaciones en tu cuenta un momento. Inténtalo de nuevo en un minuto.</string>
     <string name="t_rd_paused_retrying_x">Real-Debrid está pausando las incorporaciones en tu cuenta · reintentando en %1$s s</string>
+    <string name="t_metadata_language">Idioma de los metadatos</string>
+    <string name="t_same_as_app_language">Igual que el idioma de la app</string>
+    <string name="t_titles_and_descriptions_from_tmdb_in">Títulos, descripciones y filas de Inicio de TMDB en este idioma. Se mantiene el inglés donde TMDB no tiene traducción.</string>
+    <string name="t_match_frame_rate">Ajustar la frecuencia de imagen</string>
+    <string name="t_switches_the_tv_to_the_video_s">Cambia la TV a la frecuencia de imagen del vídeo para que las películas se vean sin tirones. La pantalla puede quedarse en negro un momento al empezar.</string>
+    <string name="t_only_when_seamless">Solo si es instantáneo</string>
+    <string name="t_always">Siempre</string>
+    <string name="t_plain_http_works_only_for_local">http:// solo funciona con complementos de tu red local (como 192.168.x.x). Usa una dirección HTTPS para complementos públicos.</string>
+    <string name="t_use_an_https_add_on_base_or">Usa la URL HTTPS base o del manifiesto del complemento, sin consulta ni fragmento.</string>
 </resources>

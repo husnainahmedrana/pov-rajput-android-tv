@@ -854,7 +854,7 @@
     <string name="t_paste_a_stremio_catalog_add_on">Füge die URL eines Stremio-Katalog-Add-ons ein, etwa dein AIOMetadata-Manifest, und wähle die Kataloge für die Startseite.</string>
     <string name="t_paste_an_add_on_link">Add-on-Link einfügen…</string>
     <string name="t_paste_an_api_key">API-Schlüssel einfügen</string>
-    <string name="t_paste_an_https_stremio_add_on">Füge die HTTPS-URL eines Stremio-Add-ons oder Manifests ein, z. B. dein Torrentio- oder Deepbrid-Add-on.</string>
+    <string name="t_paste_an_https_stremio_add_on">Füge die HTTPS-URL eines Stremio-Add-ons oder Manifests ein, z. B. dein Torrentio- oder Deepbrid-Add-on. Add-ons im lokalen Netzwerk können http:// nutzen.</string>
     <string name="t_paste_your_free_subdl_key">Füge deinen kostenlosen SubDL-Schlüssel ein</string>
     <string name="t_paste_your_free_wyzie_key">Füge deinen kostenlosen Wyzie-Schlüssel ein</string>
     <string name="t_paste_your_key_from_seekr_tv">Füge deinen Schlüssel von seekr.tv ein (sk_live_...)</string>
@@ -1831,4 +1831,13 @@
     <string name="t_times_come_from_theintrodb_skipdb_and_aniskip">Die Zeiten stammen von TheIntroDB und SkipDB, bei Anime von AniSkip; Titel, die sie nicht kennen, zeigen keine Schaltfläche.</string>
     <string name="t_rd_paused">Real-Debrid pausiert gerade das Hinzufügen auf deinem Konto. Versuche es in einer Minute erneut.</string>
     <string name="t_rd_paused_retrying_x">Real-Debrid pausiert das Hinzufügen auf deinem Konto · neuer Versuch in %1$s s</string>
+    <string name="t_metadata_language">Sprache der Metadaten</string>
+    <string name="t_same_as_app_language">Wie die App-Sprache</string>
+    <string name="t_titles_and_descriptions_from_tmdb_in">Titel, Beschreibungen und Startseiten-Reihen von TMDB in dieser Sprache. Wo TMDB keine Übersetzung hat, bleibt Englisch.</string>
+    <string name="t_match_frame_rate">Bildrate anpassen</string>
+    <string name="t_switches_the_tv_to_the_video_s">Stellt den Fernseher auf die Bildrate des Videos um, damit Filme ruckelfrei laufen. Beim Start kann der Bildschirm kurz schwarz werden.</string>
+    <string name="t_only_when_seamless">Nur wenn nahtlos</string>
+    <string name="t_always">Immer</string>
+    <string name="t_plain_http_works_only_for_local">http:// funktioniert nur für Add-ons in deinem lokalen Netzwerk (z. B. 192.168.x.x). Nutze für öffentliche Add-ons eine HTTPS-Adresse.</string>
+    <string name="t_use_an_https_add_on_base_or">Nutze die HTTPS-Basis- oder Manifest-URL des Add-ons, ohne Abfrage oder Fragment.</string>
 </resources>

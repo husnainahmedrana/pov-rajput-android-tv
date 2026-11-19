@@ -854,7 +854,7 @@
     <string name="t_paste_a_stremio_catalog_add_on">Collez l\'URL d\'un module de catalogue Stremio, comme votre manifeste AIOMetadata, puis choisissez les catalogues à afficher sur l\'accueil.</string>
     <string name="t_paste_an_add_on_link">Collez un lien de module…</string>
     <string name="t_paste_an_api_key">Collez une clé API</string>
-    <string name="t_paste_an_https_stremio_add_on">Collez l\'URL HTTPS d\'un module ou manifeste Stremio, par exemple votre module Torrentio ou Deepbrid.</string>
+    <string name="t_paste_an_https_stremio_add_on">Collez l\'URL HTTPS d\'un module ou manifeste Stremio, par exemple votre module Torrentio ou Deepbrid. Les modules de votre réseau local peuvent utiliser http://.</string>
     <string name="t_paste_your_free_subdl_key">Collez votre clé SubDL gratuite</string>
     <string name="t_paste_your_free_wyzie_key">Collez votre clé Wyzie gratuite</string>
     <string name="t_paste_your_key_from_seekr_tv">Collez votre clé de seekr.tv (sk_live_...)</string>
@@ -1831,4 +1831,13 @@
     <string name="t_times_come_from_theintrodb_skipdb_and_aniskip">Les temps viennent de TheIntroDB et SkipDB, et d\'AniSkip pour les animés ; les titres qu\'ils ne connaissent pas n\'ont pas de bouton.</string>
     <string name="t_rd_paused">Real-Debrid suspend les ajouts sur votre compte pour un moment. Réessayez dans une minute.</string>
     <string name="t_rd_paused_retrying_x">Real-Debrid suspend les ajouts sur votre compte · nouvel essai dans %1$s s</string>
+    <string name="t_metadata_language">Langue des métadonnées</string>
+    <string name="t_same_as_app_language">Comme la langue de l\'app</string>
+    <string name="t_titles_and_descriptions_from_tmdb_in">Titres, descriptions et rangées d\'accueil de TMDB dans cette langue. L\'anglais reste là où TMDB n\'a pas de traduction.</string>
+    <string name="t_match_frame_rate">Adapter la fréquence d\'images</string>
+    <string name="t_switches_the_tv_to_the_video_s">Passe la TV à la fréquence d\'images de la vidéo pour que les films soient fluides. L\'écran peut devenir noir un instant au démarrage.</string>
+    <string name="t_only_when_seamless">Seulement si instantané</string>
+    <string name="t_always">Toujours</string>
+    <string name="t_plain_http_works_only_for_local">http:// ne fonctionne que pour les modules de votre réseau local (comme 192.168.x.x). Utilisez une adresse HTTPS pour les modules publics.</string>
+    <string name="t_use_an_https_add_on_base_or">Utilisez l\'URL HTTPS de base ou du manifeste du module, sans requête ni fragment.</string>
 </resources>

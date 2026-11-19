@@ -57,6 +57,19 @@ class SourceProvidersTest {
         assertThrows(IllegalArgumentException::class.java) { config.save(listOf(alpha, beta.copy(address = alpha.address.removeSuffix("/manifest.json") + "/"))) }
         assertTrue(values.isEmpty())
     }
+    @Test fun `plain http is accepted only for add-ons on the local network`() {
+        val uuid = "0b6a1c2e-3f4d-4e5f-8a9b-0c1d2e3f4a5b"
+        assertEquals("http://192.168.68.4:3000/$uuid", SourceProviders.endpoint("http://192.168.68.4:3000/$uuid/manifest.json"))
+        listOf("http://10.0.0.5:7000", "http://172.16.0.2", "http://172.31.255.254:8080/x", "http://127.0.0.1:11470",
+            "http://localhost:3000", "http://nas.local:3000", "http://100.101.102.103:3000", "http://[fd12:3456::1]:3000", "HTTP://192.168.1.10/a")
+            .forEach { address -> runCatching { SourceProviders.endpoint(address) }.onFailure { fail("rejected $address") } }
+        listOf("http://example.com", "http://172.32.0.1", "http://8.8.8.8", "http://192.168.1.999", "http://nas.lan",
+            "http://192.168.1.10.example.com", "http://100.128.0.1", "http://user:pw@192.168.1.10", "http://192.168.1.10/?a=b", "ftp://192.168.1.10")
+            .forEach { assertThrows(it, IllegalArgumentException::class.java) { SourceProviders.endpoint(it) } }
+        val message = assertThrows(IllegalArgumentException::class.java) { SourceProviders.endpoint("http://example.com") }.message!!
+        assertTrue(message.contains("local network"))
+    }
+
     @Test fun `disabled provider is never requested and name replaces address`() {
         val calls = mutableListOf<String>()
         val sources = resolver(listOf(alpha, beta.copy(enabled = false))) { url -> calls += url; payload(direct("https://video.example/play")) }.sources(identity)

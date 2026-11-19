@@ -854,7 +854,7 @@
     <string name="t_paste_a_stremio_catalog_add_on">Incolla l\'URL di un add-on catalogo Stremio, come il tuo manifest AIOMetadata, poi scegli i cataloghi da mostrare nella Home.</string>
     <string name="t_paste_an_add_on_link">Incolla un link di add-on…</string>
     <string name="t_paste_an_api_key">Incolla una chiave API</string>
-    <string name="t_paste_an_https_stremio_add_on">Incolla l\'URL HTTPS di un add-on o manifest Stremio, per esempio il tuo add-on Torrentio o Deepbrid.</string>
+    <string name="t_paste_an_https_stremio_add_on">Incolla l\'URL HTTPS di un add-on o manifest Stremio, per esempio il tuo add-on Torrentio o Deepbrid. Gli add-on nella tua rete locale possono usare http://.</string>
     <string name="t_paste_your_free_subdl_key">Incolla la tua chiave SubDL gratuita</string>
     <string name="t_paste_your_free_wyzie_key">Incolla la tua chiave Wyzie gratuita</string>
     <string name="t_paste_your_key_from_seekr_tv">Incolla la tua chiave da seekr.tv (sk_live_...)</string>
@@ -1831,4 +1831,13 @@
     <string name="t_times_come_from_theintrodb_skipdb_and_aniskip">I tempi vengono da TheIntroDB e SkipDB, e da AniSkip per gli anime; i titoli che non conoscono non mostrano il pulsante.</string>
     <string name="t_rd_paused">Real-Debrid sta sospendendo le aggiunte sul tuo account per un momento. Riprova tra un minuto.</string>
     <string name="t_rd_paused_retrying_x">Real-Debrid sta sospendendo le aggiunte sul tuo account · nuovo tentativo tra %1$s s</string>
+    <string name="t_metadata_language">Lingua dei metadati</string>
+    <string name="t_same_as_app_language">Come la lingua dell\'app</string>
+    <string name="t_titles_and_descriptions_from_tmdb_in">Titoli, descrizioni e righe della Home da TMDB in questa lingua. Resta l\'inglese dove TMDB non ha una traduzione.</string>
+    <string name="t_match_frame_rate">Adatta frequenza fotogrammi</string>
+    <string name="t_switches_the_tv_to_the_video_s">Porta la TV alla frequenza fotogrammi del video, così i film scorrono senza scatti. All\'avvio lo schermo può diventare nero per un attimo.</string>
+    <string name="t_only_when_seamless">Solo se istantaneo</string>
+    <string name="t_always">Sempre</string>
+    <string name="t_plain_http_works_only_for_local">http:// funziona solo per gli add-on nella tua rete locale (come 192.168.x.x). Usa un indirizzo HTTPS per gli add-on pubblici.</string>
+    <string name="t_use_an_https_add_on_base_or">Usa l\'URL HTTPS base o del manifest dell\'add-on, senza query né frammento.</string>
 </resources>

@@ -82,6 +82,52 @@ class TmdbCatalog internal constructor(
     /** Checks the key with the smallest authenticated request. */
     fun validate() { json("/configuration") }
 
+    /**
+     * A title's name and description in the metadata [language], from TMDB's own translations (not its fallbacks, which
+     * can be the original-language title). Null when the language is English or TMDB has no such translation.
+     */
+    fun localized(imdbId: String, type: String): Pair<String, String>? {
+        if (MetadataLanguage.isEnglish(language) || !imdbId.matches(Regex("tt\\d{5,12}"))) return null
+        val kind = if (type == "movie") "movie" else "tv"
+        val id = json("/find/$imdbId?external_source=imdb_id").optJSONArray("${kind}_results")?.optJSONObject(0)
+            ?.optLong("id", -1)?.takeIf { it > 0 } ?: return null
+        val translations = json("/$kind/$id/translations").optJSONArray("translations") ?: return null
+        val (wanted, country) = language.split('-', limit = 2).let { it[0] to it.getOrElse(1) { "" } }
+        val matches = (0 until translations.length()).mapNotNull { translations.optJSONObject(it) }.filter { it.optString("iso_639_1") == wanted }
+        val data = (matches.firstOrNull { it.optString("iso_3166_1") == country } ?: matches.firstOrNull())?.optJSONObject("data") ?: return null
+        val title = data.optString(if (kind == "movie") "title" else "name").trim()
+        val overview = data.optString("overview").trim()
+        return if (title.isBlank() && overview.isBlank()) null else title to overview
+    }
+
+    /**
+     * Lists from elsewhere (Queued Up's latest releases carry English only) in the metadata language: each title's
+     * name and description from TMDB, asked a few at a time and remembered. Titles TMDB lacks stay as they are.
+     */
+    fun localizeAll(items: List<MediaItemData>): List<MediaItemData> {
+        if (MetadataLanguage.isEnglish(language) || items.isEmpty()) return items
+        val lang = language
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(6)
+        try {
+            val answers = items.map { item -> pool.submit<Pair<String, String>?> {
+                val cacheKey = "$lang:${item.type}:${item.imdbId}"
+                val known = synchronized(LOCALIZED) { LOCALIZED[cacheKey] }
+                if (known != null) known.takeIf { it.first.isNotEmpty() || it.second.isNotEmpty() }
+                else {
+                    val found = runCatching { localized(item.imdbId, item.type) }.getOrNull()
+                    synchronized(LOCALIZED) { LOCALIZED[cacheKey] = found ?: ("" to "") }
+                    found
+                }
+            } }
+            var translated = 0
+            return items.zip(answers).map { (item, answer) ->
+                val (title, overview) = runCatching { answer.get(10, java.util.concurrent.TimeUnit.SECONDS) }.getOrNull() ?: return@map item
+                translated++
+                item.copy(title = title.ifBlank { item.title }, description = overview.ifBlank { item.description })
+            }.also { runCatching { android.util.Log.i("PovMetadata", "$lang list: $translated of ${items.size} titles translated") } }
+        } finally { pool.shutdownNow() }
+    }
+
     /** One actor of a title: TMDB person id, name, the part they play and a portrait (blank when TMDB has none). */
     data class CastMember(val personId: Long, val name: String, val character: String, val photo: String, val crew: Boolean = false)
     /** An actor's films and shows, each most popular first. */
@@ -106,7 +152,9 @@ class TmdbCatalog internal constructor(
             ?: return DetailExtras(emptyList(), emptyList())
         ids.put(mapOf("$kind:$id" to imdbId))
         val data = json("/$kind/$id?append_to_response=" + (if (withSimilar) "keywords,recommendations,similar" else "keywords") +
-            if (type == "movie") ",credits" else "")
+            if (type == "movie" && MetadataLanguage.isEnglish(language)) ",credits" else "")
+        // Crew names in English: with another metadata language the movie's credits come in a request of their own.
+        if (type == "movie" && !MetadataLanguage.isEnglish(language)) runCatching { json("/movie/$id/credits", english = true) }.getOrNull()?.let { data.put("credits", it) }
         // A show's crew comes from the same whole-run credits the Cast row already downloaded: read it from the cache.
         if (type == "series") runCatching { aggregateCredits(id) }.getOrNull()?.let { data.put("aggregate_credits", it) }
         val keywords = data.optJSONObject("keywords")?.let { it.optJSONArray("keywords") ?: it.optJSONArray("results") }
@@ -188,7 +236,7 @@ class TmdbCatalog internal constructor(
         val found = json("/find/$imdbId?external_source=imdb_id").optJSONArray(if (tv) "tv_results" else "movie_results")
         val id = found?.optJSONObject(0)?.optLong("id", -1)?.takeIf { it > 0 } ?: return emptyList()
         ids.put(mapOf("${if (tv) "tv" else "movie"}:$id" to imdbId))
-        val list = (if (tv) aggregateCredits(id) else json("/movie/$id/credits")).optJSONArray("cast") ?: return emptyList()
+        val list = (if (tv) aggregateCredits(id) else json("/movie/$id/credits", english = true)).optJSONArray("cast") ?: return emptyList()
         return (0 until list.length()).mapNotNull { list.optJSONObject(it) }
             .sortedBy { it.optInt("order", Int.MAX_VALUE) }
             .mapNotNull { entry ->
@@ -208,7 +256,7 @@ class TmdbCatalog internal constructor(
      */
     fun episodeCredits(imdbId: String, season: Int, episode: Int, limit: Int = 30): EpisodeCredits? {
         val id = tvId(imdbId) ?: return null
-        val data = json("/tv/$id/season/$season/episode/$episode?append_to_response=credits")
+        val data = json("/tv/$id/season/$season/episode/$episode?append_to_response=credits", english = true)
         val credits = data.optJSONObject("credits") ?: JSONObject()
         fun people(list: org.json.JSONArray?, crew: Boolean, role: (JSONObject) -> String) =
             (0 until (list?.length() ?: 0)).mapNotNull { list?.optJSONObject(it) }.mapNotNull { entry ->
@@ -306,12 +354,13 @@ class TmdbCatalog internal constructor(
 
     /** A show's whole-run credits (large for long shows), kept for the last few shows so Cast and Crew share one download. */
     private fun aggregateCredits(id: Long): JSONObject = synchronized(AGGREGATE_CREDITS) { AGGREGATE_CREDITS[id] }
-        ?: json("/tv/$id/aggregate_credits").also { credits -> synchronized(AGGREGATE_CREDITS) { AGGREGATE_CREDITS[id] = credits } }
+        ?: json("/tv/$id/aggregate_credits", english = true).also { credits -> synchronized(AGGREGATE_CREDITS) { AGGREGATE_CREDITS[id] = credits } }
 
-    private fun json(path: String): JSONObject {
+    /** [english]: cast and crew always come in English, whatever the metadata language (names stay consistent and searchable). */
+    private fun json(path: String, english: Boolean = false): JSONObject {
         val bearer = key.startsWith("eyJ")
         val separator = if ('?' in path) '&' else '?'
-        val url = "$BASE$path${separator}language=en-US" + if (bearer) "" else "&api_key=$key"
+        val url = "$BASE$path${separator}language=${if (english) "en-US" else language}" + if (bearer) "" else "&api_key=$key"
         val raw = get(url, if (bearer) mapOf("Authorization" to "Bearer $key") else emptyMap())
         return try { JSONObject(raw) } catch (_: Exception) { throw IllegalStateException(L10n.tr(R.string.t_tmdb_returned_an_unreadable_response, "TMDB returned an unreadable response.")) }
     }
@@ -328,6 +377,14 @@ class TmdbCatalog internal constructor(
 
     companion object {
         private const val BASE = "https://api.themoviedb.org/3"
+
+        /** Localized names and descriptions by "language:type:imdbId" ("" to "" = TMDB has none). */
+        private val LOCALIZED = object : LinkedHashMap<String, Pair<String, String>>(64, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<String, String>>?) = size > 600
+        }
+
+        /** TMDB language for every request (MetadataLanguage), set from Settings when the app starts and on change. */
+        @Volatile var language: String = "en-US"
         private val AGGREGATE_CREDITS = object : LinkedHashMap<Long, JSONObject>(8, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, JSONObject>?) = size > 3
         }

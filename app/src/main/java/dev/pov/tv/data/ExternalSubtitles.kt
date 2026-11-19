@@ -11,6 +11,9 @@ import java.util.zip.ZipInputStream
 /** A subtitle file found online for the playing title. [language] is a two-letter code; [mime] a Media3 MIME type. */
 internal data class ExternalSubtitle(val url: String, val language: String, val label: String, val mime: String, val score: Int)
 
+/** A Stremio add-on the viewer installed that may offer subtitles: its name and base address (no /manifest.json). */
+internal data class SubtitleAddon(val name: String, val base: String)
+
 /**
  * Subtitles for videos that have none in the viewer's language: OpenSubtitles through its free Stremio add-on (no key),
  * plus Wyzie Subs and SubDL when the viewer adds their own free keys. Results that share words with the playing file's name
@@ -22,13 +25,37 @@ internal class ExternalSubtitles(
     private val download: (String) -> ByteArray = ::bytes,
     private val fetch: (String) -> String = { Net.raw(it) },
 ) {
+    /**
+     * [addons]: the viewer's installed add-ons; those whose manifest offers subtitles are asked too (Stremio
+     * /subtitles/ route), up to two of each one's best matches. [attached]: subtitles the playing link's add-on sent
+     * with the stream itself; they were made for that exact file, so they come first.
+     */
     fun find(identity: PlaybackIdentity, language: String, fileName: String, wyzieKey: String = "", limit: Int = 3,
-             subdlKey: String = ""): List<ExternalSubtitle> {
-        if (!IMDB.matches(identity.imdbId) || language.length != 2) return emptyList()
-        val found = runCatching { openSubtitles(identity, language, fileName) }.getOrDefault(emptyList()) +
+             subdlKey: String = "", addons: List<SubtitleAddon> = emptyList(), attached: List<StreamSubtitle> = emptyList(),
+             /** False: only the viewer's add-ons and [attached] (the video has this language built in, or auto-fetch is off). */
+             builtIn: Boolean = true): List<ExternalSubtitle> {
+        if (language.length != 2) return emptyList()
+        val wanted = iso3(language)
+        val withStream = attached.filter { iso3(it.language) == wanted && safeUrl(it.url) }.distinctBy { it.url }.take(limit)
+            .map { ExternalSubtitle(it.url, language, label(language, it.source.ifBlank { "Stream" }), mimeOf(it.url), Int.MAX_VALUE) }
+        if (!IMDB.matches(identity.imdbId)) return withStream
+        val found = if (!builtIn) emptyList() else runCatching { openSubtitles(identity, language, fileName) }.getOrDefault(emptyList()) +
             (if (wyzieKey.isBlank()) emptyList() else runCatching { wyzie(identity, language, fileName, wyzieKey) }.getOrDefault(emptyList())) +
             (cacheDir?.takeIf { subdlKey.isNotBlank() }?.let { dir -> runCatching { subdl(identity, language, fileName, subdlKey, dir) }.getOrDefault(emptyList()) } ?: emptyList())
-        return found.distinctBy { it.url }.sortedByDescending { it.score }.take(limit)
+        val builtIn = found.distinctBy { it.url }.sortedByDescending { it.score }.take(limit)
+        // Each add-on keeps its own best two, so the viewer's own subtitle add-ons are never crowded out.
+        val fromAddons = addons.distinctBy { it.base }.filterNot { it.base.trimEnd('/').equals(OPEN_SUBTITLES, ignoreCase = true) }.flatMap { addon ->
+            runCatching { addonSubtitles(addon, identity, language, fileName) }.getOrDefault(emptyList()).sortedByDescending { it.score }.take(2)
+        }
+        return (withStream + builtIn + fromAddons).distinctBy { it.url }
+    }
+
+    /** An installed add-on's subtitles, when its manifest offers them for this title. */
+    private fun addonSubtitles(addon: SubtitleAddon, identity: PlaybackIdentity, language: String, fileName: String): List<ExternalSubtitle> {
+        val type = if (identity.type == "series") "series" else "movie"
+        val info = AddonManifests.info(addon.base) { JSONObject(fetch(it)) } ?: return emptyList()
+        if (!info.offers("subtitles", type, identity.imdbId)) return emptyList()
+        return stremioSubtitles("${addon.base}/subtitles/$type/${stremioId(identity)}.json", identity, language, fileName, addon.name)
     }
 
     /**
@@ -82,20 +109,27 @@ internal class ExternalSubtitles(
         return File(dir, "subdl-$id.${name.substringAfterLast('.').lowercase(Locale.ROOT)}").apply { writeBytes(bytes) }
     }
 
+    private fun stremioId(identity: PlaybackIdentity): String =
+        if (identity.type == "series" && identity.season > 0 && identity.episode > 0) "${identity.imdbId}:${identity.season}:${identity.episode}" else identity.imdbId
+
     private fun openSubtitles(identity: PlaybackIdentity, language: String, fileName: String): List<ExternalSubtitle> {
-        val episode = identity.type == "series" && identity.season > 0 && identity.episode > 0
-        val id = if (episode) "${identity.imdbId}:${identity.season}:${identity.episode}" else identity.imdbId
         val type = if (identity.type == "series") "series" else "movie"
-        val subtitles = JSONObject(fetch("$OPEN_SUBTITLES/subtitles/$type/$id.json")).optJSONArray("subtitles") ?: return emptyList()
+        return stremioSubtitles("$OPEN_SUBTITLES/subtitles/$type/${stremioId(identity)}.json", identity, language, fileName, "OpenSubtitles")
+    }
+
+    /** A Stremio add-on's subtitles answer ({"subtitles":[{url, lang, ...}]}), kept to [language] and this episode. */
+    private fun stremioSubtitles(address: String, identity: PlaybackIdentity, language: String, fileName: String, source: String): List<ExternalSubtitle> {
+        val episode = identity.type == "series" && identity.season > 0 && identity.episode > 0
+        val subtitles = JSONObject(fetch(address)).optJSONArray("subtitles") ?: return emptyList()
         val wanted = iso3(language)
-        return (0 until subtitles.length()).mapNotNull { index ->
+        return (0 until minOf(subtitles.length(), 500)).mapNotNull { index ->
             val item = subtitles.optJSONObject(index) ?: return@mapNotNull null
             val url = item.optString("url")
-            if (!url.startsWith("https://") || iso3(item.optString("lang")) != wanted) return@mapNotNull null
+            if (!safeUrl(url) || iso3(item.optString("lang")) != wanted) return@mapNotNull null
             // Season packs can list other episodes' files.
             if (episode && item.optInt("season") > 0 && (item.optInt("season") != identity.season || item.optInt("episode") != identity.episode)) return@mapNotNull null
-            val name = item.optString("subtitleFileName").ifBlank { item.optString("movieReleaseName") }
-            ExternalSubtitle(url, language, label(language, "OpenSubtitles"), SUBRIP, score(fileName, name))
+            val name = listOf("subtitleFileName", "movieReleaseName", "release", "title").map(item::optString).firstOrNull { it.isNotBlank() }.orEmpty()
+            ExternalSubtitle(url, language, label(language, source), mimeOf(url), score(fileName, name))
         }
     }
 
@@ -146,6 +180,19 @@ internal class ExternalSubtitles(
                 out.write(buffer, 0, count)
             }
             return out.toByteArray()
+        }
+        /** https, or plain http only to a server on the viewer's own network (a self-hosted add-on). */
+        fun safeUrl(url: String): Boolean = runCatching {
+            val uri = java.net.URI(url)
+            !uri.host.isNullOrBlank() && uri.userInfo == null &&
+                (uri.scheme.equals("https", true) || uri.scheme.equals("http", true) && LocalAddress.isLocal(uri.host))
+        }.getOrDefault(false)
+
+        /** Subtitle format from the address; most add-ons serve SubRip. */
+        fun mimeOf(url: String): String = when (url.substringBefore('?').substringAfterLast('.', "").lowercase(Locale.ROOT)) {
+            "vtt" -> VTT
+            "ass", "ssa" -> SSA
+            else -> SUBRIP
         }
         const val SUBRIP = "application/x-subrip"
         const val VTT = "text/vtt"

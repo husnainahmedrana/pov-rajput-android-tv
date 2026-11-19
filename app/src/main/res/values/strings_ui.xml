@@ -854,7 +854,7 @@
     <string name="t_paste_a_stremio_catalog_add_on">Paste a Stremio catalog add-on URL, such as your AIOMetadata manifest, then pick the catalogs to show on Home.</string>
     <string name="t_paste_an_add_on_link">Paste an add-on link…</string>
     <string name="t_paste_an_api_key">Paste an API key</string>
-    <string name="t_paste_an_https_stremio_add_on">Paste an HTTPS Stremio add-on or manifest URL, for example your Torrentio or Deepbrid add-on.</string>
+    <string name="t_paste_an_https_stremio_add_on">Paste an HTTPS Stremio add-on or manifest URL, for example your Torrentio or Deepbrid add-on. Add-ons on your local network can use http://.</string>
     <string name="t_paste_your_free_subdl_key">Paste your free SubDL key</string>
     <string name="t_paste_your_free_wyzie_key">Paste your free Wyzie key</string>
     <string name="t_paste_your_key_from_seekr_tv">Paste your key from seekr.tv (sk_live_...)</string>
@@ -1831,4 +1831,13 @@
     <string name="t_times_come_from_theintrodb_skipdb_and_aniskip">Times come from TheIntroDB and SkipDB, and AniSkip for anime; titles they don\'t know show no button.</string>
     <string name="t_rd_paused">Real-Debrid is pausing adds on your account for a moment. Try again in a minute.</string>
     <string name="t_rd_paused_retrying_x">Real-Debrid is pausing adds on your account · retrying in %1$s s</string>
+    <string name="t_metadata_language">Metadata language</string>
+    <string name="t_same_as_app_language">Same as app language</string>
+    <string name="t_titles_and_descriptions_from_tmdb_in">Titles, descriptions and Home rows from TMDB in this language. English stays where TMDB has no translation.</string>
+    <string name="t_match_frame_rate">Match frame rate</string>
+    <string name="t_switches_the_tv_to_the_video_s">Switches the TV to the video\'s frame rate so movies play without judder. The screen may go black for a moment when playback starts.</string>
+    <string name="t_only_when_seamless">Only when seamless</string>
+    <string name="t_always">Always</string>
+    <string name="t_plain_http_works_only_for_local">Plain http:// works only for add-ons on your local network (such as 192.168.x.x). Use an HTTPS address for public add-ons.</string>
+    <string name="t_use_an_https_add_on_base_or">Use an HTTPS add-on base or manifest URL, without a query or fragment.</string>
 </resources>

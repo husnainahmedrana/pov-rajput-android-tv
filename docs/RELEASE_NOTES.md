@@ -1,22 +1,22 @@
-# Nabrio 0.4.5
+# Nabrio 0.4.6
 
-**Torznab arrives:** your own **Jackett** and **Prowlarr**, or any Torznab address, now add torrents to the link list. **Real-Debrid follows your priority**, **Continue Watching updates** as soon as you close the player, and **several devices on one account** stay in step.
+**Subtitles from your add-ons**, **self-hosted add-ons on your own network**, **metadata in your language** (Arabic and 23 others) and **Match frame rate** for smooth films on any TV.
 
 ## New
 
-- **Torznab** (Settings → Sources → **Torznab**): *Add Torznab indexer* offers three kinds.
-  - **Jackett:** the address you open Jackett at and its API key. All its indexers are searched together.
-  - **Prowlarr:** the address and its API key (Settings → General). Each switched-on **torrent** indexer is added; its Usenet indexers belong in Settings → Usenet.
-  - **Torznab address:** any Torznab URL, such as a Comet or StremThru instance. A key in the address (`?apikey=…`) is picked up by itself.
-  - Results are torrent links that play through your **debrid services**, checked and badged like Torrentio's. Connect a debrid service first.
-  - Only releases named after this title are kept (aggregators match loosely, even by IMDb id), and for a show only this episode or a pack of its season.
-  - **Priorities and backups** work as for Usenet indexers; **Results per indexer** (50 / 100 / 200 / 300) keeps the best-seeded links.
-  - Links show the **Jackett** or **Prowlarr** logo, or **Comet** / **StremThru** for those instances, in the list and in the player.
-  - A Torznab address pasted into **Source providers** is recognised and moved here.
-  - The **Real-Debrid name filter** applies to these links too.
-- **Several devices on one account:** when another TV or phone saved newer settings (add-ons, debrid services, Usenet providers and indexers with their auto-tune results, preferences), Nabrio offers to **Load** them (the app restarts) or **Keep this device's**. It checks when the app opens or comes back, never during playback. A device no longer overwrites a newer backup from another one: automatic backups wait, and **Back up now** asks.
+- **Subtitles from your add-ons:** add-ons you installed that offer subtitles are now asked for them, next to the built-in OpenSubtitles search.
+  - Each add-on adds its best two matches, named after it (for example *Arabic · My Subs*), in Audio & Subtitles.
+  - Subtitles an add-on sends **with a link** are used too; they were made for that exact file, so they come first.
+  - When the video already has your language built in, add-on subtitles are still offered as extra choices without being switched on.
+  - A subtitles-only add-on added under Source providers no longer shows as *unavailable* when links are searched.
+- **Add-ons on your local network:** Add source provider (and catalog add-ons) now accept plain `http://` addresses on your own network: `192.168.x.x`, `10.x.x.x`, `172.16–31.x.x`, `localhost`, `.local` names and Tailscale `100.x` addresses, with or without `/manifest.json`. Public add-ons still need HTTPS.
+- **Metadata language** (Settings → Home, under TMDB): titles, descriptions and Home rows from TMDB in **Arabic** or 23 other languages, or the same as the app's language.
+  - Details pages use TMDB's own translation; where there is none, English stays.
+  - The Latest Releases rows are translated title by title (brand-new releases often have no translation yet).
+  - Cast and crew always stay in English, so names match posters, links and IMDb.
+  - Episode names and synopses stay as Cinemeta / TVDB give them.
+- **Match frame rate** (Settings → Playback → Player): **Always** switches the TV to the video's frame rate (23.976, 24, 25, 50…) so films play without judder, and back when the player closes. The screen may go black for a moment when playback starts. **Only when seamless** (default) and **Off** keep the old behaviour.
 
 ## Better
 
-- **Real-Debrid priority is respected:** with Real-Debrid above TorBox or Offcloud in Debrid services, a link they have cached gets **one try on Real-Debrid first**. If Real-Debrid doesn't have it, is pausing adds or fails, TorBox or Offcloud plays it straight away. Below them, nothing changes.
-- **Continue Watching updates after playback:** closing the player now refreshes Home's Continue Watching, also when you played from a Continue Watching card (focus moves to the title you just watched) or from a details page (the row catches up when Home is back). WeTrakr and Simkl get a second refresh a few seconds later, as they record the stop late.
+- New settings and messages are translated into Spanish, French, German, Italian, Portuguese and Dutch.

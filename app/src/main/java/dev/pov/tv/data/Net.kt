@@ -84,7 +84,9 @@ object Net {
         val target = try { URL(address) } catch (_: Exception) {
             throw ApiException(0, L10n.tr(R.string.t_the_service_address_is_invalid, "The service address is invalid."))
         }
-        if (target.protocol != "https" || target.host.isNullOrBlank() || target.userInfo != null) {
+        // Plain HTTP only for self-hosted services on the viewer's own network (a LAN add-on without a certificate).
+        val secure = target.protocol == "https" || (target.protocol == "http" && !publicMetadata && LocalAddress.isLocal(target.host))
+        if (!secure || target.host.isNullOrBlank() || target.userInfo != null) {
             throw ApiException(0, L10n.tr(R.string.t_a_secure_https_service_address_is, "A secure HTTPS service address is required."))
         }
         if (publicMetadata) {

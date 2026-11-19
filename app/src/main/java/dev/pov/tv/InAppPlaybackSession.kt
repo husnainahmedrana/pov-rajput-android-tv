@@ -67,6 +67,8 @@ object InAppPlaybackSession {
         private set
     private var sourceKey = ""
     private var sourceHeaders = emptyMap<String, String>()
+    /** Subtitles the link's add-on sent with the stream. */
+    private var streamSubtitles = emptyList<dev.pov.tv.data.StreamSubtitle>()
     /** MediaFlowProxy.Origin of the link, encoded; [proxied] is true while it streams through the viewer's MediaFlow Proxy. */
     private var sourceOrigin = ""
     var proxied = false; private set
@@ -240,6 +242,7 @@ object InAppPlaybackSession {
         debridService = PlaybackDebrid.normalize(saved?.getString("debrid_service") ?: intent.getStringExtra("debrid_service"))
         sourceAddon = saved?.getString("source_addon") ?: intent.getStringExtra("source_addon")
         sourceOrigin = saved?.getString("source_origin") ?: intent.getStringExtra("source_origin").orEmpty()
+        streamSubtitles = dev.pov.tv.data.StreamSubtitle.fromJson(intent.getStringExtra("stream_subtitles"))
         title = intent.getStringExtra("title").orEmpty()
         if (saved == null) SubtitleSync.reset()
         subtitlesChecked = saved != null
@@ -348,6 +351,10 @@ object InAppPlaybackSession {
             .setHandleAudioBecomingNoisy(true)
             .setSeekBackIncrementMs(10_000).setSeekForwardIncrementMs(10_000).build()
         player = exo
+        // Match frame rate: Off keeps the TV as it is; otherwise Android may switch where it's seamless. "Always" is
+        // done by the player screen itself (FrameRateMatch), which asks the TV for a fitting display mode.
+        exo.videoChangeFrameRateStrategy = if (FrameRateMatch.mode(application!!) == FrameRateMatch.SEAMLESS)
+            C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
         exo.trackSelectionParameters = SubtitlePreferences(application!!).trackParameters(exo.trackSelectionParameters)
         exo.trackSelectionParameters = AudioPreferences(application!!).trackParameters(exo.trackSelectionParameters)
         parameters?.let { exo.trackSelectionParameters = it }
@@ -560,7 +567,7 @@ object InAppPlaybackSession {
         mediaSession?.release(); mediaSession = null
         exo?.release(); player = null
         UsenetSessions.close()
-        sourceUrl = ""; sourceKey = ""; sourceHeaders = emptyMap(); title = ""; mediaName = ""; mediaSize = null; identity = null; debridService = null; sourceAddon = null; sourceOrigin = ""; proxied = false; playbackAccount = null; lastLinkSaved = false
+        sourceUrl = ""; sourceKey = ""; sourceHeaders = emptyMap(); streamSubtitles = emptyList(); title = ""; mediaName = ""; mediaSize = null; identity = null; debridService = null; sourceAddon = null; sourceOrigin = ""; proxied = false; playbackAccount = null; lastLinkSaved = false
         remotePercent = 0.0; error = null
         if (notify) notifyChanged()
     }
@@ -585,6 +592,7 @@ object InAppPlaybackSession {
             .putExtra("media_name", mediaName).putExtra("media_size", mediaSize ?: 0L)
             .putExtra("debrid_service", debridService).putExtra("playback_account", playbackAccount).putExtra("source_addon", sourceAddon)
             .putExtra("source_origin", sourceOrigin)
+            .putExtra("stream_subtitles", dev.pov.tv.data.StreamSubtitle.toJson(streamSubtitles))
             .putExtra("resume", exo.currentPosition).putExtra("resume_percent", remotePercent)
             .putExtra("playWhenReady", exo.playWhenReady)
             .also { value -> identity?.let { value.putExtra("identity", it.toJson().toString()) } }
@@ -751,7 +759,8 @@ object InAppPlaybackSession {
      */
     /**
      * A video without subtitles in the viewer's language (or English, with English fallback on) gets the best matches
-     * from OpenSubtitles, and Wyzie with the viewer's key, added as extra subtitle tracks. The first one is chosen.
+     * from OpenSubtitles, Wyzie/SubDL with the viewer's keys, the viewer's own subtitle add-ons and the subtitles the
+     * link's add-on sent with it, added as extra subtitle tracks. The first one is chosen.
      */
     private fun findMissingSubtitles(exo: ExoPlayer, tracks: Tracks) {
         if (externalSubtitlesChecked || tracks.groups.none { it.type == C.TRACK_TYPE_VIDEO || it.type == C.TRACK_TYPE_AUDIO }) return
@@ -761,23 +770,26 @@ object InAppPlaybackSession {
         val wanted = preferences.language
         val media = identity ?: return
         // Header-bound links send their headers with every request, so no other host is asked for files.
-        if (!preferences.autoFetch || wanted.isEmpty() || wanted == "off" || sourceHeaders.isNotEmpty()) return
+        if (wanted.isEmpty() || wanted == "off" || sourceHeaders.isNotEmpty()) return
         val embedded = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }.flatMap { group ->
             (0 until group.length).filter(group::isTrackSupported).map { group.getTrackFormat(it) }
         }.filter { it.selectionFlags and C.SELECTION_FLAG_FORCED == 0 && it.label?.contains("forced", true) != true }
             .map { dev.pov.tv.data.ExternalSubtitles.iso3(it.language.orEmpty()) }.toSet()
-        // The chosen language built in: nothing to find. The English fallback must not stop the search: a video with
-        // English built in but no Spanish still gets Spanish from OpenSubtitles / Wyzie first, and falls back to English
-        // (built in, or online when it isn't) only when no Spanish is found anywhere.
-        if (dev.pov.tv.data.ExternalSubtitles.iso3(wanted) in embedded) return
+        // The chosen language built in (or auto-fetch off): online searches are skipped, but subtitles from the viewer's own
+        // add-ons and those sent with the stream are still added as extra choices, without being selected.
+        // The English fallback must not stop the search: a video with English built in but no Spanish still gets Spanish
+        // online first, and falls back to English (built in, or online when it isn't) only when no Spanish is found anywhere.
+        val extrasOnly = !preferences.autoFetch || dev.pov.tv.data.ExternalSubtitles.iso3(wanted) in embedded
         val fallbacks = SubtitlePreferences(app).withFallback(wanted).toList()
-        val candidates = fallbacks.takeWhile { dev.pov.tv.data.ExternalSubtitles.iso3(it) !in embedded }
+        val candidates = if (extrasOnly) listOf(wanted) else fallbacks.takeWhile { dev.pov.tv.data.ExternalSubtitles.iso3(it) !in embedded }
         val playing = sourceUrl; val fileName = mediaName; val key = secureStore.get(WYZIE_KEY); val subdlKey = secureStore.get(SUBDL_KEY)
         val subtitleCache = java.io.File(app.cacheDir, "subtitles")
+        val attached = streamSubtitles
         Thread {
             val finder = dev.pov.tv.data.ExternalSubtitles(cacheDir = subtitleCache)
+            val addons = subtitleAddons()
             val found = candidates.firstNotNullOfOrNull { language ->
-                runCatching { finder.find(media, language, fileName, key, subdlKey = subdlKey) }.getOrNull()?.takeIf { it.isNotEmpty() }
+                runCatching { finder.find(media, language, fileName, key, subdlKey = subdlKey, addons = addons, attached = attached, builtIn = !extrasOnly) }.getOrNull()?.takeIf { it.isNotEmpty() }
             }.orEmpty()
             handler.post {
                 if (found.isEmpty() || !isCurrent(exo) || sourceUrl != playing) return@post
@@ -786,12 +798,20 @@ object InAppPlaybackSession {
                 val configs = found.mapIndexed { index, subtitle ->
                     MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url)).setMimeType(subtitle.mime)
                         .setLanguage(subtitle.language).setLabel(if (found.size > 1) "${subtitle.label} ${index + 1}" else subtitle.label)
-                        .setSelectionFlags(if (index == 0) C.SELECTION_FLAG_DEFAULT else 0).build()
+                        .setSelectionFlags(if (index == 0 && !extrasOnly) C.SELECTION_FLAG_DEFAULT else 0).build()
                 }
                 exo.setMediaItem(item.buildUpon().setSubtitleConfigurations(configs).build(), false)
                 exo.prepare()
             }
         }.apply { isDaemon = true; name = "pov-subtitles" }.start()
+    }
+
+    /** The viewer's add-ons (source providers that are on, and catalog add-ons) that may offer subtitles. */
+    private fun subtitleAddons(): List<dev.pov.tv.data.SubtitleAddon> {
+        val sources = runCatching { dev.pov.tv.data.SourceProviders(secureStore).load().filter { it.enabled }
+            .map { dev.pov.tv.data.SubtitleAddon(it.name, dev.pov.tv.data.SourceProviders.endpoint(it.address)) } }.getOrDefault(emptyList())
+        val catalogs = runCatching { dev.pov.tv.data.CatalogAddons(secureStore).load().map { dev.pov.tv.data.SubtitleAddon(it.name, it.address) } }.getOrDefault(emptyList())
+        return (sources + catalogs).distinctBy { it.base }.take(20)
     }
 
     private fun preferFullSubtitles(exo: ExoPlayer, tracks: Tracks) {

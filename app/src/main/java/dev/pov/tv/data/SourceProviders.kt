@@ -59,11 +59,18 @@ internal class SourceProviders(private val get: (String) -> String, private val 
             require(value.isNotBlank()) { "Add a source provider in Settings before searching for links." }
             // Add-on settings in the path often hold characters an address can't carry as they are (Torrentio's
             // "providers=yts|sort=quality", raw JSON): written percent-encoded, which the add-on reads the same way.
-            val candidate = value.trim().trimEnd('/').removeSuffix("/manifest.json").trimEnd('/')
-                .replace(UNSAFE) { "%" + "%02X".format(it.value[0].code) }
+            val trimmed = value.trim().trimEnd('/').removeSuffix("/manifest.json").trimEnd('/')
+            // Only the path is encoded: an IPv6 host keeps its [ ] brackets.
+            val pathStart = trimmed.indexOf("://").takeIf { it >= 0 }?.let { trimmed.indexOf('/', it + 3) }?.takeIf { it >= 0 } ?: trimmed.length
+            val candidate = trimmed.substring(0, pathStart) + trimmed.substring(pathStart).replace(UNSAFE) { "%" + "%02X".format(it.value[0].code) }
             val uri = try { URI(candidate) } catch (_: Exception) { throw IllegalArgumentException(L10n.tr(R.string.t_enter_a_valid_https_stremio_compatible, "Enter a valid HTTPS Stremio-compatible add-on address.")) }
-            require(candidate.length <= 4096 && uri.scheme.equals("https", true) && !uri.host.isNullOrBlank() && uri.userInfo == null && uri.query == null && uri.fragment == null) {
-                "Use an HTTPS add-on base or manifest URL, without a query or fragment."
+            // http:// only for an add-on on the viewer's own network (192.168.x.x, 10.x.x.x, 172.16–31.x.x, localhost);
+            // public add-ons must use HTTPS.
+            val scheme = uri.scheme.orEmpty()
+            val allowedScheme = scheme.equals("https", true) || (scheme.equals("http", true) && LocalAddress.isLocal(uri.host))
+            require(candidate.length <= 4096 && allowedScheme && !uri.host.isNullOrBlank() && uri.userInfo == null && uri.query == null && uri.fragment == null) {
+                if (scheme.equals("http", true)) L10n.tr(R.string.t_plain_http_works_only_for_local, "Plain http:// works only for add-ons on your local network (such as 192.168.x.x). Use an HTTPS address for public add-ons.")
+                else L10n.tr(R.string.t_use_an_https_add_on_base_or, "Use an HTTPS add-on base or manifest URL, without a query or fragment.")
             }
             return candidate
         }

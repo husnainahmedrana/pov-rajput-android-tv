@@ -146,6 +146,8 @@ class MainActivity : Activity() {
     private var playingAddon: String? = null
     /** MediaFlowProxy.Origin of the link being started (add-on, serving debrid, Usenet), for the proxy route. */
     private var playingOrigin = ""
+    /** Subtitles the playing link's add-on sent with it, handed to the player. */
+    private var playingSubtitles = emptyList<dev.pov.tv.data.StreamSubtitle>()
     private fun mediaFile(name: String, size: Long?) {
         playingMedia = listOf(name, playingSourceText).filter { it.isNotBlank() }.distinct().joinToString(" · ") to size?.takeIf { it > 0 }
     }
@@ -214,6 +216,7 @@ class MainActivity : Activity() {
             val item = MediaItemData(identity.imdbId, identity.type, identity.title)
             runCatching { cachedDetails(item) ?: fetchDetails(item) }.getOrNull()
         }
+        applyMetadataLanguage()
         PlayerShowInfo.tmdb = { if (publicPreview) null else store.get(TMDB_KEY).takeIf { it.isNotBlank() }?.let { TmdbCatalog(this, it, tmdbRegion()) } }
         themePreferences = ThemePreferences(this); theme = themePreferences.selected()
         // Retire the old tracker locally; never replay its queued updates after this upgrade.
@@ -840,7 +843,7 @@ class MainActivity : Activity() {
 
     private fun Int?.orZero() = this ?: 0
     private fun pageRevision() = java.security.MessageDigest.getInstance("SHA-256").digest(
-        listOf(theme.id, wetrakr.accountRevision(), wetrakr.connected().toString(), store.get("offcloud.key"), store.get("torbox.token"), store.get("wetrakr.home_liked_opt_in"), store.get("sources.endpoint"), store.get(SourceProviders.KEY), store.get(TMDB_KEY), store.get(TMDB_REGION), store.get(TVDB_KEY), store.get(TVDB_SHOWS), store.get(RESUME_CARDS), store.get(CatalogAddons.KEY), homeRows.revision,
+        listOf(theme.id, wetrakr.accountRevision(), wetrakr.connected().toString(), store.get("offcloud.key"), store.get("torbox.token"), store.get("wetrakr.home_liked_opt_in"), store.get("sources.endpoint"), store.get(SourceProviders.KEY), store.get(TMDB_KEY), store.get(TMDB_REGION), TmdbCatalog.language, store.get(TVDB_KEY), store.get(TVDB_SHOWS), store.get(RESUME_CARDS), store.get(CatalogAddons.KEY), homeRows.revision,
             // Without a tracker, Home and title pages show local progress, so a kept copy is stale once something was watched.
             if (publicPreview || wetrakr.connected()) "" else history.continueRevision()).joinToString("\u0000").toByteArray()
     ).joinToString("") { "%02x".format(it.toInt() and 255) }
@@ -996,7 +999,8 @@ class MainActivity : Activity() {
                 val shelves = tmdb.homeShelves()
                 if (shelves.any { !it.unavailable && it.items.isNotEmpty() }) {
                     fun shelf(title: String) = shelves.firstOrNull { it.title == title }
-                    fun newest(type: String) = answer(latest[type]) ?: runCatching { tmdb.discover(type, "", TmdbCatalog.SORT_NEWEST, 1) }.getOrDefault(emptyList())
+                    // Queued Up's lists are English only: in another metadata language each title is translated through TMDB.
+                    fun newest(type: String) = answer(latest[type])?.let(tmdb::localizeAll) ?: runCatching { tmdb.discover(type, "", TmdbCatalog.SORT_NEWEST, 1) }.getOrDefault(emptyList())
                     return homeLineup(shelf("Trending Movies Today")?.items.orEmpty(), shelf("Trending Shows Today")?.items.orEmpty(), listOf(
                         row(ROW_LATEST_MOVIES, LATEST_MOVIES, "movie", newest("movie")), shelf("Now Playing in Cinemas").named(ROW_CINEMAS),
                         row(ROW_LATEST_SHOWS, LATEST_SHOWS, "series", newest("series")), shelf("Popular Movies").named(ROW_POPULAR_MOVIES),
@@ -2736,8 +2740,46 @@ class MainActivity : Activity() {
     private fun cachedDetails(item: MediaItemData): MediaItemData? = synchronized(detailsCache) {
         detailsCache.get(detailsKey(item))?.takeIf { android.os.SystemClock.elapsedRealtime() - it.at < DETAILS_KEEP_MS }?.result
     }
-    private fun fetchDetails(item: MediaItemData): MediaItemData = withTvdb(catalog.details(item)).also { result ->
+    private fun fetchDetails(item: MediaItemData): MediaItemData = withLocalMetadata(withTvdb(catalog.details(item)), item).also { result ->
         synchronized(detailsCache) { detailsCache.put(detailsKey(item), CachedDetails(result, android.os.SystemClock.elapsedRealtime())) }
+    }
+
+    /** The TMDB metadata language for every TMDB request: the saved choice, else the app's own language. */
+    private fun applyMetadataLanguage() {
+        TmdbCatalog.language = dev.pov.tv.data.MetadataLanguage.resolve(store.get(dev.pov.tv.data.MetadataLanguage.KEY), AppLanguage.tag(this))
+    }
+
+    /**
+     * With the viewer's TMDB key and a metadata language other than English, the title and description come from
+     * TMDB's translation into that language; a title TMDB hasn't translated (or any error) keeps the English text.
+     */
+    /** Titles whose description is in the metadata language (TMDB translated it). */
+    private val translatedTitles: MutableSet<String> = java.util.Collections.synchronizedSet(mutableSetOf())
+
+    private fun withLocalMetadata(result: MediaItemData, shown: MediaItemData? = null): MediaItemData {
+        val key = store.get(TMDB_KEY)
+        if (publicPreview || key.isBlank() || dev.pov.tv.data.MetadataLanguage.isEnglish(TmdbCatalog.language)) return result
+        val found = runCatching { TmdbCatalog(this, key, tmdbRegion()).localized(result.imdbId, result.type) }
+        android.util.Log.i("PovMetadata", "${TmdbCatalog.language} ${result.imdbId}: " + found.fold(
+            { if (it == null) "no translation" else "translated (title ${it.first.isNotBlank()}, overview ${it.second.isNotBlank()})" },
+            { "failed: ${it.javaClass.simpleName}: ${it.message?.take(120)}" }))
+        if (found.getOrNull()?.second?.isNotBlank() == true) translatedTitles += result.imdbId
+        // No translation found: the text the poster already showed (a TMDB list in this language) is kept over English.
+        val (title, overview) = found.getOrNull() ?: (shown?.title.orEmpty() to shown?.description.orEmpty())
+        return result.copy(title = title.ifBlank { result.title }, description = overview.ifBlank { result.description })
+    }
+
+    /** Settings → Metadata language: TMDB titles, descriptions and lists in another language (Arabic and others). */
+    private fun chooseMetadataLanguage() {
+        val saved = store.get(dev.pov.tv.data.MetadataLanguage.KEY)
+        val choices = listOf("" to getString(R.string.t_same_as_app_language)) + dev.pov.tv.data.MetadataLanguage.CHOICES.map { it.tag to it.name }
+        AlertDialog.Builder(this).setTitle(getString(R.string.t_metadata_language))
+            .setSingleChoiceItems(choices.map { it.second }.toTypedArray(), choices.indexOfFirst { it.first == saved }.coerceAtLeast(0)) { dialog, index ->
+                dialog.dismiss()
+                if (choices[index].first == saved) return@setSingleChoiceItems
+                store.put(dev.pov.tv.data.MetadataLanguage.KEY, choices[index].first)
+                applyMetadataLanguage(); forgetDetails(); discoveryCache.evictAll(); translatedTitles.clear(); refreshSettings()
+            }.setNegativeButton(getString(R.string.t_cancel), null).show()
     }
 
     /**
@@ -3630,7 +3672,10 @@ class MainActivity : Activity() {
         line.text = "S${identity.season} · E${identity.episode}" + if (episode.title.isNotBlank()) "   ${episode.title}" else ""
         focusedEpisode = episode
         paintEpisodeDate(identity, episode)
-        description?.text = episode.overview.ifBlank { show.description }
+        // In another metadata language, a show TMDB translated keeps its own description here: the episode synopses
+        // (Cinemeta / TVDB) are English only.
+        description?.text = if (show.imdbId in translatedTitles && show.description.isNotBlank()) show.description
+            else episode.overview.ifBlank { show.description }
         if (animate) listOfNotNull<View>(line, description).forEach { view ->
             view.animate().cancel(); view.alpha = 0.35f; view.animate().alpha(1f).setDuration(140).start()
         }
@@ -4444,6 +4489,7 @@ class MainActivity : Activity() {
         prepared.source?.let { played ->
             if (playingAddon == null) playingAddon = played.scraper
             playingOrigin = MediaFlowProxy.Origin.of(played).encode()
+            playingSubtitles = played.subtitles
         }
         val identity = prepared.identity
         val request = generation
@@ -4474,6 +4520,7 @@ class MainActivity : Activity() {
                         // A scraper's torrent played by POV's own debrid: the scraper's logo goes before the service's in the player.
                         playingAddon = if (prepared is PreparedSource.Direct) PlaybackDebrid.tag(source) else source.scraper
                         playingOrigin = MediaFlowProxy.Origin.of(source).encode()
+                        playingSubtitles = source.subtitles
                         when (prepared) {
                             is PreparedSource.Direct -> play(prepared.url, prepared.identity.title, prepared.identity,
                                 "media:${prepared.identity.imdbId}:${prepared.identity.season}:${prepared.identity.episode}",
@@ -5139,7 +5186,8 @@ class MainActivity : Activity() {
                 .putExtra("media_name", playingMedia?.first.orEmpty()).putExtra("media_size", playingMedia?.second ?: 0L)
                 .putExtra("headers", org.json.JSONObject(headers).toString()).putExtra("source_addon", playingAddon)
                 .putExtra("source_origin", playingOrigin)
-            playingMedia = null; playingSourceText = ""; switchResumeMs = null; playingAddon = null; playingOrigin = ""
+                .putExtra("stream_subtitles", dev.pov.tv.data.StreamSubtitle.toJson(playingSubtitles))
+            playingMedia = null; playingSourceText = ""; switchResumeMs = null; playingAddon = null; playingOrigin = ""; playingSubtitles = emptyList()
             @Suppress("DEPRECATION")
             startActivityForResult(intent, PLAYBACK_REQUEST)
             identity?.let { searchStreamsInBackground(it) }
@@ -6294,6 +6342,9 @@ class MainActivity : Activity() {
                 store.get(TVDB_SHOWS) != "false", contentLabel = getString(R.string.t_use_tvdb_for_shows)) { on -> store.put(TVDB_SHOWS, on.toString()); forgetDetails() }
             settingsRow(home, getString(R.string.t_search_and_details), metadataSource?.name ?: MetadataSource.fromJson(store.get(MetadataSource.KEY))?.let { getString(R.string.t_cinemeta_x_off, it.name) } ?: getString(R.string.t_cinemeta),
                 getString(R.string.t_use_one_of_your_catalog_add)) { chooseMetadataSource() }
+            if (tmdbKey.isNotBlank()) settingsRow(home, getString(R.string.t_metadata_language),
+                dev.pov.tv.data.MetadataLanguage.name(store.get(dev.pov.tv.data.MetadataLanguage.KEY)) ?: getString(R.string.t_same_as_app_language),
+                getString(R.string.t_titles_and_descriptions_from_tmdb_in)) { chooseMetadataLanguage() }
             settingsRow(home, getString(R.string.t_cinema_country), countryName(tmdbRegion()), getString(R.string.t_used_for_now_playing_in_cinemas)) {
                 val countries = java.util.Locale.getISOCountries().map { it to countryName(it) }.sortedBy { it.second }
                 AlertDialog.Builder(this).setTitle(getString(R.string.t_now_playing_in_cinemas_country))
@@ -6871,6 +6922,18 @@ class MainActivity : Activity() {
                 AlertDialog.Builder(this).setTitle(getString(R.string.t_dolby_vision_compatibility))
                     .setSingleChoiceItems(DolbyVisionMode.entries.map { it.label }.toTypedArray(), videoPreferences.mode.ordinal) { dialog, index ->
                         videoPreferences.mode = DolbyVisionMode.entries[index]; dialog.dismiss(); refreshSettings()
+                    }.setNegativeButton(getString(R.string.t_cancel), null).show()
+            }
+            fun frameRateLabel(value: String) = when (value) {
+                FrameRateMatch.OFF -> getString(R.string.t_off)
+                FrameRateMatch.ALWAYS -> getString(R.string.t_always)
+                else -> getString(R.string.t_only_when_seamless)
+            }
+            settingsRow(playback, getString(R.string.t_match_frame_rate), frameRateLabel(FrameRateMatch.mode(this)),
+                getString(R.string.t_switches_the_tv_to_the_video_s)) {
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_match_frame_rate))
+                    .setSingleChoiceItems(FrameRateMatch.CHOICES.map(::frameRateLabel).toTypedArray(), FrameRateMatch.CHOICES.indexOf(FrameRateMatch.mode(this))) { dialog, index ->
+                        FrameRateMatch.set(this, FrameRateMatch.CHOICES[index]); dialog.dismiss(); refreshSettings()
                     }.setNegativeButton(getString(R.string.t_cancel), null).show()
             }
 
@@ -7707,7 +7770,8 @@ class MainActivity : Activity() {
             if (!name.text.isNullOrBlank()) { status.text = getString(R.string.t_check_it_then_save); save.requestFocus(); return }
             status.text = getString(R.string.t_reading_the_add_on_s_name)
             worker.execute {
-                val found = runCatching { Net.json(AddonLinks.manifest(typed)).optString("name").trim().take(60) }.getOrDefault("")
+                val found = runCatching { val manifestUrl = AddonLinks.manifest(typed); Net.json(manifestUrl).also { json ->
+                    runCatching { dev.pov.tv.data.AddonManifests.remember(manifestUrl.removeSuffix("/manifest.json"), json) } }.optString("name").trim().take(60) }.getOrDefault("")
                 runOnUiThread {
                     if (!dialog.isShowing) return@runOnUiThread
                     if (found.isNotBlank() && name.text.isNullOrBlank()) name.setText(found)

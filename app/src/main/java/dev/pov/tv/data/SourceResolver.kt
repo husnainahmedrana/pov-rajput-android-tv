@@ -93,10 +93,16 @@ class SourceResolver internal constructor(
         try {
             providers.forEachIndexed { index, provider -> done.submit {
                 val began = System.nanoTime()
-                val items = try { parseStreams(publicJson("${endpoints[index]}/stream/${identity.type}/$id.json"), provider.name, identity, AddonBadges.of(endpoints[index], provider.name), provider.newsProvider, provider.id) }
+                // A subtitles-only add-on (installed for its subtitles) has no links to give and isn't "unavailable".
+                val known = AddonManifests.peek(endpoints[index])
+                val items = if (known != null && !known.offers("stream")) emptyList() else try {
+                    parseStreams(publicJson("${endpoints[index]}/stream/${identity.type}/$id.json"), provider.name, identity, AddonBadges.of(endpoints[index], provider.name), provider.newsProvider, provider.id) }
                 catch (error: InterruptedException) { throw error }
                 catch (error: java.util.concurrent.CancellationException) { throw error }
-                catch (_: Exception) { null }
+                catch (_: Exception) {
+                    val info = AddonManifests.info(endpoints[index], publicJson)
+                    if (info != null && !info.offers("stream") && info.offers("subtitles")) emptyList() else null
+                }
                 timing?.invoke(provider, if (items == null) null else (System.nanoTime() - began) / 1_000_000)
                 index to items
             } }
@@ -184,7 +190,12 @@ class SourceResolver internal constructor(
             // An add-on that holds the viewer's debrid key says which service in the link's name ("[TB+] Torrentio").
             val debridTag = if (direct.isBlank()) null else AddonDebridTag.of(stream.optString("name"))
             val fileIndex = if (stream.has("fileIdx") && !stream.isNull("fileIdx")) stream.optInt("fileIdx", -1).takeIf { it >= 0 } else null
-            SourceItem(title = title, provider = provider, providerId = providerId,
+            val attached = stream.optJSONArray("subtitles")?.let { list ->
+                (0 until minOf(list.length(), 100)).mapNotNull { list.optJSONObject(it) }
+                    .map { StreamSubtitle(it.optString("url"), it.optString("lang"), provider) }
+                    .filter { it.url.isNotBlank() && it.language.isNotBlank() }
+            }.orEmpty()
+            SourceItem(title = title, provider = provider, providerId = providerId, subtitles = attached,
                 torrentName = if (hash.isBlank()) "" else torrentNameOf(stream, title),
                 infoHash = hash, fileIndex = fileIndex, directUrl = direct,
                 sizeBytes = SourceMetadata.sizeBytes(stream), qualityHeight = SourceMetadata.qualityHeight(stream), headers = headers,
@@ -253,7 +264,8 @@ class SourceResolver internal constructor(
             val first = copies.first()
             first.copy(provider = copies.map { it.provider }.distinct().joinToString(" + "),
                 sizeBytes = copies.firstNotNullOfOrNull { it.sizeBytes }, qualityHeight = copies.firstNotNullOfOrNull { it.qualityHeight },
-                addon = copies.firstNotNullOfOrNull { it.addon })
+                addon = copies.firstNotNullOfOrNull { it.addon },
+                subtitles = copies.flatMap { it.subtitles }.distinctBy { it.url })
         }
     }
 

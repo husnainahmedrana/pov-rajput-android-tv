@@ -99,6 +99,7 @@ class PlayerActivity : Activity() {
     private val streamsChanged: () -> Unit = { if (!stopped && streamsDialog != null && streamsDialog === activeDialog && activeDialog?.isShowing == true) showStreams() }
     private val sessionListener: () -> Unit = {
         if (!stopped) {
+            matchFrameRate()
             updateControls()
             activeTrackType?.let { type ->
                 player?.let { current ->
@@ -900,6 +901,7 @@ class PlayerActivity : Activity() {
             .putExtra("media_name", ready.name).putExtra("media_size", ready.size)
             .putExtra("headers", org.json.JSONObject(ready.headers).toString())
             .putExtra("source_origin", dev.pov.tv.data.MediaFlowProxy.Origin.of(ready.source ?: source).encode())
+            .putExtra("stream_subtitles", dev.pov.tv.data.StreamSubtitle.toJson((ready.source ?: source).subtitles))
             // The playing link's logos: an add-on's own (and the service behind it), or the scraper that found the torrent.
             .putExtra("source_addon", (ready.source ?: source).let { played -> if (played.directUrl.isNotEmpty()) PlaybackDebrid.tag(played) else played.scraper })
         observedError = null
@@ -1337,7 +1339,32 @@ class PlayerActivity : Activity() {
         super.onSaveInstanceState(outState)
     }
 
+    /** The video (by link) the display mode was last chosen for, so the TV is asked once per video. */
+    private var frameRateFor = ""
+
+    /** Match frame rate "Always": the display mode whose refresh rate fits the playing video (FrameRateMatch). */
+    private fun matchFrameRate() {
+        val exo = player ?: return
+        val fps = exo.videoFormat?.frameRate?.takeIf { it > 0f } ?: return
+        val link = InAppPlaybackSession.sourceUrl
+        if (link == frameRateFor || FrameRateMatch.mode(this) != FrameRateMatch.ALWAYS) return
+        frameRateFor = link
+        @Suppress("DEPRECATION")
+        val display = (if (android.os.Build.VERSION.SDK_INT >= 30) display else windowManager.defaultDisplay) ?: return
+        fun mode(m: android.view.Display.Mode) = FrameRateMatch.Mode(m.modeId, m.physicalWidth, m.physicalHeight, m.refreshRate)
+        val best = FrameRateMatch.best(display.supportedModes.map(::mode), mode(display.mode), fps) ?: return
+        android.util.Log.i("PovFrameRate", "video ${"%.3f".format(fps)} fps: display ${display.mode.refreshRate} Hz -> ${best.refresh} Hz")
+        window.attributes = window.attributes.apply { preferredDisplayModeId = best.id }
+    }
+
+    /** Hands the display back to the TV's own mode. */
+    private fun releaseFrameRate() {
+        if (window.attributes.preferredDisplayModeId != 0) window.attributes = window.attributes.apply { preferredDisplayModeId = 0 }
+        frameRateFor = ""
+    }
+
     override fun onStop() {
+        releaseFrameRate()
         view.removeCallbacks(seekrLookup)
         view.removeCallbacks(skipTicker)
         finishSeek(cancelled = true, restorePlayback = false)

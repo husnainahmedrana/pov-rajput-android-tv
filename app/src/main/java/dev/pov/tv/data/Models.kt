@@ -93,7 +93,25 @@ data class SourceItem(
      * holding "From.S01E01.mkv"). Real-Debrid judges this name, so its copyright filter checks it too.
      */
     val torrentName: String = "",
+    /** Subtitles the add-on sent with this link (Stremio stream `subtitles`), made for this exact file. */
+    val subtitles: List<StreamSubtitle> = emptyList(),
 )
+
+/** One subtitle an add-on attached to a stream: its address, language code and the add-on it came from. */
+data class StreamSubtitle(val url: String, val language: String, val source: String = "") {
+    companion object {
+        fun toJson(list: List<StreamSubtitle>): String = org.json.JSONArray().apply {
+            list.forEach { put(org.json.JSONObject().put("url", it.url).put("lang", it.language).put("source", it.source)) }
+        }.toString()
+
+        fun fromJson(text: String?): List<StreamSubtitle> = runCatching {
+            val array = org.json.JSONArray(text ?: "[]")
+            (0 until minOf(array.length(), 100)).mapNotNull { index -> array.optJSONObject(index)?.let { item ->
+                StreamSubtitle(item.optString("url"), item.optString("lang"), item.optString("source")).takeIf { it.url.isNotBlank() }
+            } }
+        }.getOrDefault(emptyList())
+    }
+}
 
 /** A selected source either streams directly or offers stable TorBox file identities. */
 sealed interface PreparedSource {

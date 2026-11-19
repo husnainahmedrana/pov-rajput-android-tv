@@ -854,7 +854,7 @@
     <string name="t_paste_a_stremio_catalog_add_on">Plak de URL van een Stremio-catalogus-add-on, zoals je AIOMetadata-manifest, en kies de catalogi voor de startpagina.</string>
     <string name="t_paste_an_add_on_link">Plak een add-onlink…</string>
     <string name="t_paste_an_api_key">Plak een API-sleutel</string>
-    <string name="t_paste_an_https_stremio_add_on">Plak de HTTPS-URL van een Stremio-add-on of -manifest, bijvoorbeeld je Torrentio- of Deepbrid-add-on.</string>
+    <string name="t_paste_an_https_stremio_add_on">Plak de HTTPS-URL van een Stremio-add-on of -manifest, bijvoorbeeld je Torrentio- of Deepbrid-add-on. Add-ons in je lokale netwerk kunnen http:// gebruiken.</string>
     <string name="t_paste_your_free_subdl_key">Plak je gratis SubDL-sleutel</string>
     <string name="t_paste_your_free_wyzie_key">Plak je gratis Wyzie-sleutel</string>
     <string name="t_paste_your_key_from_seekr_tv">Plak je sleutel van seekr.tv (sk_live_...)</string>
@@ -1831,4 +1831,13 @@
     <string name="t_times_come_from_theintrodb_skipdb_and_aniskip">De tijden komen van TheIntroDB en SkipDB, en van AniSkip voor anime; titels die ze niet kennen tonen geen knop.</string>
     <string name="t_rd_paused">Real-Debrid pauzeert even het toevoegen op je account. Probeer het over een minuut opnieuw.</string>
     <string name="t_rd_paused_retrying_x">Real-Debrid pauzeert het toevoegen op je account · nieuwe poging over %1$s s</string>
+    <string name="t_metadata_language">Taal van metadata</string>
+    <string name="t_same_as_app_language">Zelfde als app-taal</string>
+    <string name="t_titles_and_descriptions_from_tmdb_in">Titels, beschrijvingen en Home-rijen van TMDB in deze taal. Engels blijft waar TMDB geen vertaling heeft.</string>
+    <string name="t_match_frame_rate">Framerate aanpassen</string>
+    <string name="t_switches_the_tv_to_the_video_s">Zet de tv op de framerate van de video, zodat films zonder haperingen spelen. Bij het starten kan het scherm even zwart worden.</string>
+    <string name="t_only_when_seamless">Alleen als het naadloos kan</string>
+    <string name="t_always">Altijd</string>
+    <string name="t_plain_http_works_only_for_local">http:// werkt alleen voor add-ons in je lokale netwerk (zoals 192.168.x.x). Gebruik een HTTPS-adres voor openbare add-ons.</string>
+    <string name="t_use_an_https_add_on_base_or">Gebruik de HTTPS-basis- of manifest-URL van de add-on, zonder query of fragment.</string>
 </resources>

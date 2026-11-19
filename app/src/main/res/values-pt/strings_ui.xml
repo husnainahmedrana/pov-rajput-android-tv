@@ -854,7 +854,7 @@
     <string name="t_paste_a_stremio_catalog_add_on">Cola o URL de um complemento de catálogo Stremio, como o teu manifesto AIOMetadata, e escolhe os catálogos a mostrar no Início.</string>
     <string name="t_paste_an_add_on_link">Cola um link de complemento…</string>
     <string name="t_paste_an_api_key">Cola uma chave de API</string>
-    <string name="t_paste_an_https_stremio_add_on">Cola o URL HTTPS de um complemento ou manifesto Stremio, por exemplo o teu complemento Torrentio ou Deepbrid.</string>
+    <string name="t_paste_an_https_stremio_add_on">Cola o URL HTTPS de um complemento ou manifesto Stremio, por exemplo o teu complemento Torrentio ou Deepbrid. Os complementos da tua rede local podem usar http://.</string>
     <string name="t_paste_your_free_subdl_key">Cola a tua chave gratuita do SubDL</string>
     <string name="t_paste_your_free_wyzie_key">Cola a tua chave gratuita do Wyzie</string>
     <string name="t_paste_your_key_from_seekr_tv">Cola a tua chave do seekr.tv (sk_live_...)</string>
@@ -1831,4 +1831,13 @@
     <string name="t_times_come_from_theintrodb_skipdb_and_aniskip">Os tempos vêm do TheIntroDB e do SkipDB, e do AniSkip para anime; os títulos que não conhecem não mostram botão.</string>
     <string name="t_rd_paused">O Real-Debrid está a pausar adições na tua conta por um momento. Tenta de novo daqui a um minuto.</string>
     <string name="t_rd_paused_retrying_x">O Real-Debrid está a pausar adições na tua conta · nova tentativa em %1$s s</string>
+    <string name="t_metadata_language">Idioma dos metadados</string>
+    <string name="t_same_as_app_language">Igual ao idioma da app</string>
+    <string name="t_titles_and_descriptions_from_tmdb_in">Títulos, descrições e linhas do Início do TMDB neste idioma. Fica o inglês onde o TMDB não tem tradução.</string>
+    <string name="t_match_frame_rate">Ajustar taxa de fotogramas</string>
+    <string name="t_switches_the_tv_to_the_video_s">Muda a TV para a taxa de fotogramas do vídeo para que os filmes passem sem solavancos. O ecrã pode ficar preto por um momento ao começar.</string>
+    <string name="t_only_when_seamless">Só se for instantâneo</string>
+    <string name="t_always">Sempre</string>
+    <string name="t_plain_http_works_only_for_local">http:// só funciona com complementos da tua rede local (como 192.168.x.x). Usa um endereço HTTPS para complementos públicos.</string>
+    <string name="t_use_an_https_add_on_base_or">Usa o URL HTTPS base ou do manifesto do complemento, sem consulta nem fragmento.</string>
 </resources>
