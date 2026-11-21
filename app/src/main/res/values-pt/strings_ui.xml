@@ -1904,6 +1904,7 @@
     <string name="t_wetrakr_trakt_or_simkl">WeTrakr, Trakt ou Simkl: listas para ver, Continuar a ver, A seguir e sincronização do progresso.</string>
     <string name="t_wetrakr_app_quota_used">O Nabrio esgotou os pedidos de hoje ao WeTrakr para todos os utilizadores. O WeTrakr renova-os às %1$s.</string>
     <string name="t_wetrakr_user_quota_used">A tua conta WeTrakr esgotou os pedidos de hoje. O WeTrakr renova-os às %1$s.</string>
+    <string name="t_wetrakr_sign_in_wait">Demasiadas tentativas de início de sessão no WeTrakr. Tenta novamente às %1$s. Se já estás ligado, não precisas de iniciar sessão outra vez.</string>
     <string name="t_trakt_asked_us_to_wait">O Trakt pediu para esperar antes de mais pedidos. Tenta novamente dentro de %1$s segundos.</string>
     <string name="t_trakt_account_limit">A tua conta Trakt atingiu o limite de listas ou da lista para ver. Remove itens em trakt.tv ou passa a VIP.</string>
     <string name="t_trakt_could_not_confirm_list_removal">O Trakt não conseguiu confirmar a remoção da lista. Atualiza a lista e tenta novamente.</string>

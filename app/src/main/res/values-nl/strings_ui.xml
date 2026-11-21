@@ -1904,6 +1904,7 @@
     <string name="t_wetrakr_trakt_or_simkl">WeTrakr, Trakt of Simkl: kijklijsten, Verder kijken, Hierna en voortgang synchroniseren.</string>
     <string name="t_wetrakr_app_quota_used">Nabrio heeft de WeTrakr-verzoeken van vandaag voor alle gebruikers opgebruikt. WeTrakr zet ze om %1$s terug.</string>
     <string name="t_wetrakr_user_quota_used">Je WeTrakr-account heeft de verzoeken van vandaag opgebruikt. WeTrakr zet ze om %1$s terug.</string>
+    <string name="t_wetrakr_sign_in_wait">Te veel aanmeldpogingen bij WeTrakr. Probeer het opnieuw om %1$s. Ben je al verbonden, dan hoef je niet opnieuw aan te melden.</string>
     <string name="t_trakt_asked_us_to_wait">Trakt vraagt even te wachten met meer verzoeken. Probeer het over %1$s seconden opnieuw.</string>
     <string name="t_trakt_account_limit">Je Trakt-account heeft de limiet voor lijsten of de kijklijst bereikt. Verwijder items op trakt.tv of word VIP.</string>
     <string name="t_trakt_could_not_confirm_list_removal">Trakt kon het verwijderen uit de lijst niet bevestigen. Vernieuw de lijst en probeer het opnieuw.</string>

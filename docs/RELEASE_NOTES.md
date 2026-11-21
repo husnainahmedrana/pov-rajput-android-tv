@@ -1,12 +1,8 @@
-# Nabrio 0.4.9
+# Nabrio 0.4.10
 
-**Trakt sign-in is open to everyone, and signing in from a phone browser works.**
+**Clearer WeTrakr sign-in limit, and it no longer pauses syncing.**
 
 ## Fixed
 
-- **Trakt:** Nabrio is now approved by Trakt for all accounts, so signing in no longer shows "This app is still in development". Sign in with a code at **auth.trakt.tv/activate** (Settings → Tracking → Service → Trakt). If you couldn't connect on 0.4.8, try again after updating.
-- **Trakt and WeTrakr sign-in on phones:** opening the sign-in page in the browser on the same phone no longer makes the sign-in fail with "connection changed or expired". Nabrio keeps waiting while you approve the code and connects as soon as you come back.
-
-## Better
-
-- Settings → About shows the Trakt notice: "Nabrio uses Trakt but is not endorsed or certified by Trakt."
+- **WeTrakr:** WeTrakr allows only a few sign-in attempts every 15 minutes. Going over that used to show "WeTrakr asked us to wait" and also paused all WeTrakr syncing (Continue Watching, watchlists, scrobbling) for 15 minutes, even if you were already connected. Now only signing in waits, and the message tells you when you can try again: "Too many WeTrakr sign-in attempts. Try again at 2:10 AM."
+- If Settings → Tracking → Account already says **Connected**, you don't need to sign in again. Selecting Account starts a new sign-in.

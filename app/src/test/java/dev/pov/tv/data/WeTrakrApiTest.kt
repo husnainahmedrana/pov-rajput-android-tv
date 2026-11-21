@@ -207,6 +207,30 @@ class WeTrakrApiTest {
         failure { h.client().watchlist("movie") }; assertEquals(count, h.calls.size)
         h.api.disconnect(); assertTrue(h.store.get("retry_at").toLong() > h.time)
     }
+    @Test fun `sign-in code limit does not pause syncing and says when to try again`() {
+        val h = Harness(); h.connect()
+        val normal = h.handler
+        h.handler = { path, method, headers, body -> if (path == "/oauth/device/code") throw ApiException(429, "Too many", retryAfterSeconds = 0) else normal(path, method, headers, body) }
+        val error = failure { h.api.startDeviceAuth() } as ApiException
+        assertEquals("SIGN_IN_LIMIT", error.errorKey); assertTrue(error.retryAfterSeconds >= 899)
+        assertEquals("", h.store.get("retry_at"))
+        val before = h.calls.size; h.api.watchlist("movie"); assertTrue("Syncing still reaches WeTrakr", h.calls.size > before)
+        assertEquals(null, h.api.waitMessage())
+        val count = h.calls.size
+        failure { h.api.startDeviceAuth() }; assertEquals("Retry during the cooldown makes no request", count, h.calls.size)
+        h.advance(901_000); h.handler = normal
+        h.api.startDeviceAuth()
+    }
+    @Test fun `sync cooldown does not block sign-in but the app-wide daily quota does`() {
+        val h = Harness(); h.connect()
+        val normal = h.handler
+        h.handler = { _, _, _, _ -> throw ApiException(429, "Slow down", retryAfterSeconds = 60) }
+        failure { h.api.watchlist("movie") }
+        h.handler = normal; h.api.startDeviceAuth()
+        h.store.put(mapOf("retry_at" to (h.time + 3_600_000).toString(), "retry_reason" to "APP_QUOTA_EXCEEDED"))
+        val count = h.calls.size
+        failure { h.api.startDeviceAuth() }; assertEquals(count, h.calls.size)
+    }
     @Test fun `late old application rate limit does not block a replacement registration`() {
         val h = Harness(); h.connect()
         h.handler = { _, _, _, _ -> h.api.setClientId("fixture-different-client-id"); throw ApiException(429, "Old app limit", retryAfterSeconds = 3600) }

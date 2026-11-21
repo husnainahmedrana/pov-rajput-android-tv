@@ -42,7 +42,7 @@ class WeTrakrApi internal constructor(
         require(validClientId(client)) { "Enter your registered WeTrakr application Client ID." }
         if (credentials.get("client_id") != client) {
             generation++; attempt++; pending = null; cache.clear()
-            credentials.put(emptyAccount() + mapOf("client_id" to client, "retry_at" to ""))
+            credentials.put(emptyAccount() + mapOf("client_id" to client, "retry_at" to "", "signin_retry_at" to ""))
         }
     }
     /** Local unlink is immediate; in-flight old responses cannot reconnect or replace tokens. */
@@ -187,8 +187,15 @@ class WeTrakrApi internal constructor(
     private fun call(path: String, method: String, body: JSONObject?, access: String? = null, appClient: String? = null): String {
         val limitingClient = appClient ?: clientId()
         if (appClient != null && appClient != clientId()) ended()
+        // Sign-in has its own small limit (a few codes per 15 minutes). Hitting it must not pause syncing for a connected
+        // account, and a sync cooldown must not block signing in, except the app-wide daily quota, which covers both.
+        val signIn = path.startsWith("/oauth/device/")
         val until = credentials.get("retry_at").toLongOrNull() ?: 0
-        if (now() < until) throw waitError(until)
+        if (now() < until && (!signIn || credentials.get("retry_reason") == APP_QUOTA)) throw waitError(until)
+        if (signIn) {
+            val signInUntil = credentials.get("signin_retry_at").toLongOrNull() ?: 0
+            if (now() < signInUntil) throw signInWaitError(signInUntil)
+        }
         val headers = mutableMapOf("wetrakr-api-version" to "1")
         if (access != null) { headers["wetrakr-api-key"] = checkNotNull(appClient); headers["Authorization"] = "Bearer $access" }
         try { return transport(path, method, headers, body) }
@@ -196,23 +203,30 @@ class WeTrakrApi internal constructor(
             if (error.code == 429) {
                 val fallback = if (path == "/oauth/device/code") 900 else if (error.errorKey == "slow_down") 5 else 60
                 val retryAt = now() + maxOf(fallback, error.retryAfterSeconds) * 1000L
+                val quota = "QUOTA" in error.errorKey
                 synchronized(stateLock) {
-                    if (clientId() == limitingClient)
-                        credentials.put(mapOf("retry_at" to retryAt.toString(), "retry_reason" to error.errorKey))
+                    if (clientId() == limitingClient) credentials.put(
+                        if (signIn && !quota) mapOf("signin_retry_at" to retryAt.toString())
+                        else mapOf("retry_at" to retryAt.toString(), "retry_reason" to error.errorKey))
                 }
-                if ("QUOTA" in error.errorKey) throw waitError(retryAt, error.errorKey)
+                if (quota) throw waitError(retryAt, error.errorKey)
+                if (path == "/oauth/device/code") throw signInWaitError(retryAt)
             }
             throw error
         }
     }
+    private fun clockTime(at: Long) = java.time.format.DateTimeFormatter.ofLocalizedTime(java.time.format.FormatStyle.SHORT)
+        .format(java.time.Instant.ofEpochMilli(at).atZone(java.time.ZoneId.systemDefault()))
+    private fun signInWaitError(until: Long) = ApiException(429,
+        L10n.tr(R.string.t_wetrakr_sign_in_wait, "Too many WeTrakr sign-in attempts. Try again at %1\$s. If you are already connected, you do not need to sign in again.", clockTime(until)),
+        errorKey = "SIGN_IN_LIMIT", retryAfterSeconds = ((until - now() + 999) / 1000).toInt())
     /** Set while WeTrakr's limit is in force: one clear reason (with the reset time for a daily quota) and no network call. */
     override fun waitMessage(): String? {
         val until = credentials.get("retry_at").toLongOrNull() ?: return null
         return if (now() < until) waitError(until).message else null
     }
     private fun waitError(until: Long, reason: String = credentials.get("retry_reason")): ApiException {
-        val reset = java.time.format.DateTimeFormatter.ofLocalizedTime(java.time.format.FormatStyle.SHORT)
-            .format(java.time.Instant.ofEpochMilli(until).atZone(java.time.ZoneId.systemDefault()))
+        val reset = clockTime(until)
         val message = when {
             reason == APP_QUOTA -> L10n.tr(R.string.t_wetrakr_app_quota_used, "Nabrio has used up today's WeTrakr requests for all its users. WeTrakr resets them at %1\$s.", reset)
             "QUOTA" in reason -> L10n.tr(R.string.t_wetrakr_user_quota_used, "Your WeTrakr account has used up today's requests. WeTrakr resets them at %1\$s.", reset)

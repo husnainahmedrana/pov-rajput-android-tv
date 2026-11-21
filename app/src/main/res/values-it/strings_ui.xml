@@ -1904,6 +1904,7 @@
     <string name="t_wetrakr_trakt_or_simkl">WeTrakr, Trakt o Simkl: watchlist, Continua a guardare, Prossimi e sincronizzazione dei progressi.</string>
     <string name="t_wetrakr_app_quota_used">Nabrio ha esaurito le richieste WeTrakr di oggi per tutti gli utenti. WeTrakr le ripristina alle %1$s.</string>
     <string name="t_wetrakr_user_quota_used">Il tuo account WeTrakr ha esaurito le richieste di oggi. WeTrakr le ripristina alle %1$s.</string>
+    <string name="t_wetrakr_sign_in_wait">Troppi tentativi di accesso a WeTrakr. Riprova alle %1$s. Se sei già connesso, non serve accedere di nuovo.</string>
     <string name="t_trakt_asked_us_to_wait">Trakt ha chiesto di attendere prima di altre richieste. Riprova tra %1$s secondi.</string>
     <string name="t_trakt_account_limit">Il tuo account Trakt ha raggiunto il limite di liste o watchlist. Rimuovi elementi su trakt.tv o passa a VIP.</string>
     <string name="t_trakt_could_not_confirm_list_removal">Trakt non ha potuto confermare la rimozione dalla lista. Aggiorna la lista e riprova.</string>
