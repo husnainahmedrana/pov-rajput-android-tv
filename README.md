@@ -179,6 +179,7 @@ Pushes to `main`, pull requests and manual runs build APKs after unit tests and 
 - **kodifitzwell** — original POV Kodi add-on and POV visual identity. [Original project](https://github.com/kodifitzwell/repo).
 - **[WeTrakr](https://wetrakr.com/) and [alberdev](https://www.reddit.com/user/alberdev/), its developer** — tracking service, API, official logo and developer access that made this integration possible.
 - **[TMDB](https://www.themoviedb.org/)** — this product uses the TMDB API but is not endorsed or certified by TMDB.
+- **[Trakt](https://trakt.tv/)** — Nabrio uses Trakt but is not endorsed or certified by Trakt.
 - **[Queued Up](https://queued-up.app/)** — the free community Stremio catalog add-on behind the Latest Releases rows, and the Top 10 and Newest lists without a TMDB key.
 - **[TheIntroDB](https://theintrodb.org)**, **[SkipDB](https://skipdb.tv)** and **[AniSkip](https://aniskip.com)** — community intro, recap and credits timestamps behind the skip buttons (anime matched through Kitsu's MyAnimeList mappings). SkipDB data is available under the [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/).
 - **[Seekr](https://seekr.tv)** — ready-made seek preview thumbnails, with your own free key from [seekr.tv/join](https://seekr.tv/join). If it works well for you, consider [supporting Seekr](https://buymeacoffee.com/seekrtvdev).
