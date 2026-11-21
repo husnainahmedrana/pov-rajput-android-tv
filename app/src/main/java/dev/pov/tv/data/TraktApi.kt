@@ -74,6 +74,8 @@ class TraktApi internal constructor(
             // Trakt answers 400 while the code waits for approval and 429 when polled too fast.
             if (error.code == 400) return false
             if (error.code == 429) { state.interval += 5; return false }
+            // No network (a phone blocks it while the browser is in front) or a server hiccup: the code is still valid, keep it.
+            if (error.code == 0 || error.code >= 500) throw error
             cancelDeviceAuth(auth); throw error
         }
         synchronized(stateLock) {
@@ -426,7 +428,7 @@ class TraktApi internal constructor(
     companion object {
         private const val BASE = "https://api.trakt.tv"
         /** Nabrio's registered Trakt application (public identifier, not a secret). */
-        const val CLIENT_ID = "jgrZdcqt7PkR__1Rr9ivmhFh4KNv6TaooiWDEoTxw7w"
+        const val CLIENT_ID = "JWc74ppobTF-CD0hkGSkCvzj2PSUaqpeAXBrvSmX0tM"
         /** Must match the app's settings on Trakt; sent with token refreshes. */
         private const val REDIRECT_URI = "https://nabrio.rajput.cc/trakt/callback"
         private val APP_VERSION get() = dev.pov.tv.BuildConfig.VERSION_NAME

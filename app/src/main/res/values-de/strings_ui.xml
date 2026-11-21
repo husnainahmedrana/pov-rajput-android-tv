@@ -1431,6 +1431,7 @@
     <string name="t_this_pattern_isn_t_valid_x">Dieses Muster ist ungültig: %1$s</string>
     <string name="t_this_playback_link_is_invalid_choose">Dieser Wiedergabelink ist ungültig. Wähle die Quelle erneut.</string>
     <string name="t_this_product_uses_the_tmdb_api">Dieses Produkt nutzt die TMDB-API, ist aber nicht von TMDB unterstützt oder zertifiziert.</string>
+    <string name="t_app_uses_trakt_notice">%1$s nutzt Trakt, wird aber nicht von Trakt unterstützt oder zertifiziert.</string>
     <string name="t_this_rar_volume_s_headers_can">Die Header dieses RAR-Volumes sind nicht lesbar.</string>
     <string name="t_this_request_could_not_be_completed">Diese Anfrage konnte nicht abgeschlossen werden. Prüfe deine Verbindung und versuche es erneut.</string>
     <string name="t_this_set_is_compressed_so_it">Dieses Set ist komprimiert und kann daher nicht gestreamt werden.</string>

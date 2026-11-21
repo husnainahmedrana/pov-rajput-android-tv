@@ -6768,6 +6768,9 @@ class MainActivity : Activity() {
             }, if (DeviceLayout.phone) 3 else 5)
             // TMDB's terms ask for this notice wherever its data is used.
             powered.addView(text(getString(R.string.t_this_product_uses_the_tmdb_api), 11, muted).apply {
+                setTypeface(typeface, android.graphics.Typeface.ITALIC) }, margin(-1, -2, bottom = 4).apply { leftMargin = dp(14); rightMargin = dp(14) })
+            // Trakt's API Use Policy asks for this notice in the app's About screen.
+            powered.addView(text(getString(R.string.t_app_uses_trakt_notice, BuildConfig.APP_NAME), 11, muted).apply {
                 setTypeface(typeface, android.graphics.Typeface.ITALIC) }, margin(-1, -2, bottom = 10).apply { leftMargin = dp(14); rightMargin = dp(14) })
                 }
             }

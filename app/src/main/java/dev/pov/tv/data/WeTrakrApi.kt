@@ -81,6 +81,8 @@ class WeTrakrApi internal constructor(
             if (error.code == 429) {
                 state.interval = maxOf(state.interval + 5, error.retryAfterSeconds.toLong()); return false
             }
+            // No network (a phone blocks it while the browser is in front) or a server hiccup: the code is still valid, keep it.
+            if (error.code == 0 || error.code >= 500) throw error
             cancelDeviceAuth(auth); throw error
         }
         synchronized(stateLock) {

@@ -1431,6 +1431,7 @@
     <string name="t_this_pattern_isn_t_valid_x">Este padrão é inválido: %1$s</string>
     <string name="t_this_playback_link_is_invalid_choose">Este link de reprodução não é válido. Escolhe a fonte de novo.</string>
     <string name="t_this_product_uses_the_tmdb_api">Este produto usa a API do TMDB mas não é apoiado nem certificado pelo TMDB.</string>
+    <string name="t_app_uses_trakt_notice">%1$s usa o Trakt, mas não é endossado nem certificado pelo Trakt.</string>
     <string name="t_this_rar_volume_s_headers_can">Não é possível ler os cabeçalhos deste volume RAR.</string>
     <string name="t_this_request_could_not_be_completed">Não foi possível concluir este pedido. Verifica a ligação e tenta de novo.</string>
     <string name="t_this_set_is_compressed_so_it">Este conjunto está comprimido, por isso não pode ser transmitido.</string>

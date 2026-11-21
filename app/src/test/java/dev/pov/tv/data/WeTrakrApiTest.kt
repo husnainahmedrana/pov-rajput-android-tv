@@ -79,6 +79,15 @@ class WeTrakrApiTest {
         h.advance(5000); assertTrue(failure { h.api.pollDeviceAuth(auth) } is ApiException)
         val count = h.calls.size; failure { h.api.pollDeviceAuth(auth) }; assertEquals(count, h.calls.size)
     }
+    @Test fun `a network failure while the browser is open keeps the code for the next check`() {
+        val h = Harness(); val auth = h.api.startDeviceAuth()
+        h.handler = { _, _, _, _ -> throw ApiException(0, "The service could not be reached.") }
+        h.advance(5000); assertTrue(failure { h.api.pollDeviceAuth(auth) } is ApiException)
+        h.handler = { _, _, _, _ -> throw ApiException(503, "Unavailable") }
+        h.advance(5000); assertTrue(failure { h.api.pollDeviceAuth(auth) } is ApiException)
+        h.handler = { _, _, _, _ -> Harness.token().toString() }
+        h.advance(5000); assertTrue(h.api.pollDeviceAuth(auth)); assertTrue(h.api.connected())
+    }
     @Test fun `poll slowdown and server cooldown prevent early repeat requests`() {
         val h = Harness(); val auth = h.api.startDeviceAuth()
         h.handler = { _, _, _, _ -> throw ApiException(429, "Wait", "slow_down", 20) }

@@ -1431,6 +1431,7 @@
     <string name="t_this_pattern_isn_t_valid_x">Questo schema non è valido: %1$s</string>
     <string name="t_this_playback_link_is_invalid_choose">Questo link di riproduzione non è valido. Scegli di nuovo la fonte.</string>
     <string name="t_this_product_uses_the_tmdb_api">Questo prodotto usa l\'API di TMDB ma non è approvato né certificato da TMDB.</string>
+    <string name="t_app_uses_trakt_notice">%1$s usa Trakt ma non è approvato né certificato da Trakt.</string>
     <string name="t_this_rar_volume_s_headers_can">Impossibile leggere le intestazioni di questo volume RAR.</string>
     <string name="t_this_request_could_not_be_completed">Impossibile completare la richiesta. Controlla la connessione e riprova.</string>
     <string name="t_this_set_is_compressed_so_it">Questo set è compresso, quindi non si può trasmettere.</string>

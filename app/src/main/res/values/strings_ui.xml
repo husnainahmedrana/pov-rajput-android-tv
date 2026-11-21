@@ -1431,6 +1431,7 @@
     <string name="t_this_pattern_isn_t_valid_x">This pattern isn\'t valid: %1$s</string>
     <string name="t_this_playback_link_is_invalid_choose">This playback link is invalid. Choose the source again.</string>
     <string name="t_this_product_uses_the_tmdb_api">This product uses the TMDB API but is not endorsed or certified by TMDB.</string>
+    <string name="t_app_uses_trakt_notice">%1$s uses Trakt but is not endorsed or certified by Trakt.</string>
     <string name="t_this_rar_volume_s_headers_can">This RAR volume\'s headers can\'t be read.</string>
     <string name="t_this_request_could_not_be_completed">This request could not be completed. Check your connection and try again.</string>
     <string name="t_this_set_is_compressed_so_it">This set is compressed, so it can\'t be streamed.</string>

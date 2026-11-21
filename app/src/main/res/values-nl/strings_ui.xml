@@ -1431,6 +1431,7 @@
     <string name="t_this_pattern_isn_t_valid_x">Dit patroon is ongeldig: %1$s</string>
     <string name="t_this_playback_link_is_invalid_choose">Deze afspeellink is ongeldig. Kies de bron opnieuw.</string>
     <string name="t_this_product_uses_the_tmdb_api">Dit product gebruikt de TMDB-API, maar is niet goedgekeurd of gecertificeerd door TMDB.</string>
+    <string name="t_app_uses_trakt_notice">%1$s gebruikt Trakt, maar wordt niet door Trakt onderschreven of gecertificeerd.</string>
     <string name="t_this_rar_volume_s_headers_can">De headers van dit RAR-volume zijn niet leesbaar.</string>
     <string name="t_this_request_could_not_be_completed">Dit verzoek kon niet worden voltooid. Controleer je verbinding en probeer het opnieuw.</string>
     <string name="t_this_set_is_compressed_so_it">Deze set is gecomprimeerd en kan dus niet worden gestreamd.</string>
