@@ -61,7 +61,7 @@ class SourceLanguagesTest {
     @Test fun `release names, native names and flags are read as audio languages`() {
         assertEquals(setOf("pt"), SourceLanguages.detect("Movie.2024.1080p.WEB-DL.DUAL.PT-BR.mkv").audio)
         assertEquals(setOf("pt", "en"), SourceLanguages.detect("Movie 2024 🇧🇷 / 🇬🇧").audio.toSet())
-        assertEquals(setOf("es"), SourceLanguages.detect("Movie.2024.LATINO.1080p").audio)
+        assertEquals(setOf(SourceLanguages.LATIN_SPANISH, "es"), SourceLanguages.detect("Movie.2024.LATINO.1080p").audio)
         assertEquals(setOf("pt"), SourceLanguages.detect("Filme Português 1080p").audio)
         assertTrue(SourceLanguages.detect("Movie.2024.MULTi.1080p").multiAudio)
         assertFalse(SourceLanguages.detect("Movie.2024.Multi-Subs.1080p").multiAudio)
@@ -158,5 +158,23 @@ class SourceLanguagesTest {
         assertEquals(listOf(0, 1, 2), english.sorted(items, SourceSortOrder(sizeAscending = true, priority = listOf("size", "quality", "language"))).map(items::indexOf))
         // A saved order is repaired: duplicates dropped, missing keys added.
         assertEquals(listOf("library", "quality", "language", "preferred", "age", "size"), SourceSortOrder.priority("quality,quality,bogus"))
+    }
+
+    @Test fun `latin american spanish is told apart from castellano and still counts as spanish`() {
+        val latino = SourceLanguages.detect("Movie.2026.1080p.WEB-DL.Dual.Latino-Ingles.H264")
+        assertTrue(SourceLanguages.LATIN_SPANISH in latino.audio && "es" in latino.audio)
+        assertTrue(SourceLanguages.LATIN_SPANISH in SourceLanguages.detect("Movie (2026) 1080p [LAT-ENG]").audio)
+        assertTrue(SourceLanguages.LATIN_SPANISH in SourceLanguages.detect("Movie 2026 1080p\n🇲🇽 / 🇬🇧").audio)
+        assertTrue(SourceLanguages.LATIN_SPANISH in SourceLanguages.detect("Movie.2026.1080p.Spanish.Latin.America.WEB").audio)
+        val castellano = SourceLanguages.detect("Movie.2026.1080p.Castellano.AC3.x264")
+        assertEquals(setOf("es"), castellano.audio)
+        // An ordinary Spanish title isn't a region tag.
+        assertFalse(SourceLanguages.LATIN_SPANISH in SourceLanguages.detect("Esto es la guerra 2026 1080p Castellano").audio)
+    }
+
+    @Test fun `latino links come first then other spanish`() {
+        val items = listOf(source("Movie.2026.1080p.English.x264"), source("Movie.2026.1080p.Castellano.x264"), source("Movie.2026.1080p.Latino.x264"))
+        val ordered = SourceLanguageOrder(SourceLanguages.LATIN_SPANISH, "", second = "es").sorted(items, SourceSortOrder()).map { it.title }
+        assertEquals(listOf("Movie.2026.1080p.Latino.x264", "Movie.2026.1080p.Castellano.x264", "Movie.2026.1080p.English.x264"), ordered)
     }
 }

@@ -292,6 +292,13 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume(); resumed = true; launchingPlayer = false
+        ExternalPlayer.appVisible = true
+        TorBoxUsenetPlayback.refresh(store, DebridServices.connected(store))
+        // A video that ended in another app (Kodi, Dune…): Continue Watching and watched marks catch up.
+        if (ExternalPlayer.endedUnseen && !publicPreview) {
+            ExternalPlayer.endedUnseen = false
+            window.decorView.postDelayed({ if (!isDestroyed) refreshWatched() }, 3_000)
+        }
         // Links that arrived while the player was in front: the list catches up once, now that it is seen.
         activeSearch?.let { search ->
             // A Usenet link that failed in the player shows UNAVAILABLE as soon as the list is back.
@@ -341,7 +348,7 @@ class MainActivity : Activity() {
         // Keep the outgoing target until the incoming fullscreen view can attach first.
         heroTrailer?.stop()
         detailsTrailerChrome.stop()
-        resumed = false; miniFrame?.setTag(R.id.pov_mini_shown, false)
+        resumed = false; miniFrame?.setTag(R.id.pov_mini_shown, false); ExternalPlayer.appVisible = false
         super.onPause()
     }
     override fun onStop() {
@@ -491,8 +498,16 @@ class MainActivity : Activity() {
         return super.dispatchTouchEvent(event)
     }
 
+    /** The stream is being opened for another app (Kodi, Just Player…): Back cancels it. */
+    private var externalOverlay: ExternalOpeningOverlay? = null
+    @Volatile private var externalCancelled = false
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val back = event.keyCode == KeyEvent.KEYCODE_BACK || event.keyCode == KeyEvent.KEYCODE_ESCAPE
+        externalOverlay?.takeIf { it.showing }?.let { overlay ->
+            if (back && event.action == KeyEvent.ACTION_DOWN) { externalCancelled = true; overlay.dismiss(); externalOverlay = null; swallowBackUp = true }
+            return true                                                    // nothing else reacts while it opens
+        }
         if (swallowBackUp && back && event.action == KeyEvent.ACTION_UP) { swallowBackUp = false; return true }
         // Any key during the auto-play countdown stops it; Back stops it without leaving the link list.
         if (event.action == KeyEvent.ACTION_DOWN && autoplayCountdown != null && cancelAutoplayCountdown()) {
@@ -2607,6 +2622,9 @@ class MainActivity : Activity() {
         if (requestCode == VOICE_REQUEST) {
             val query = data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim().orEmpty().take(200)
             if (resultCode == RESULT_OK && query.isNotBlank()) navigate { searchResults(query) } else search()
+        } else if (requestCode == ExternalPlayer.REQUEST) {
+            // MX Player, Just Player or VLC closed and reported where it stopped.
+            ExternalPlayer.returned(this, data)
         } else if (requestCode == PLAYBACK_REQUEST) {
             // A finished title reaches the service's history a few seconds after the player closes.
             if (!publicPreview) window.decorView.postDelayed({ if (!isDestroyed) refreshWatched() }, 8_000)
@@ -3798,6 +3816,8 @@ class MainActivity : Activity() {
                     full || (stopAfter > 0 && !step.finished && goodLinkCount(step.items, identity) >= stopAfter)
                 }
                 runCatching { details?.get(1_500, java.util.concurrent.TimeUnit.MILLISECONDS) }
+                // TorBox Usenet: the links TorBox can be asked about without a grab get their CACHED badge.
+                runCatching { TorBoxUsenetPlayback.checkKnown(result.items.map { it.directUrl }, torbox, cacheDir) }
                 runOnUiThread {
                     if (isDestroyed) return@runOnUiThread
                     search.items = result.items; search.unavailable = result.unavailableProviders; search.late = result.lateProviders
@@ -4395,9 +4415,51 @@ class MainActivity : Activity() {
         return true
     }
 
+    /**
+     * TorBox Usenet: the NZB goes to the viewer's TorBox and the video plays from there once TorBox has it (at once when
+     * cached). TorBox's progress shows in place of "Preparing your video"; Back (or another link) stops the wait.
+     */
+    private fun playTorBoxUsenet(source: SourceItem, identity: PlaybackIdentity, request: Int, progress: TextView) {
+        val name = SourceBadges.name(source).ifBlank { source.title.lineSequence().first() }.take(150)
+        worker.execute {
+            try {
+                val viaDeepbrid = TorBoxUsenetPlayback.deepbrid
+                val report: (String) -> Unit = { line ->
+                    if (request != generation) throw InterruptedException("cancelled")
+                    runOnUiThread { if (request == generation) progress.text = line }
+                }
+                val url = if (viaDeepbrid) TorBoxUsenetPlayback.prepareDeepbrid(source.directUrl, name, store, cacheDir, report)
+                    else TorBoxUsenetPlayback.prepare(source.directUrl, name, store, torbox, cacheDir, report)
+                runOnUiThread {
+                    if (request == generation && !isFinishing && !isDestroyed) {
+                        resolvingGeneration = null; body.removeView(progress)
+                        playingAddon = (if (viaDeepbrid) PlaybackDebrid.DEEPBRID_USENET else PlaybackDebrid.TORBOX_USENET) + "|" +
+                            listOfNotNull(dev.pov.tv.data.AddonBadges.indexer(source.indexer)).joinToString(",")
+                        playingOrigin = MediaFlowProxy.Origin.of(source).encode()
+                        playingSubtitles = source.subtitles
+                        play(url, identity.title, identity, "media:${identity.imdbId}:${identity.season}:${identity.episode}",
+                            debridService = if (viaDeepbrid) "deepbrid" else "torbox")
+                    }
+                }
+            } catch (error: Exception) { runOnUiThread {
+                if (request == generation && !isFinishing && !isDestroyed) {
+                    resolvingGeneration = null; body.removeView(progress)
+                    if (error !is InterruptedException) { showError(error); focusAfterRender(request) }
+                }
+            } }
+        }
+    }
+
     /** Offcloud and TorBox can download a link that isn't cached; the other services cannot. */
     private fun offerTransfer(source: SourceItem, identity: PlaybackIdentity) {
         val service = DebridServices.connected(store).firstOrNull { it in DebridServices.TRANSFERS }
+        // Deepbrid (no library here): the torrent is added and left downloading there, to play again when it's done.
+        if (service == null && "deepbrid" in DebridServices.connected(store) && source.infoHash.isNotBlank()) {
+            confirm(getString(R.string.t_download_this_on_deepbrid)) {
+                load(generation, { LinkDebrids(store).deepbridKeep(source.infoHash) }) { toast(getString(R.string.t_added_to_deepbrid)) }
+            }
+            return
+        }
         if (service == null) { toast(getString(R.string.t_this_link_isn_t_cached_on)); return }
         confirm(getString(R.string.t_add_this_source_to_your_x, DebridServices.name(service))) {
             resolve(source.copy(downloadService = service), identity)
@@ -4444,7 +4506,7 @@ class MainActivity : Activity() {
                             prepared == null -> {
                                 val tried = minOf(candidates.count { it.infoHash.isNotBlank() }, LinkDebrids.checkLimit(resolver.checkOnPlayServices()))
                                 toast(getString(R.string.t_none_of_the_first_x_links, tried))
-                                if (picked != null && DebridServices.connected(store).any { it in DebridServices.TRANSFERS }) offerTransfer(picked, identity)
+                                if (picked != null && DebridServices.connected(store).any { it in DebridServices.TRANSFERS || it == "deepbrid" }) offerTransfer(picked, identity)
                                 focusAfterRender(request)
                             }
                             else -> { nextLinkNote(picked, prepared); if (prepared.files.size == 1) playLinkFile(prepared, prepared.files.single()) else navigate { linkFiles(prepared) } }
@@ -4511,6 +4573,9 @@ class MainActivity : Activity() {
         playingSourceText = "${source.title} · ${source.detail}"; playingMedia = playingSourceText to source.sizeBytes
         val request = generation; resolvingGeneration = request
         val progress = text(getString(R.string.t_preparing_your_video), 14, accent); body.addView(progress, margin(-1, -2, top = 14))
+        if (service == null && dev.pov.tv.data.UsenetLinks.isNzb(source.directUrl) && (TorBoxUsenetPlayback.active || TorBoxUsenetPlayback.deepbrid)) {
+            playTorBoxUsenet(source, identity, request, progress); return
+        }
         worker.execute {
             try {
                 val prepared = resolver.prepare(source, identity, service)
@@ -5176,6 +5241,27 @@ class MainActivity : Activity() {
                      headers: Map<String, String> = emptyMap()) {
         if (launchingPlayer) return
         if (Uri.parse(url).scheme !in setOf("https", "http")) { toast(getString(R.string.t_this_stream_did_not_return_a)); return }
+        // Settings → Playback → Play with: another app on this device (Kodi, Dune HD Media Center, VLC…) plays it.
+        val request = generation
+        if (ExternalPlayer.enabled(this)) {
+            externalCancelled = false
+            val overlay = ExternalOpeningOverlay(this, accent, title, ExternalPlayer.label(this), identity?.imdbId.orEmpty())
+            if (ExternalPlayer.launch(this, url, headers, title, playingMedia?.first.orEmpty(),
+                switchResumeMs ?: history.resume(key), debridService, playingOrigin, playingSubtitles, key, identity,
+                identity?.let { AutoplayLimit.runtimeMinutes(cachedDetails(MediaItemData(it.imdbId, it.type, it.title))?.runtime) }?.let { it * 60_000L },
+                // A full-screen "opening" card from the moment the link is picked until the other app opens; Back cancels.
+                status = { line, percent -> if (line.isEmpty()) overlay.dismiss() else overlay.show(line, percent) },
+                cancelled = { externalCancelled || request != generation },
+                failed = { error -> overlay.dismiss(); if (request == generation) showError(error) })) {
+            playingMedia = null; playingSourceText = ""; switchResumeMs = null; playingAddon = null; playingOrigin = ""; playingSubtitles = emptyList()
+            // Seek previews belong to the built-in player only: none are made for another app, and old ones are let go.
+            BuiltInSeekPreviews.clear()
+            externalOverlay = overlay
+            return
+            }
+            overlay.dismiss()
+        }
+        ExternalPlayer.stop(this)                                     // the built-in player takes over from another app
         launchingPlayer = true; playerShown = true
         val remotePercent = identity?.let { remoteProgress[identityKey(it)] } ?: 0.0
         val start = {
@@ -5194,6 +5280,8 @@ class MainActivity : Activity() {
             @Suppress("DEPRECATION")
             overridePendingTransition(0, 0)
         }
+        // Built-in seek previews are made on the player's loading screen (it reads this extra); otherwise none are kept.
+        if (!BuiltInPreviewPreferences(this).enabled || publicPreview) BuiltInSeekPreviews.clear()
         // Playback always continues where it left off; the timeline can still scrub back to the start.
         start()
     }
@@ -5494,6 +5582,25 @@ class MainActivity : Activity() {
             store.put(NewsProviders.WARM_KEY, next.toString()); usenetPage("setting:" + getString(R.string.t_warm_connections))
         }
         settingsRow(providerCard, getString(R.string.t_add_news_provider), "", getString(R.string.t_pick_yours_from_the_list_or)) { chooseNewsProviderPreset() }
+        // Play Usenet links with (TorBox and Deepbrid are experimental): the news providers, TorBox (Pro) or Deepbrid.
+        fun routeLabel(value: String) = when (value) {
+            dev.pov.tv.data.UsenetRoute.TORBOX -> getString(R.string.t_torbox_usenet)
+            dev.pov.tv.data.UsenetRoute.DEEPBRID -> getString(R.string.t_deepbrid_usenet)
+            else -> getString(R.string.t_your_news_providers)
+        }
+        settingsRow(providerCard, getString(R.string.t_play_usenet_links_with), routeLabel(dev.pov.tv.data.UsenetRoute.get(store)),
+            getString(R.string.t_torbox_usenet_hint)) {
+            val choices = dev.pov.tv.data.UsenetRoute.CHOICES
+            AlertDialog.Builder(this).setTitle(getString(R.string.t_play_usenet_links_with))
+                .setSingleChoiceItems(choices.map(::routeLabel).toTypedArray(), choices.indexOf(dev.pov.tv.data.UsenetRoute.get(store))) { dialog, index ->
+                    val chosen = choices[index]
+                    if (chosen != dev.pov.tv.data.UsenetRoute.NEWS && chosen !in DebridServices.connected(store))
+                        toast(getString(R.string.t_connect_x_in_settings_first, DebridServices.name(chosen)))
+                    dev.pov.tv.data.UsenetRoute.set(store, chosen)
+                    TorBoxUsenetPlayback.refresh(store, DebridServices.connected(store))
+                    dialog.dismiss(); usenetPage("setting:" + getString(R.string.t_play_usenet_links_with))
+                }.setNegativeButton(getString(R.string.t_cancel), null).show()
+        }
 
         val indexerConfig = NewznabIndexers(store)
         val indexers = try { indexerConfig.load() } catch (error: Exception) { body.addView(text(uiErrorMessage(error), 15, muted)); emptyList() }
@@ -6393,6 +6500,20 @@ class MainActivity : Activity() {
                         VolumeBoostPreferences(this).defaultDb = SessionVolumeBoost.STEPS[index]; dialog.dismiss(); refreshSettings()
                     }.setNegativeButton(getString(R.string.t_cancel), null).show()
             }
+            fun passthroughLabel(value: String) = when (value) {
+                AudioPassthrough.DECODE_LOSSLESS -> getString(R.string.t_decode_lossless_audio)
+                AudioPassthrough.DECODE_ALL -> getString(R.string.t_decode_all_audio)
+                else -> getString(R.string.t_automatic)
+            }
+            // The TV's own Surround sound set to Never blocks passthrough for every app: say so where it matters.
+            val passthroughHint = if (AudioPassthrough.surroundNever(this)) getString(R.string.t_surround_sound_never_hint)
+                else getString(R.string.t_audio_passthrough_hint)
+            settingsRow(sound, getString(R.string.t_audio_passthrough), passthroughLabel(AudioPassthrough.mode(this)), passthroughHint) {
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_audio_passthrough))
+                    .setSingleChoiceItems(AudioPassthrough.CHOICES.map(::passthroughLabel).toTypedArray(), AudioPassthrough.CHOICES.indexOf(AudioPassthrough.mode(this))) { dialog, index ->
+                        AudioPassthrough.set(this, AudioPassthrough.CHOICES[index]); dialog.dismiss(); refreshSettings()
+                    }.setNegativeButton(getString(R.string.t_cancel), null).show()
+            }
             val captions = settingsGroup(getString(R.string.t_subtitles), "series")
             val subtitlePreferences = SubtitlePreferences(this)
             settingsRow(captions, getString(R.string.t_subtitle_language), subtitlePreferences.languageLabel, getString(R.string.t_chosen_automatically_when_available_you_can)) { subtitleLanguage() }
@@ -6916,6 +7037,24 @@ class MainActivity : Activity() {
                         readAhead.mode = ReadAhead.entries[index]; dialog.dismiss(); refreshSettings()
                     }.setNegativeButton(getString(R.string.t_cancel), null).show()
             }
+            settingsRow(playback, getString(R.string.t_play_videos_with), ExternalPlayer.label(this),
+                getString(R.string.t_play_videos_with_hint)) {
+                val apps = ExternalPlayer.players(this)
+                val values = listOf(ExternalPlayer.BUILT_IN, ExternalPlayer.ASK) + apps.map { it.first }
+                val labels = listOf(getString(R.string.t_built_in_player), getString(R.string.t_ask_each_time)) + apps.map { it.second }
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_play_videos_with))
+                    .setSingleChoiceItems(labels.toTypedArray(), values.indexOf(ExternalPlayer.choice(this)).coerceAtLeast(0)) { dialog, index ->
+                        ExternalPlayer.set(this, values[index]); dialog.dismiss(); refreshSettings()
+                        // Kodi and Dune stay open after a video: coming back to Nabrio by itself needs this permission.
+                        if (values[index] != ExternalPlayer.BUILT_IN && !ExternalPlayer.canReturn(this)) {
+                            AlertDialog.Builder(this).setTitle(getString(R.string.t_come_back_to_nabrio))
+                                .setMessage(getString(R.string.t_come_back_to_nabrio_hint))
+                                .setPositiveButton(getString(R.string.t_open_settings)) { _, _ ->
+                                    if (!ExternalPlayer.openReturnSettings(this)) toast(getString(R.string.t_this_device_has_no_display_over))
+                                }.setNegativeButton(getString(R.string.t_not_now), null).show()
+                        }
+                    }.setNegativeButton(getString(R.string.t_cancel), null).show()
+            }
             val videoPreferences = VideoCompatibilityPreferences(this)
             settingsRow(playback, getString(R.string.t_dolby_vision), videoPreferences.mode.label,
                 getString(R.string.t_applies_to_the_next_video_uses)) {
@@ -6944,6 +7083,19 @@ class MainActivity : Activity() {
                 SkipButtonPreferences(this).enabled) { on -> SkipButtonPreferences(this).enabled = on }
             settingsToggle(playback, getString(R.string.t_seek_previews_seekr), getString(R.string.t_shows_a_thumbnail_of_the_scene),
                 SeekrPreferences(this).enabled) { on -> SeekrPreferences(this).enabled = on }
+            // Built-in previews, made on this device from the video itself (for titles Seekr doesn't have).
+            val builtIn = BuiltInPreviewPreferences(this)
+            settingsToggle(playback, getString(R.string.t_built_in_seek_previews), getString(R.string.t_built_in_seek_previews_hint),
+                builtIn.enabled) { on -> BuiltInPreviewPreferences(this).enabled = on; refreshSettings() }
+            if (builtIn.enabled) settingsRow(playback, getString(R.string.t_start_playback_when), getString(R.string.t_x_of_previews_ready, builtIn.startAt),
+                getString(R.string.t_start_playback_when_hint)) {
+                val steps = BuiltInPreviewPreferences.STEPS
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_start_playback_when))
+                    .setSingleChoiceItems(steps.map { if (it == 0) getString(R.string.t_at_once) else getString(R.string.t_x_of_previews_ready, it) }.toTypedArray(),
+                        steps.indexOf(builtIn.startAt)) { dialog, index ->
+                        BuiltInPreviewPreferences(this).startAt = steps[index]; dialog.dismiss(); refreshSettings()
+                    }.setNegativeButton(getString(R.string.t_cancel), null).show()
+            }
             seekrInfo(playback)
             val seekr = store.get(SeekrPreferences.KEY)
             val seekrBuilt = BuildConfig.SEEKR_KEY.isNotBlank()

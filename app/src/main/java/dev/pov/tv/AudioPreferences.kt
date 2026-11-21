@@ -37,7 +37,14 @@ internal class AudioPreferences(context: Context) {
 
     companion object {
         val LANGUAGES get() = listOf("" to L10n.tr(R.string.t_automatic_player_default, "Automatic (player default)")) +
-            SubtitlePreferences.LANGUAGES.filter { it.first.isNotEmpty() && it.first != "off" }
+            SubtitlePreferences.LANGUAGES.filter { it.first.isNotEmpty() && it.first != "off" }.flatMap { entry ->
+                // Spanish (Latin America) right after Spanish: Latino dubs first, Castellano after.
+                if (entry.first == "es") listOf(entry, dev.pov.tv.data.SourceLanguages.LATIN_SPANISH to latinSpanishName()) else listOf(entry)
+            }
+        fun latinSpanishName(): String = java.util.Locale.getDefault().let { locale ->
+            java.util.Locale.forLanguageTag(dev.pov.tv.data.SourceLanguages.LATIN_SPANISH).getDisplayName(locale).replaceFirstChar { it.titlecase(locale) }
+        }
         val COMMON_LANGUAGES = SubtitlePreferences.COMMON_LANGUAGES.filter { it != "off" }
+            .flatMap { if (it == "es") listOf(it, dev.pov.tv.data.SourceLanguages.LATIN_SPANISH) else listOf(it) }
     }
 }

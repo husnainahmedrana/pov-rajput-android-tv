@@ -112,6 +112,12 @@ internal object SourceBadges {
             // An indexer's link, streamed from the viewer's own news providers.
             // A Usenet link that already failed this session (taken down, an archive): greyed, so it isn't picked again.
             UsenetPlayback.failed(source.directUrl) -> SourceBadge("UNAVAILABLE", SourceBadgeTone.UNCACHED)
+            // TorBox Usenet: TorBox already has this release (known without spending a grab), or it is checked on play.
+            UsenetLinks.isNzb(source.directUrl) && TorBoxUsenetPlayback.isCached(source.directUrl) ->
+                SourceBadge("CACHED · TORBOX USENET", SourceBadgeTone.CACHED)
+            UsenetLinks.isNzb(source.directUrl) && TorBoxUsenetPlayback.active ->
+                SourceBadge("TORBOX USENET · CHECK ON PLAY", SourceBadgeTone.USENET)
+            UsenetLinks.isNzb(source.directUrl) && TorBoxUsenetPlayback.deepbrid -> SourceBadge("DEEPBRID USENET", SourceBadgeTone.USENET)
             UsenetLinks.isNzb(source.directUrl) -> SourceBadge("USENET", SourceBadgeTone.USENET)
             source.directUrl.isNotEmpty() -> SourceBadge("DIRECT", SourceBadgeTone.CACHED)
             cachedOn.isNotEmpty() -> SourceBadge(L10n.tr(R.string.t_cached_x, "CACHED · %1\$s", cachedOn.joinToString(" + ").uppercase()), SourceBadgeTone.CACHED)

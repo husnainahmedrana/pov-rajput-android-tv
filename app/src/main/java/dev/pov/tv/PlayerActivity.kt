@@ -88,6 +88,13 @@ class PlayerActivity : Activity() {
     private var quietSeekUntil = 0L
     private val splashHandler = Handler(Looper.getMainLooper())
     private val showSplashLater = Runnable { setSplash(true) }
+    /** The loading card under the logo: what is happening (PlaybackStatus), the frame strip and Back. */
+    private lateinit var loadingPanel: LinearLayout
+    private lateinit var loadingStrip: FrameStrip
+    private lateinit var loadingLine: TextView
+    private val loadingTick = object : Runnable {
+        override fun run() { updateLoadingPanel(); if (::splash.isInitialized && splash.visibility == View.VISIBLE) splashHandler.postDelayed(this, 250) }
+    }
     private val miniPlayer by lazy { MiniPlayerPreferences(this).enabled }
     /** pov_browse is the Streams button: the title's other links, over the playing video. */
     private var endedAt = 0L
@@ -195,10 +202,154 @@ class PlayerActivity : Activity() {
         openCurtain()
         val reuse = InAppPlaybackSession.hasActive() &&
             (intent.getBooleanExtra("reuse_session", false) || (savedInstanceState != null && InAppPlaybackSession.matches(intent)))
-        if (!reuse && !InAppPlaybackSession.start(this, intent, savedInstanceState)) {
+        if (!reuse && savedInstanceState == null && BuiltInPreviewPreferences(this).enabled && !intent.getBooleanExtra("cached_playback", false)) {
+            prepareThenStart(); return
+        }
+        if (!reuse) startSession(savedInstanceState)
+    }
+
+    private fun startSession(savedInstanceState: Bundle? = null) {
+        if (!InAppPlaybackSession.start(this, intent, savedInstanceState)) {
             showSheet(getString(R.string.t_cannot_open_video), getString(R.string.t_this_playback_link_is_invalid_choose),
                 listOf(PlayerSheetChoice(getString(R.string.t_back_to_browsing)) { finish() }))
+            return
         }
+        // Started after onStart (seek previews were made first): the screen attaches to the new player now, or it
+        // would play sound only, with no picture and no working controls.
+        view.useController = !stillLoading()
+        if (!stopped) {
+            InAppPlaybackSession.attachPlayerView(view)
+            updateControls()
+            if (!stillLoading()) controls.show()
+        }
+    }
+
+    /**
+     * The first picture hasn't appeared yet: the loading screen (logo, card, BACK Leave) is all there is. The controls
+     * come with the picture; over the card they only covered it and then went away again.
+     */
+    private fun stillLoading() = !everReady && InAppPlaybackSession.error == null && player?.playbackState != Player.STATE_READY
+
+    /** The first picture is here: the controls become available (and show once, as a video starts). */
+    private fun controlsAfterLoading() {
+        if (view.useController) return
+        view.useController = true
+        if (!stopped && activeDialog?.isShowing != true) controls.show()
+    }
+
+    /** Built-in seek previews being made on the loading screen: OK plays now, Back leaves. Null once playback starts. */
+    private var previewPrep: View? = null
+    private var swallowOkUp = false
+    /** Frames in the seek-preview strip on the loading screen. */
+    private val FRAMES = 24
+
+    /**
+     * Built-in seek previews: made here on the loading screen (the logo pulsing over the artwork) up to the share chosen
+     * in Settings, with a progress bar, the time left and Play now; then the video starts and the rest are made while it
+     * plays. Nothing else is decoding meanwhile, so the TV's hardware decoder is free for them.
+     */
+    private fun prepareThenStart() {
+        // A video still open (the mini player) would hold the hardware decoder the previews are about to use.
+        if (InAppPlaybackSession.hasActive()) InAppPlaybackSession.stop()
+        setSplash(true)
+        splashTitle.text = intent.getStringExtra("title").orEmpty().ifBlank { getString(R.string.t_loading) }
+        // Nothing to control yet: the seek bar and buttons stay away until the video starts.
+        view.hideController(); view.useController = false
+        // Nabrio's own look: a strip of frames under the logo that fill in with the theme's colour as previews are made
+        // (the next one breathing), one line with the share and time left, and the remote's keys as hints.
+        val frames = List(FRAMES) {
+            View(this).apply { background = GradientDrawable().apply { cornerRadius = dp(2).toFloat(); setColor(0x26FFFFFF) } }
+        }
+        val strip = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
+            frames.forEachIndexed { index, frame -> addView(frame, LinearLayout.LayoutParams(dp(12), dp(20)).apply { if (index > 0) leftMargin = dp(5) }) }
+        }
+        val label = getString(R.string.t_seek_previews)
+        val line = TextView(this).apply { setTextColor(0xFF9AA3AF.toInt()); textSize = 16f; gravity = Gravity.CENTER; text = label }
+        fun key(cap: String, action: String) = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(this@PlayerActivity).apply {
+                text = cap; setTextColor(0xFFE6EAF0.toInt()); textSize = 11f; letterSpacing = 0.08f
+                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
+                setPadding(dp(7), dp(2), dp(7), dp(2))
+                background = GradientDrawable().apply { cornerRadius = dp(4).toFloat(); setStroke(dp(1), 0x99E6EAF0.toInt()) }
+            })
+            addView(TextView(this@PlayerActivity).apply { text = action; setTextColor(0xFF9AA3AF.toInt()); textSize = 14f },
+                LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
+        }
+        val keys = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
+            addView(key("OK", getString(R.string.t_play_now)))
+            addView(key("BACK", getString(R.string.t_leave)), LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(28) })
+        }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+            addView(strip, LinearLayout.LayoutParams(-2, -2))
+            addView(line, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(14) })
+            addView(keys, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(22) })
+        }
+        splash.addView(panel, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER).apply { topMargin = dp(150) })
+        var lit = 0
+        val breathe = ValueAnimator.ofFloat(0.25f, 0.85f).apply {
+            duration = 700; repeatMode = ValueAnimator.REVERSE; repeatCount = ValueAnimator.INFINITE
+            addUpdateListener { frames.getOrNull(lit)?.alpha = it.animatedValue as Float }
+            start()
+        }
+        panel.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {}
+            override fun onViewDetachedFromWindow(v: View) { breathe.cancel() }
+        })
+        fun show(percent: Int, left: Long) {
+            val now = (percent * FRAMES / 100).coerceIn(0, FRAMES)
+            for (index in lit until now) frames[index].apply {
+                alpha = 1f; background = GradientDrawable().apply { cornerRadius = dp(2).toFloat(); setColor(accent) }
+            }
+            if (now > lit) { lit = now; frames.getOrNull(lit)?.alpha = 0.25f }
+            val time = when {
+                left < 0 -> ""
+                left >= 90_000 -> "   ·   " + getString(R.string.t_about_x_min_left, ((left + 30_000) / 60_000).toString())
+                else -> "   ·   " + getString(R.string.t_about_x_s_left, (((left + 4_999) / 5_000) * 5).toString())
+            }
+            // [percent] is of the Settings target; shown as a share of all previews ("12% · plays at 20%"): a bar that
+            // reached "100%" at a 20% setting read as if every preview had been made first.
+            val target = BuiltInPreviewPreferences(this).startAt
+            val ofAll = percent * target / 100
+            line.text = android.text.SpannableStringBuilder(label).apply {
+                append("   ")
+                val from = length
+                append("$ofAll%   ·   " + getString(R.string.t_plays_at_x, target.toString()) + time)
+                setSpan(android.text.style.ForegroundColorSpan(Color.WHITE), from, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+        }
+        previewPrep = panel
+        val started = android.os.SystemClock.elapsedRealtime()
+        val address = intent.getStringExtra("url").orEmpty()
+        val headers = runCatching { org.json.JSONObject(intent.getStringExtra("headers") ?: "{}").let { json ->
+            json.keys().asSequence().associateWith { json.optString(it) } } }.getOrDefault(emptyMap())
+        val media = runCatching { intent.getStringExtra("identity")?.let { dev.pov.tv.data.PlaybackIdentity.fromJson(org.json.JSONObject(it)) } }.getOrNull()
+        val startAt = BuiltInPreviewPreferences(this).startAt
+        Thread({
+            val go = try {
+                // Other links of this title (the list the link was picked from): a lighter copy may make the pictures.
+                val copies = media?.let { identity -> StreamChoices.items?.takeIf { StreamChoices.key == StreamChoices.keyOf(identity) } }
+                    ?.let { LightCopy.from(it, address, intent.getLongExtra("media_size", 0L)) }.orEmpty()
+                BuiltInSeekPreviews.prepare(this, address, headers, startAt, seekrHas = { BuiltInSeekPreviews.seekrHas(this, media, it) },
+                    copies = copies) { percent ->
+                    val elapsed = android.os.SystemClock.elapsedRealtime() - started
+                    val left = if (percent >= 5) elapsed * (100 - percent) / percent else -1L
+                    runOnUiThread {
+                        if (previewPrep == null) return@runOnUiThread
+                        show(percent, left)
+                    }
+                }
+                true
+            } catch (_: InterruptedException) { false }
+            runOnUiThread {
+                if (previewPrep == null || isDestroyed) return@runOnUiThread
+                splash.removeView(previewPrep); previewPrep = null
+                if (go && !isFinishing) startSession() else finish()
+            }
+        }, "seek-previews-prepare").start()
     }
 
     private fun configureButtons() {
@@ -264,7 +415,7 @@ class PlayerActivity : Activity() {
         view.removeCallbacks(seekrLookup); view.postDelayed(seekrLookup, 1_000)
         updateControls()
         InAppPlaybackSession.error?.let { if (observedError !== it) showPlaybackFailure(it) }
-        controls.show()
+        if (stillLoading()) { view.hideController(); view.useController = false } else { view.useController = true; controls.show() }
     }
 
     /** Stremio-style loading: the title's logo pulses over its blurred artwork while video loads or rebuffers. */
@@ -289,6 +440,25 @@ class PlayerActivity : Activity() {
             setPadding(dp(40), 0, dp(40), 0)
         }
         splash.addView(splashTitle, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER))
+        loadingStrip = FrameStrip(this, accent)
+        loadingLine = TextView(this).apply { setTextColor(0xFF9AA3AF.toInt()); textSize = 16f; gravity = Gravity.CENTER; maxLines = 2; setPadding(dp(40), 0, dp(40), 0) }
+        loadingPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; visibility = View.GONE
+            addView(loadingStrip, LinearLayout.LayoutParams(-2, -2))
+            addView(loadingLine, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
+            addView(LinearLayout(this@PlayerActivity).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                addView(TextView(this@PlayerActivity).apply {
+                    text = "BACK"; setTextColor(0xFFE6EAF0.toInt()); textSize = 11f; letterSpacing = 0.08f
+                    typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
+                    setPadding(dp(7), dp(2), dp(7), dp(2))
+                    background = GradientDrawable().apply { cornerRadius = dp(4).toFloat(); setStroke(dp(1), 0x99E6EAF0.toInt()) }
+                })
+                addView(TextView(this@PlayerActivity).apply { text = getString(R.string.t_leave); setTextColor(0xFF9AA3AF.toInt()); textSize = 14f },
+                    LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
+            }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(22) })
+        }
+        splash.addView(loadingPanel, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER).apply { topMargin = dp(150) })
         requireNotNull(view.overlayFrameLayout).addView(splash, 0, FrameLayout.LayoutParams(-1, -1))
         pauseLogoArt = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER; adjustViewBounds = true; maxWidth = dp(190); maxHeight = dp(70) }
         pauseEpisode = TextView(this).apply {
@@ -340,6 +510,7 @@ class PlayerActivity : Activity() {
             splashTitle.text = InAppPlaybackSession.title.ifBlank { getString(R.string.t_loading) }
             if (splash.visibility != View.VISIBLE) { splash.alpha = 0f; splash.visibility = View.VISIBLE }
             splash.animate().cancel(); splash.animate().alpha(1f).setDuration(220).start()
+            splashHandler.removeCallbacks(loadingTick); loadingTick.run()
             if (splashPulse == null) splashPulse = ValueAnimator.ofFloat(1f, 0.35f).apply {
                 duration = 900; repeatMode = ValueAnimator.REVERSE; repeatCount = ValueAnimator.INFINITE
                 addUpdateListener { val value = it.animatedValue as Float; splashLogo.alpha = value; splashTitle.alpha = value }
@@ -349,13 +520,39 @@ class PlayerActivity : Activity() {
             splash.animate().cancel()
             splash.animate().alpha(0f).setDuration(260).withEndAction {
                 splash.visibility = View.GONE; splashPulse?.cancel(); splashPulse = null
+                splashHandler.removeCallbacks(loadingTick); loadingStrip.stop()
             }.start()
         }
     }
 
+    /**
+     * The loading card: the current step (Usenet: NZB, news servers, release check, archive; debrid and direct links:
+     * the service), then how much of the start (or, after a stall, of the cushion) has arrived, filling the strip.
+     * Hidden while seek previews are made here, since they have their own panel.
+     */
+    private fun updateLoadingPanel() {
+        if (!::loadingPanel.isInitialized) return
+        val exo = player
+        if (previewPrep != null || exo == null || InAppPlaybackSession.error != null) { loadingPanel.visibility = View.GONE; loadingStrip.stop(); return }
+        loadingPanel.visibility = View.VISIBLE
+        val ahead = if (exo.duration > 0 && exo.bufferedPosition > exo.currentPosition) exo.bufferedPosition - exo.currentPosition else 0L
+        val target = if (everReady) 10_000L else 2_500L
+        if (ahead > 0) {
+            val percent = (ahead * 100 / target).coerceIn(1, 99).toInt()
+            loadingStrip.fill(percent)
+            loadingLine.text = getString(if (everReady) R.string.t_status_buffering else R.string.t_status_first_data) + "  $percent%"
+        } else {
+            loadingStrip.travel()
+            loadingLine.text = PlaybackStatus.stage ?: getString(if (everReady) R.string.t_status_buffering else R.string.t_loading)
+        }
+    }
+
     private fun updateSplash() {
+        if (previewPrep != null) return                                   // previews are being made on the splash
         val state = player?.playbackState
-        if (state == Player.STATE_READY) everReady = true
+        if (state == Player.STATE_READY) { everReady = true; controlsAfterLoading() }
+        // A failure before the first picture: the controls (Retry, Streams) are needed after all.
+        if (InAppPlaybackSession.error != null) controlsAfterLoading()
         val waiting = InAppPlaybackSession.error == null && player != null &&
             (state == Player.STATE_BUFFERING || (state == Player.STATE_IDLE && !everReady))
         if (!waiting) { splashHandler.removeCallbacks(showSplashLater); setSplash(false); return }
@@ -378,8 +575,14 @@ class PlayerActivity : Activity() {
         try { intent.getStringExtra("identity")?.let { PlaybackIdentity.fromJson(org.json.JSONObject(it)) } } catch (_: Exception) { null }
     }
     private val skipTicker = object : Runnable {
-        override fun run() { updateSkip(); if (!stopped) view.postDelayed(this, 250) }
+        override fun run() {
+            updateSkip()
+            playheadForPreviews = player?.currentPosition ?: -1L
+            if (!stopped) view.postDelayed(this, 250)
+        }
     }
+    /** The playhead, copied here on the main thread for the preview maker (the player may only be read there). */
+    @Volatile private var playheadForPreviews = -1L
 
     /**
      * Skip intro / recap / credits while inside one, and Next episode once an episode's end credits start (or in its
@@ -551,9 +754,13 @@ class PlayerActivity : Activity() {
             InAppPlaybackSession.proxied)
         // Usenet links end the row with a USENET badge; their provider and indexer logos sit with the service logos.
         val usenet = InAppPlaybackSession.sourceAddon?.substringBefore('|') == PlaybackDebrid.USENET
+        val torboxUsenet = InAppPlaybackSession.sourceAddon?.substringBefore('|') == PlaybackDebrid.TORBOX_USENET
+        val deepbridUsenet = InAppPlaybackSession.sourceAddon?.substringBefore('|') == PlaybackDebrid.DEEPBRID_USENET
         view.findViewById<PlayerBadgeRow>(R.id.pov_media_badges)?.show(PlayerMediaBadges.from(PlayerMediaFacts.from(
             InAppPlaybackSession.mediaName, InAppPlaybackSession.mediaSize, player?.videoFormat, player?.audioFormat)) +
-            listOfNotNull(PlayerBadge("USENET", PlayerBadgeKind.USENET).takeIf { usenet }))
+            listOfNotNull(PlayerBadge("USENET", PlayerBadgeKind.USENET).takeIf { usenet },
+                PlayerBadge("TORBOX USENET", PlayerBadgeKind.USENET).takeIf { torboxUsenet },
+                PlayerBadge("DEEPBRID USENET", PlayerBadgeKind.USENET).takeIf { deepbridUsenet }))
         speedButton.text = getString(R.string.t_speed_x, speedLabel(player?.playbackParameters?.speed ?: 1f))
         controls.refreshPlaybackState()
     }
@@ -597,6 +804,8 @@ class PlayerActivity : Activity() {
     /** One sheet for both: Audio and Subtitles side by side, opened with [type]'s column focused. */
     private fun showTracks(type: Int) {
         val exo = player ?: return
+        // Extra online subtitles kept back at the start join now (the sheet refreshes when the tracks arrive).
+        InAppPlaybackSession.addPendingSubtitles()
         val title = getString(R.string.t_audio_subtitles)
         val loading = exo.playbackState == Player.STATE_IDLE || exo.playbackState == Player.STATE_BUFFERING
         val columns = TRACK_TYPES.map { trackType ->
@@ -1009,6 +1218,13 @@ class PlayerActivity : Activity() {
 
     /** Looks the title up on Seekr once and downloads its preview sheets in the background, so scrubbing is instant. */
     private fun loadSeekr(durationMs: Long) {
+        // Built-in previews prepared before playback carry on (software decoder only) while this video plays.
+        if (!builtInPreviewsGoing && BuiltInSeekPreviews.has(InAppPlaybackSession.sourceUrl)) {
+            builtInPreviewsGoing = true
+            BuiltInSeekPreviews.continueWhilePlaying(
+                playing = { !stopped && !isDestroyed && BuiltInSeekPreviews.has(InAppPlaybackSession.sourceUrl) },
+                playheadMs = { playheadForPreviews })
+        }
         if (!seekrPrefs.enabled) return
         val key = InAppPlaybackSession.secureValue(SeekrPreferences.KEY).ifBlank { BuildConfig.SEEKR_KEY }
         val media = InAppPlaybackSession.playbackIdentity ?: return
@@ -1032,6 +1248,8 @@ class PlayerActivity : Activity() {
         }
     }
 
+    private var builtInPreviewsGoing = false
+
     /** The Seekr thumbnail nearest [position] above the seek label, or hide it when null. */
     private val hideCard = Runnable { showThumb(null) }
     private fun showThumb(position: Long?) {
@@ -1054,9 +1272,22 @@ class PlayerActivity : Activity() {
         // Only the target time: the jump size made the pill wide enough to cover the bar and subtitles.
         seekCardTime.text = DpadSeekPreview.time(position)
         seekCardTime.visibility = if (onBar) View.VISIBLE else View.GONE
-        seekCard.visibility = if (track != null) View.VISIBLE else View.GONE
+        // Seekr first; otherwise the built-in previews made on this device, when there are any.
+        if (track == null) BuiltInSeekPreviews.focus(position)                // what the viewer looks at is made next
+        val local = if (track == null) BuiltInSeekPreviews.nearest(InAppPlaybackSession.sourceUrl, position) else null
+        seekCard.visibility = if (track != null || local != null) View.VISIBLE else View.GONE
         placeSeekCard(position)
         seekrFrame?.cancel()
+        if (local != null) {
+            // The same black-bar trim as Seekr's pictures: the card shows the picture itself, not the letterbox.
+            val local = withoutBlackBars(InAppPlaybackSession.sourceUrl, local)
+            val params = seekThumb.layoutParams
+            val width = (params.height.toLong() * local.width / local.height.coerceAtLeast(1)).toInt()
+            if (params.width != width) { params.width = width; seekThumb.layoutParams = params }
+            seekThumb.setImageBitmap(local)
+            placeSeekCard(position)
+            return
+        }
         if (track == null) return
         seekrFrame = uiScope.launch {
             val raw = runCatching { nearestSeekrFrame(track, position) }.getOrNull()
@@ -1190,6 +1421,15 @@ class PlayerActivity : Activity() {
     // Holding Back leaves the player for Settings; the video keeps its mini-player session.
     private val backHold = BackHoldGesture { BackHoldGesture.settingsRequested = true; if (seekPreview.active) finishSeek(cancelled = true); finish() }
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // Seek previews being prepared on the loading screen: OK plays now with what is ready, Back goes back.
+        val ok = event.keyCode in setOf(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_BUTTON_A)
+        if (swallowOkUp && ok && event.action == KeyEvent.ACTION_UP) { swallowOkUp = false; return true }
+        if (previewPrep != null && (ok || event.keyCode == KeyEvent.KEYCODE_BACK)) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                if (ok) { BuiltInSeekPreviews.playNow(); swallowOkUp = true } else { BuiltInSeekPreviews.cancel(); previewPrep = null; finish() }
+            }
+            return true
+        }
         if (backHold.intercept(event)) return true
         val horizontal = event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT || event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
         if (event.action == KeyEvent.ACTION_UP && horizontal && seekPreview.active) {
@@ -1288,6 +1528,8 @@ class PlayerActivity : Activity() {
     override fun onBackPressed() {
         when {
             seekPreview.active -> finishSeek(cancelled = true)
+            // Still loading (no controls yet): Back leaves, as the card's hint says.
+            stillLoading() && previewPrep == null -> { InAppPlaybackSession.stop(); finish() }
             // Back first brings up the controls; a second Back (with them showing) leaves for the mini player, or stops the
             // video (saving its progress, like Stop) when the mini player is off.
             !view.isControllerFullyVisible -> {

@@ -55,18 +55,26 @@ object Net {
         request(url, method, headers, fields.joinToString("&") { (key, value) -> "${encode(key)}=${encode(value)}" }.toByteArray(Charsets.UTF_8),
             "application/x-www-form-urlencoded")
 
+    /** A form post; [files] are uploaded as file parts (field name to file name and bytes), such as an NZB for TorBox. */
     internal fun multipart(
-        url: String, fields: Map<String, String>, headers: Map<String, String>
+        url: String, fields: Map<String, String>, headers: Map<String, String>,
+        files: Map<String, Pair<String, ByteArray>> = emptyMap(),
     ): JSONObject {
         val boundary = "pov-${UUID.randomUUID()}"
-        val bytes = buildString {
-            fields.forEach { (key, value) ->
-                require(key.matches(Regex("[a-z_]+")))
-                append("--$boundary\r\nContent-Disposition: form-data; name=\"$key\"\r\n\r\n$value\r\n")
-            }
-            append("--$boundary--\r\n")
-        }.toByteArray(Charsets.UTF_8)
-        return parseObject(request(url, "POST", headers, bytes, "multipart/form-data; boundary=$boundary"))
+        val out = java.io.ByteArrayOutputStream()
+        fun text(value: String) = out.write(value.toByteArray(Charsets.UTF_8))
+        fields.forEach { (key, value) ->
+            require(key.matches(Regex("[a-z_]+")))
+            text("--$boundary\r\nContent-Disposition: form-data; name=\"$key\"\r\n\r\n$value\r\n")
+        }
+        files.forEach { (key, file) ->
+            require(key.matches(Regex("[a-z_]+")))
+            val name = file.first.replace(Regex("[^A-Za-z0-9._ -]"), "_").take(180).ifBlank { "file" }
+            text("--$boundary\r\nContent-Disposition: form-data; name=\"$key\"; filename=\"$name\"\r\nContent-Type: application/x-nzb\r\n\r\n")
+            out.write(file.second); text("\r\n")
+        }
+        text("--$boundary--\r\n")
+        return parseObject(request(url, "POST", headers, out.toByteArray(), "multipart/form-data; boundary=$boundary"))
     }
 
     private fun parseObject(text: String): JSONObject = try {

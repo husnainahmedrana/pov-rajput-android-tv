@@ -50,6 +50,72 @@ internal object DolbyVisionCompatibility {
         } catch (_: RuntimeException) { null }
     }
 
+    /**
+     * The Profile 8.1 form of a Profile 7 (dual layer) Dolby Vision format, for a DV decoder that takes Profile 8 only:
+     * same level, same base-layer parameter sets (the enhancement layer's are left out). Null for anything else.
+     */
+    fun profile81Format(format: Format): Format? {
+        if (format.sampleMimeType != MimeTypes.VIDEO_DOLBY_VISION || format.drmInitData != null || format.cryptoType != C.CRYPTO_TYPE_NONE) return null
+        val codecs = format.codecs ?: return null
+        val match = Regex("^(dvhe|dvh1)\\.07\\.(\\d{2})$").matchEntire(codecs) ?: return null
+        val color = format.colorInfo
+        if (color != null && color.colorTransfer != C.COLOR_TRANSFER_ST2084 && color.colorTransfer != Format.NO_VALUE) return null
+        return try {
+            val csd = format.initializationData.map { data ->
+                val buffer = ByteBuffer.wrap(data.copyOf())
+                buffer.array().copyOf(retainBaseLayer(buffer))
+            }
+            format.buildUpon().setCodecs("${match.groupValues[1]}.08.${match.groupValues[2]}").setInitializationData(csd).build()
+        } catch (_: RuntimeException) { null }
+    }
+
+    /**
+     * Rewrites one Annex-B access unit of a Profile 7 stream as Profile 8.1, in place: the base layer stays, the
+     * enhancement layer (NAL type 63 and any layer above zero) is dropped, and the RPU (type 62) is converted by
+     * [DolbyVisionRpu]. An RPU that can't be converted is dropped too (that frame shows as plain HDR10). Returns the new
+     * length. Fails closed on framing it doesn't recognise, like [retainBaseLayer].
+     */
+    fun convertToProfile81(data: ByteBuffer): Int {
+        val limit = data.limit()
+        if (limit == 0) return 0
+        require(data.position() == 0 && !data.isReadOnly)
+        val bytes = ByteArray(limit).also { data.duplicate().apply { position(0); limit(limit) }.get(it) }
+        fun prefix(at: Int): Int = when {
+            at + 4 <= limit && bytes[at] == 0.toByte() && bytes[at + 1] == 0.toByte() && bytes[at + 2] == 0.toByte() && bytes[at + 3] == 1.toByte() -> 4
+            at + 3 <= limit && bytes[at] == 0.toByte() && bytes[at + 1] == 0.toByte() && bytes[at + 2] == 1.toByte() -> 3
+            else -> 0
+        }
+        val out = java.io.ByteArrayOutputStream(limit)
+        var start = 0
+        while (start < limit) {
+            val startCode = prefix(start).also { require(it != 0) { "Unsupported HEVC sample framing" } }
+            val header = start + startCode
+            require(header + 2 <= limit) { "Truncated HEVC NAL unit" }
+            val first = bytes[header].toInt() and 255
+            val second = bytes[header + 1].toInt() and 255
+            require(first and 128 == 0 && second and 7 != 0) { "Invalid HEVC NAL header" }
+            val type = first shr 1 and 63
+            val layer = ((first and 1) shl 5) or (second shr 3)
+            var end = header + 2
+            while (end < limit) {
+                if (bytes[end] == 0.toByte() && prefix(end) != 0) break
+                end++
+            }
+            when {
+                layer != 0 || type == 63 -> {}                                  // enhancement layer: dropped
+                type == 62 -> DolbyVisionRpu.toProfile81(bytes, header + 2, end - header - 2)?.let { rpu ->
+                    out.write(bytes, start, startCode + 2); out.write(rpu)
+                }
+                else -> out.write(bytes, start, end - start)
+            }
+            start = end
+        }
+        val result = out.toByteArray()
+        require(result.size <= data.capacity()) { "Converted access unit does not fit" }
+        data.duplicate().apply { clear(); put(result) }
+        return result.size
+    }
+
     /** Compact an Annex-B read buffer in place, preserving only layer-zero HEVC (no RPU/EL).
      * Absolute accesses also work with MediaCodec's direct ByteBuffers. No frame re-encoding.
      * Unexpected framing fails closed instead of sending unverified data to a different decoder.

@@ -14,13 +14,33 @@ import android.widget.ScrollView
  */
 internal class TvScrollView(context: Context, private val autoReveal: () -> Boolean) : ScrollView(context) {
     override fun requestChildFocus(child: View?, focused: View?) {
-        if (focused == null || autoReveal()) return super.requestChildFocus(child, focused)
+        if (focused == null || autoReveal()) { super.requestChildFocus(child, focused); focused?.let(::revealWhole); return }
         val hint = focused.revealOnFocusHint
         focused.revealOnFocusHint = false
         try { super.requestChildFocus(child, focused) } finally { focused.revealOnFocusHint = hint }
     }
     override fun requestChildRectangleOnScreen(child: View, rectangle: Rect, immediate: Boolean): Boolean =
         if (autoReveal()) super.requestChildRectangleOnScreen(child, rectangle, immediate) else false
+
+    /**
+     * The platform scroll stops as soon as the focused view touches the edge, and on some pages (WeTrakr/Simkl personal
+     * lists, rows that finish loading late) not even that far; the card then grows with its outline and shows cut off.
+     * Once the focus has settled, scroll on until the whole card, its growth and a small gap are on screen.
+     */
+    private fun revealWhole(focused: View) {
+        post {
+            if (!focused.isAttachedToWindow || !focused.hasFocus() || !autoReveal() || height == 0) return@post
+            val rect = Rect(); focused.getDrawingRect(rect)
+            runCatching { offsetDescendantRectToMyCoords(focused, rect) }.onFailure { return@post }
+            if (rect.height() >= height) return@post
+            val gap = (rect.height() * 0.06f).toInt() + (16 * resources.displayMetrics.density).toInt()
+            val top = rect.top - gap; val bottom = rect.bottom + gap
+            when {
+                bottom > scrollY + height -> smoothScrollTo(0, bottom - height)
+                top < scrollY -> smoothScrollTo(0, top.coerceAtLeast(0))
+            }
+        }
+    }
 }
 
 internal class TvHorizontalScrollView(context: Context, private val autoReveal: () -> Boolean) : HorizontalScrollView(context) {

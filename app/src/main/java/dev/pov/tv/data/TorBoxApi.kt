@@ -12,7 +12,9 @@ class TorBoxApi internal constructor(
     private val store: TorBoxCredentials,
     private val transport: (String, String, Map<String, String>, JSONObject?) -> JSONObject = Net::json,
     private val elapsedRealtime: () -> Long = SystemClock::elapsedRealtime,
-    private val multipart: (String, Map<String, String>, Map<String, String>) -> JSONObject = Net::multipart
+    private val multipart: (String, Map<String, String>, Map<String, String>) -> JSONObject = { url, fields, headers -> Net.multipart(url, fields, headers) },
+    /** A form post with file parts (an NZB for TorBox Usenet). */
+    private val upload: (String, Map<String, String>, Map<String, String>, Map<String, Pair<String, ByteArray>>) -> JSONObject = Net::multipart,
 ) {
     constructor(store: SecureStore) : this(object : TorBoxCredentials {
         override fun get(key: String) = store.get(key)
@@ -285,6 +287,55 @@ class TorBoxApi internal constructor(
         val data = objectData(unwrap(response))
         return data.optLong("torrent_id", -1).takeIf { it >= 0 }
             ?: throw ApiException(0, L10n.tr(R.string.t_torbox_did_not_return_a_torrent, "TorBox did not return a torrent identifier."))
+    }
+
+    /**
+     * Which of these Usenet hashes (MD5, see [TorBoxUsenet.hashes]) TorBox already has. Its cache is shared: a release
+     * any TorBox user has fetched counts, matched by the NZB's own message IDs.
+     */
+    fun usenetCached(hashes: List<String>): Set<String> {
+        val wanted = hashes.map { it.lowercase() }.filter { it.matches(Regex("[a-f0-9]{32}")) }.distinct()
+        val result = mutableSetOf<String>()
+        wanted.chunked(100).forEach { batch ->
+            when (val value = call("/usenet/checkcached?format=object&list_files=false", "POST", JSONObject().put("hashes", JSONArray(batch)))) {
+                is JSONObject -> value.keys().forEach { hash -> if (hash.lowercase() in batch && value.opt(hash) != null && value.opt(hash) != JSONObject.NULL) result.add(hash.lowercase()) }
+                is JSONArray -> for (i in 0 until value.length()) {
+                    val hash = (value.optJSONObject(i)?.optString("hash") ?: value.optString(i)).lowercase()
+                    if (hash in batch) result.add(hash)
+                }
+                JSONObject.NULL, null -> Unit
+                else -> malformed()
+            }
+        }
+        return result
+    }
+
+    /**
+     * Uploads an NZB file (the bytes, never the indexer link, so the indexer's API key stays on this device) and returns
+     * TorBox's Usenet download id. [onlyIfCached] attaches it only when TorBox has it already.
+     */
+    fun addNzb(nzb: ByteArray, name: String, onlyIfCached: Boolean = false): Long {
+        require(nzb.isNotEmpty() && nzb.size <= 24 * 1024 * 1024) { "Invalid NZB." }
+        val fields = buildMap {
+            put("name", name.take(200)); put("post_processing", "-1")
+            if (onlyIfCached) put("add_only_if_cached", "true")
+        }
+        val response = upload("$BASE/usenet/createusenetdownload", fields, authorization(), mapOf("file" to ("${name.take(150)}.nzb" to nzb)))
+        val data = unwrap(response)
+        val id = (data as? JSONObject)?.let { value ->
+            listOf("usenetdownload_id", "usenet_id", "id").firstNotNullOfOrNull { key -> value.optLong(key, -1).takeIf { it >= 0 } }
+        }
+        return id ?: throw ApiException(0, L10n.tr(R.string.t_torbox_did_not_return_a_usenet_download, "TorBox did not return a Usenet download."))
+    }
+
+    /** One of the account's Usenet downloads as TorBox reports it (state, progress, files), or null when it's gone. */
+    fun usenetJob(id: Long): JSONObject? {
+        require(id >= 0)
+        return when (val data = call("/usenet/mylist?id=$id&bypass_cache=true")) {
+            is JSONObject -> data
+            is JSONArray -> (0 until data.length()).mapNotNull { data.optJSONObject(it) }.firstOrNull { it.optLong("id", -1) == id }
+            else -> null
+        }
     }
 
     private fun verifyAccount(token: String): JSONObject = objectData(unwrap(transport("$BASE/user/me", "GET", mapOf("Authorization" to "Bearer $token"), null)))

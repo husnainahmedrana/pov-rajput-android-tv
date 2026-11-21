@@ -33,7 +33,7 @@ object BackupSnapshot {
         "easynews.connections", "easynews.server", "easynews.off", "easynews.nntp",
         // Which debrid services are on, and the Usenet choices that hold no login (the providers and indexers
         // themselves, with their on/off, order and priorities, hold passwords and keys, so they stay with the secrets).
-        "debrid.off.", "usenet.warm", "usenet.nextTierQuality", "usenet.fallbackOnly", "usenet.header.",
+        "debrid.off.", "usenet.warm", "usenet.via", "usenet.nextTierQuality", "usenet.fallbackOnly", "usenet.header.",
         "torznab.nextTierQuality", "torznab.resultLimit")
     /** Never backed up: the account's own keys, caches, and per-device daily counters (indexer searches and grabs today). */
     private val EXCLUDED_PREFIXES = listOf("account.", "wetrakr.continue_cache", "playback.last_links", "offcloud.transfers",

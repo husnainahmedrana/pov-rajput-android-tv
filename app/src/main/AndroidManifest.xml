@@ -7,12 +7,19 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- In-app voice search only; the microphone is used while the listening screen is open. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Keeps Nabrio running while another player (Kodi, Dune HD Media Center) plays a video it serves on this device. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Optional, granted by the viewer: lets Nabrio come back to its results when Kodi or Dune stops a video. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <queries>
         <intent><action android:name="android.speech.action.RECOGNIZE_SPEECH" /></intent>
         <intent><action android:name="android.speech.RecognitionService" /></intent>
+        <!-- Settings → Playback → Play videos with: lists the video players on this device. -->
+        <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="http" android:mimeType="video/*" /></intent>
     </queries>
     <application android:allowBackup="false" android:largeHeap="true"
         android:fullBackupContent="@xml/backup_exclusions"
@@ -25,6 +32,7 @@
             android:authorities="${applicationId}.updates" android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/update_paths" />
         </provider>
+        <service android:name=".ExternalStreamService" android:exported="false" android:foregroundServiceType="mediaPlayback" />
         <service android:name=".TvContinueJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true" />
         <receiver android:name=".TvContinueReceiver" android:exported="true">
             <intent-filter>

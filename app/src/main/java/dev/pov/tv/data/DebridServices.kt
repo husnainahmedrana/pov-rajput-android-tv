@@ -10,6 +10,7 @@ object DebridServices {
         "alldebrid" -> "AllDebrid"
         "premiumize" -> "Premiumize"
         "debridlink" -> "Debrid-Link"
+        "deepbrid" -> "Deepbrid"
         else -> error("Unknown debrid service.")
     }
     fun credential(id: String) = when (id) { "offcloud" -> "offcloud.key"; "torbox" -> "torbox.token"; else -> "$id.key" }

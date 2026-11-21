@@ -77,6 +77,15 @@ object InAppPlaybackSession {
     /** The automatic forced-subtitle check runs once per video. */
     private var subtitlesChecked = false
     private var externalSubtitlesChecked = false
+    /** The subtitles Nabrio added to this video (track ids "pov-sub:<index>"), and the one auto sync last handled. */
+    private var addedSubtitles: List<dev.pov.tv.data.ExternalSubtitle> = emptyList()
+    /**
+     * Extra online subtitles found for a video that already has the viewer's language built in. Adding a subtitle
+     * reloads the video (Media3 rebuilds the source), which made every start reopen the file once more for choices
+     * nobody had asked for; they are added when the viewer opens the subtitle menu instead ([addPendingSubtitles]).
+     */
+    private var pendingSubtitles: (() -> Unit)? = null
+    private var syncedSubtitle = ""
     const val WYZIE_KEY = "subtitles.wyzie_key"
     const val SUBDL_KEY = "subtitles.subdl_key"
     var debridService: String? = null
@@ -240,13 +249,20 @@ object InAppPlaybackSession {
         playbackAccount = saved?.getString("playback_account") ?: intent.getStringExtra("playback_account")
         lastLinkSaved = false
         debridService = PlaybackDebrid.normalize(saved?.getString("debrid_service") ?: intent.getStringExtra("debrid_service"))
+        // The loading card's first line: Usenet links report their own steps; the rest name where the video comes from.
+        PlaybackStatus.reset(if (dev.pov.tv.data.UsenetLinks.isNzb(sourceUrl)) null
+            else L10n.tr(R.string.t_status_connecting_x, "Connecting to %1\$s",
+                debridService?.let(dev.pov.tv.data.DebridServices::name) ?: L10n.tr(R.string.t_status_video_server, "the video server")))
         sourceAddon = saved?.getString("source_addon") ?: intent.getStringExtra("source_addon")
         sourceOrigin = saved?.getString("source_origin") ?: intent.getStringExtra("source_origin").orEmpty()
         streamSubtitles = dev.pov.tv.data.StreamSubtitle.fromJson(intent.getStringExtra("stream_subtitles"))
         title = intent.getStringExtra("title").orEmpty()
         if (saved == null) SubtitleSync.reset()
         subtitlesChecked = saved != null
+        latinAudioChecked = saved != null
         externalSubtitlesChecked = false
+        pendingSubtitles = null
+        if (saved == null) { addedSubtitles = emptyList(); syncedSubtitle = "" }
         mediaName = intent.getStringExtra("media_name").orEmpty().take(4000)
         mediaSize = intent.getLongExtra("media_size", 0L).takeIf { it > 0 }
         identity = try { intent.getStringExtra("identity")?.let { PlaybackIdentity.fromJson(JSONObject(it)) } } catch (_: Exception) { null }
@@ -262,6 +278,8 @@ object InAppPlaybackSession {
         lastSyncAction = ""
         lastSyncAt = 0L
         val gainProcessor = volumeBoost.createAudioProcessor()
+        // Settings → Audio → Audio passthrough: formats the viewer chose to decode in the app (static on some sound bars).
+        val passthroughMode = AudioPassthrough.mode(application!!)
         // Volume boost by default (Settings → Audio & Subtitles); the player's Volume boost still changes it per video.
         VolumeBoostPreferences(application!!).defaultDb.takeIf { it > 0 }?.let { volumeBoost.setGain(it) }
         val renderers = object : DefaultRenderersFactory(application!!) {
@@ -298,10 +316,12 @@ object InAppPlaybackSession {
                     .build()
                 return object : ForwardingAudioSink(sink) {
                     private var encodedRoute = false
-                    // While a speed other than 1x is chosen, or for a format whose passthrough this device advertised
-                    // but then refused to open, refuse passthrough so the renderer decodes to PCM.
+                    // While a speed other than 1x is chosen, for a format whose passthrough this device advertised
+                    // but then refused to open, or for a format the viewer chose to decode in Settings, refuse
+                    // passthrough so the renderer decodes to PCM.
                     private fun decode(format: Format) = format.sampleMimeType != MimeTypes.AUDIO_RAW &&
-                        (decodeForSpeed || format.sampleMimeType in refusedPassthrough)
+                        (decodeForSpeed || format.sampleMimeType in refusedPassthrough ||
+                            AudioPassthrough.decodes(passthroughMode, format.sampleMimeType))
                     override fun supportsFormat(format: Format) = !decode(format) && super.supportsFormat(format)
                     override fun getFormatSupport(format: Format) =
                         if (decode(format)) AudioSink.SINK_FORMAT_UNSUPPORTED else super.getFormatSupport(format)
@@ -335,18 +355,24 @@ object InAppPlaybackSession {
             .setConnectTimeoutMs(if (cachedReplay) CACHED_CONNECT_TIMEOUT_MS else 15_000).setReadTimeoutMs(if (aioStreams) 60_000 else 30_000)
             .setTransferListener(sizeFromServer(playing, routed.url))
             .setDefaultRequestProperties(routed.headers)
-        val exo = ExoPlayer.Builder(application!!, renderers)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(application!!,
+        // Debrid and direct videos over several connections: one connection to a far CDN is often capped below the
+        // film's bitrate (Kodi, asking in parallel through Nabrio, played the same Offcloud remux smoothly).
+        val fast = ParallelHttpDataSource.Factory(http, routed.headers, listener = sizeFromServer(playing, routed.url))
+        val playerSources = DefaultDataSource.Factory(application!!,
                 // Easynews links get the saved login inside the player; it is never in the link or the intent.
-                EasynewsRoutingDataSource.Factory(http, { if (easynewsSingle) 1 else dev.pov.tv.data.Easynews.connections(secureStore) },
+                EasynewsRoutingDataSource.Factory(fast, { if (easynewsSingle) 1 else dev.pov.tv.data.Easynews.connections(secureStore) },
                     usenet = { address -> UsenetPlayback.session(address, secureStore, application?.cacheDir) { note -> handler.post { application?.let { android.widget.Toast.makeText(it, note, android.widget.Toast.LENGTH_LONG).show() } } } }) { dev.pov.tv.data.Easynews.credentials(secureStore)?.let { (user, password) ->
-                    runCatching { dev.pov.tv.data.Easynews.auth(user, password) }.getOrNull() } }))
-                // A Usenet link already found unplayable fails straight away instead of being asked three more times.
-                .setLoadErrorHandlingPolicy(object : androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy() {
-                    override fun getRetryDelayMsFor(info: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo): Long =
-                        if (refusedUsenet(info.exception)) C.TIME_UNSET else super.getRetryDelayMsFor(info)
-                }))
-            .setLoadControl(ReadAheadPreferences(application!!).loadControl(usenet = dev.pov.tv.data.UsenetLinks.isNzb(playing)))
+                    runCatching { dev.pov.tv.data.Easynews.auth(user, password) }.getOrNull() } })
+        val mediaSources = DefaultMediaSourceFactory(playerSources)
+            // A Usenet link already found unplayable fails straight away instead of being asked three more times.
+            .setLoadErrorHandlingPolicy(object : androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy() {
+                override fun getRetryDelayMsFor(info: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo): Long =
+                    if (refusedUsenet(info.exception)) C.TIME_UNSET else super.getRetryDelayMsFor(info)
+            })
+        val exo = ExoPlayer.Builder(application!!, renderers)
+            .setMediaSourceFactory(mediaSources)
+            // A bigger cushion after each stall (Kodi-like) for links that only just keep up with the film's bitrate.
+            .setLoadControl(RebufferGuard(ReadAheadPreferences(application!!).loadControl(usenet = dev.pov.tv.data.UsenetLinks.isNzb(playing))))
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
             .setHandleAudioBecomingNoisy(true)
             .setSeekBackIncrementMs(10_000).setSeekForwardIncrementMs(10_000).build()
@@ -373,6 +399,8 @@ object InAppPlaybackSession {
             override fun onTracksChanged(tracks: Tracks) {
                 if (!isCurrent(exo) || enforceVideoCompatibility(exo, tracks)) return
                 preferFullSubtitles(exo, tracks)
+                autoSyncSubtitles(exo, tracks)
+                preferLatinSpanishAudio(exo, tracks)
                 findMissingSubtitles(exo, tracks)
                 notifyChanged()
             }
@@ -507,6 +535,14 @@ object InAppPlaybackSession {
     fun refreshAudioLanguage() {
         val context = application ?: return
         player?.let { it.trackSelectionParameters = AudioPreferences(context).trackParameters(it.trackSelectionParameters) }
+    }
+
+    /** Adds the extra online subtitles kept back at the start (see [pendingSubtitles]); true when it did. */
+    internal fun addPendingSubtitles(): Boolean {
+        val add = pendingSubtitles ?: return false
+        pendingSubtitles = null
+        add()
+        return true
     }
 
     fun refreshSubtitleLanguage() {
@@ -793,15 +829,22 @@ object InAppPlaybackSession {
             }.orEmpty()
             handler.post {
                 if (found.isEmpty() || !isCurrent(exo) || sourceUrl != playing) return@post
-                val item = exo.currentMediaItem ?: return@post
-                android.util.Log.i("PovSubtitles", "added ${found.size} online subtitles (${found.first().label})")
-                val configs = found.mapIndexed { index, subtitle ->
-                    MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url)).setMimeType(subtitle.mime)
-                        .setLanguage(subtitle.language).setLabel(if (found.size > 1) "${subtitle.label} ${index + 1}" else subtitle.label)
-                        .setSelectionFlags(if (index == 0 && !extrasOnly) C.SELECTION_FLAG_DEFAULT else 0).build()
+                val add = add@{
+                    if (!isCurrent(exo) || sourceUrl != playing) return@add
+                    val item = exo.currentMediaItem ?: return@add
+                    android.util.Log.i("PovSubtitles", "added ${found.size} online subtitles (${found.first().label})")
+                    val configs = found.mapIndexed { index, subtitle ->
+                        MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url)).setMimeType(subtitle.mime).setId("pov-sub:$index")
+                            .setLanguage(subtitle.language).setLabel(if (found.size > 1) "${subtitle.label} ${index + 1}" else subtitle.label)
+                            .setSelectionFlags(if (index == 0 && !extrasOnly) C.SELECTION_FLAG_DEFAULT else 0).build()
+                    }
+                    addedSubtitles = found
+                    exo.setMediaItem(item.buildUpon().setSubtitleConfigurations(configs).build(), false)
+                    exo.prepare()
                 }
-                exo.setMediaItem(item.buildUpon().setSubtitleConfigurations(configs).build(), false)
-                exo.prepare()
+                // Needed (no subtitle in the viewer's language): now. Only extra choices: when the subtitle menu opens.
+                if (extrasOnly) { pendingSubtitles = add; android.util.Log.i("PovSubtitles", "${found.size} extra online subtitles kept for the subtitle menu") }
+                else add()
             }
         }.apply { isDaemon = true; name = "pov-subtitles" }.start()
     }
@@ -812,6 +855,59 @@ object InAppPlaybackSession {
             .map { dev.pov.tv.data.SubtitleAddon(it.name, dev.pov.tv.data.SourceProviders.endpoint(it.address)) } }.getOrDefault(emptyList())
         val catalogs = runCatching { dev.pov.tv.data.CatalogAddons(secureStore).load().map { dev.pov.tv.data.SubtitleAddon(it.name, it.address) } }.getOrDefault(emptyList())
         return (sources + catalogs).distinctBy { it.base }.take(20)
+    }
+
+    /**
+     * Auto subtitle sync: a subtitle Nabrio added (not the file's own, not one sent with the stream) is lined up with a
+     * subtitle made for this exact file, once per subtitle, unless the viewer has moved the timing by hand.
+     */
+    private fun autoSyncSubtitles(exo: ExoPlayer, tracks: Tracks) {
+        if (SubtitleSync.manual) return
+        val chosen = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
+            .firstNotNullOfOrNull { group -> (0 until group.length).firstOrNull(group::isTrackSelected)?.let { group.getTrackFormat(it) } } ?: return
+        val index = Regex("pov-sub:(\\d+)").find(chosen.id.orEmpty())?.groupValues?.get(1)?.toIntOrNull() ?: return
+        val subtitle = addedSubtitles.getOrNull(index) ?: return
+        if (subtitle.url == syncedSubtitle) return
+        syncedSubtitle = subtitle.url
+        SubtitleSync.applyAuto(0, 1.0)                                    // another subtitle: start from its own timing
+        val app = application ?: return
+        val attached = streamSubtitles.map { AutoSubtitleSync.Subtitle(it.url, it.language, true) }
+        AutoSubtitleSync.run(app, AutoSubtitleSync.Subtitle(subtitle.url, subtitle.language, subtitle.score == Int.MAX_VALUE), attached,
+            identity, sourceUrl, sourceHeaders, mediaSize) { result ->
+            handler.post {
+                if (result == null || !isCurrent(exo) || syncedSubtitle != subtitle.url || SubtitleSync.manual) return@post
+                SubtitleSync.applyAuto(result.offsetMs, result.factor)
+                android.util.Log.i("PovSubtitles", "auto sync: ${result.offsetMs} ms × ${result.factor} (${if (result.byWords) "words" else "timing"})")
+                if (kotlin.math.abs(result.offsetMs) >= 150 || result.factor != 1.0) android.widget.Toast.makeText(app,
+                    app.getString(R.string.t_subtitles_synced_automatically_x, SubtitleSync.label()), android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private var latinAudioChecked = false
+
+    /**
+     * Spanish (Latin America) chosen: files often tag both Spanish tracks "spa", so among several Spanish audio tracks
+     * the one named Latino / Latin / LAT / México / es-419 is chosen. Once per video, never over the viewer's own pick.
+     */
+    private fun preferLatinSpanishAudio(exo: ExoPlayer, tracks: Tracks) {
+        if (latinAudioChecked) return
+        val audio = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+        if (audio.isEmpty()) return
+        latinAudioChecked = true
+        if (AudioPreferences(application!!).language != dev.pov.tv.data.SourceLanguages.LATIN_SPANISH) return
+        val parameters = exo.trackSelectionParameters
+        if (parameters.overrides.keys.any { it.type == C.TRACK_TYPE_AUDIO }) return
+        val spanish = audio.flatMap { group -> (0 until group.length).map { group to it } }.filter { (group, index) ->
+            group.isTrackSupported(index) && group.getTrackFormat(index).language?.lowercase()?.let { it.startsWith("es") || it == "spa" } == true
+        }
+        if (spanish.size < 2) return
+        val latin = Regex("(?i)latin|latam|(?<![a-z])lat(?![a-z])|m[eé]xico|es-419|es-mx")
+        val pick = spanish.firstOrNull { (group, index) -> group.getTrackFormat(index).let { latin.containsMatchIn("${it.label} ${it.language}") } } ?: return
+        if (pick.first.isTrackSelected(pick.second)) return
+        android.util.Log.i("PovAudio", "Spanish (Latin America): choosing the ${pick.first.getTrackFormat(pick.second).label} track")
+        exo.trackSelectionParameters = parameters.buildUpon()
+            .setOverrideForType(androidx.media3.common.TrackSelectionOverride(pick.first.mediaTrackGroup, pick.second)).build()
     }
 
     private fun preferFullSubtitles(exo: ExoPlayer, tracks: Tracks) {

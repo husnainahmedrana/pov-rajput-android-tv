@@ -120,7 +120,7 @@ class MediaFlowProxy internal constructor(private val get: (String) -> String, p
         const val LOGO = "mediaflow"
         /** Each debrid service's API host, for [forward]. */
         val API_HOSTS = mapOf("realdebrid" to "api.real-debrid.com", "alldebrid" to "api.alldebrid.com", "premiumize" to "www.premiumize.me",
-            "debridlink" to "debrid-link.com", "offcloud" to "offcloud.com", "torbox" to "api.torbox.app")
+            "debridlink" to "debrid-link.com", "deepbrid" to "www.deepbrid.com", "offcloud" to "offcloud.com", "torbox" to "api.torbox.app")
 
         fun routes(source: SourceItem, playOn: String?, settings: Settings): Boolean {
             if (!settings.ready) return false

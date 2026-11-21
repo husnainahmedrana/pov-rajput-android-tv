@@ -13,10 +13,10 @@ android {
         manifestPlaceholders["appLabel"] = providers.gradleProperty("povAppLabel").orElse("Nabrio").get()
         minSdk = 26
         targetSdk = 35
-        versionCode = 72
+        versionCode = 73
         // Test builds can raise it (-PpovVersionCode=…) so a TV launcher reloads a changed icon; releases leave it alone.
         providers.gradleProperty("povVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
-        versionName = "0.4.6-rajput"
+        versionName = "0.4.7-rajput"
         testInstrumentationRunner = providers.gradleProperty("povTestRunner")
             .orElse("dev.pov.tv.PlaybackAuditInstrumentation").get()
     }
@@ -97,7 +97,11 @@ android {
     // Translated text uses %1$s placeholders for every value, numbers included: Android formats them correctly,
     // and translators only ever see one kind of placeholder.
     lint { disable += "StringFormatMatches" }
-    packaging { resources.excludes += setOf("META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*") }
+    packaging {
+        resources.excludes += setOf("META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*")
+        // Every Nabrio device is ARM (TVs, boxes, phones); the x86 FFmpeg builds would only add size.
+        jniLibs.excludes += setOf("lib/x86/**", "lib/x86_64/**")
+    }
 }
 
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
@@ -111,8 +115,11 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-dash:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
     implementation("androidx.media3:media3-session:1.11.1")
+    // Built-in seek previews: Media3's own extractors (they read the file's keyframe index) as a MediaExtractor.
+    implementation("androidx.media3:media3-inspector:1.11.1")
     // Phones (and many TVs for DTS/TrueHD) lack these decoders; FFmpeg decodes them to PCM in software.
     implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1")
+    // NextLib FFmpeg (37 MB build) removed 2026-11-21; see the 37 MB backup to bring it back
     // Artwork only: HTTP/2 shares one connection per image server, with a disk cache for posters.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // QR code for device sign-in (encoder only).

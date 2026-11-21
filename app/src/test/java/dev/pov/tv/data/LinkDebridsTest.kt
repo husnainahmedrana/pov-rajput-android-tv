@@ -38,6 +38,12 @@ class LinkDebridsTest {
             return answer(method, url)
         }
         override fun json(method: String, url: String, headers: Map<String, String>, body: JSONObject) = answer(method, url)
+        /** Followed short links and the headers each got; never touches the network. */
+        val followed = mutableListOf<Pair<String, Map<String, String>>>()
+        override fun follow(url: String, headers: Map<String, String>): Triple<String, String, Long>? {
+            followed += url to headers
+            return Triple("https://cdn.example/${url.substringAfterLast('/')}.mkv", "Movie.2024.1080p.mkv", 4_000_000_000)
+        }
     }
 
     private fun api(fake: Fake) = LinkDebrids({ "key-12345678" }, { _, _ -> }, fake, now = { 0L }, pause = {})
@@ -191,5 +197,28 @@ class LinkDebridsTest {
             assertEquals("$id.key", DebridServices.credential(id))
         }
         assertEquals(listOf("torbox", "offcloud") + LinkDebrids.IDS, DebridServices.parsePriority("torbox,offcloud", ""))
+    }
+
+    @Test fun `deepbrid plays a cached torrent from its followed link`() {
+        val fake = Fake(mapOf(
+            "POST https://www.deepbrid.com/api/v1/torrents/add" to """{"error":0,"id":"77"}""",
+            "GET https://www.deepbrid.com/api/v1/torrents/info?id=77" to """{"error":0,"status":"downloaded","links":["https://www.deepbrid.com/dl/abc"]}""",
+            "GET https://www.deepbrid.com/api/v1/torrents/info" to """{"0":{"id":"12"}}"""))
+        val prepared = api(fake).prepare("deepbrid", source, movie)!!
+        assertEquals(listOf("Movie.2024.1080p.mkv"), prepared.files.map { it.name })
+        assertEquals("https://cdn.example/abc.mkv", api(fake).streamUrl(prepared, prepared.files.single()))
+        // The key went to Deepbrid's own host only, and nothing was deleted.
+        assertEquals(mapOf("Authorization" to "Bearer key-12345678"), fake.followed.single().second)
+        assertTrue(fake.calls.none { it.startsWith("DELETE") })
+    }
+
+    @Test fun `deepbrid removes a torrent that is not cached`() {
+        var clock = 0L
+        val fake = Fake(mapOf(
+            "POST https://www.deepbrid.com/api/v1/torrents/add" to """{"error":0,"id":"78"}""",
+            "GET https://www.deepbrid.com/api/v1/torrents/info?id=78" to """{"error":0,"status":"downloading","progress":3}"""))
+        val client = LinkDebrids({ "key-12345678" }, { _, _ -> }, fake, now = { clock }, pause = { clock += it * 1_000_000 })
+        assertNull(client.prepare("deepbrid", source, movie))
+        assertTrue("DELETE https://www.deepbrid.com/api/v1/torrents/delete/78" in fake.calls)
     }
 }

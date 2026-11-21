@@ -13,6 +13,10 @@ internal object PlaybackDebrid {
     const val EASYNEWS = "easynews"
     /** The player tag of the viewer's own indexer links. */
     const val USENET = "usenet"
+    /** An indexer's Usenet link played from TorBox's servers (TorBox Usenet): TorBox's logo and a TORBOX USENET badge. */
+    const val TORBOX_USENET = "torboxusenet"
+    /** An indexer's Usenet link played from Deepbrid (NZB uploaded): Deepbrid's logo and a DEEPBRID USENET badge. */
+    const val DEEPBRID_USENET = "deepbridusenet"
     const val PENGUPLAY = AddonBadges.PENGUPLAY
     const val CNCVERSE = AddonBadges.CNCVERSE
     const val PLAVIO = AddonBadges.PLAVIO
@@ -31,6 +35,7 @@ internal object PlaybackDebrid {
     fun logo(id: String) = when (id) {
         "offcloud" -> R.drawable.pov_offcloud_logo
         "torbox" -> R.drawable.pov_torbox_logo
+        "deepbrid" -> R.drawable.pov_deepbrid_logo
         "realdebrid" -> R.drawable.pov_realdebrid_logo
         "alldebrid" -> R.drawable.pov_alldebrid_logo
         "premiumize" -> R.drawable.pov_premiumize_logo
@@ -78,7 +83,7 @@ internal object PlaybackDebrid {
         else -> R.drawable.pov_debridlink_logo
     }
     /** AllDebrid's mark is a wordmark that already spells the name. */
-    private fun wordmark(id: String?) = id == "alldebrid"
+    private fun wordmark(id: String?) = id == "alldebrid" || id == "deepbrid"
 
     /**
      * [url] marks Easynews: an easynews.com address is the same test the player uses to add the Easynews login, so the

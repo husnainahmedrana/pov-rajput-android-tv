@@ -11,7 +11,10 @@ object SourceLanguages {
     private val AUDIO_WORDS = mapOf(
         "en" to listOf("eng", "🇬🇧", "🇺🇸"),
         "pt" to listOf("por", "portugues", "brazilian", "pt[ ._-]?br", "pt[ ._-]?pt", "dublado", "dub[ ._-]?pt", "🇧🇷", "🇵🇹"),
-        "es" to listOf("spa", "esp", "espanol", "castellano", "latino", "es[ ._-]?mx", "🇪🇸", "🇲🇽"),
+        "es" to listOf("spa", "esp", "espanol", "castellano", "🇪🇸"),
+        // Latin American Spanish ("Latino" dubs), told apart from Spain's Castellano; such a link is Spanish too.
+        LATIN_SPANISH to listOf("latino", "lat", "latam", "latin[ ._-]?spanish", "latin[ ._-]?america\\p{L}*", "latinoam\\p{L}*","spanish[ ._-]?latin(?:o|oamerica\\p{L}*)?",
+            "espa[nñ]ol[ ._-]?latino", "es[_-](?:mx|la|lat|419)", "🇲🇽", "🇦🇷", "🇨🇴", "🇨🇱", "🇵🇪", "🇻🇪"),
         "fr" to listOf("fre", "fra", "vff", "vfq", "vfi", "vf2", "truefrench", "🇫🇷"),
         "de" to listOf("ger", "deu", "🇩🇪"),
         "it" to listOf("ita", "🇮🇹"),
@@ -53,9 +56,13 @@ object SourceLanguages {
     private class Scanner(val codes: List<String>, val regex: Regex)
     private val scanners = HashMap<Set<String>, Scanner>()
 
+    /** Spanish as spoken in Latin America (BCP 47 "es-419"): a choice of its own in the audio language list. */
+    const val LATIN_SPANISH = "es-419"
+
     private fun alternatives(code: String): String {
         val locale = Locale.forLanguageTag(code)
-        val names = listOf(locale.getDisplayLanguage(Locale.ENGLISH), locale.getDisplayLanguage(locale))
+        // "Spanish (Latin America)" has Spanish's own name, which must keep meaning plain Spanish: its words only.
+        val names = if (code == LATIN_SPANISH) emptyList() else listOf(locale.getDisplayLanguage(Locale.ENGLISH), locale.getDisplayLanguage(locale))
             .filter { it.length > 2 && !it.equals(code, true) }.map(Regex::escape)
         val (flags, words) = AUDIO_WORDS[code].orEmpty().partition { it.any(Character::isSurrogate) }
         val textual = (names + words).distinct().joinToString("|")
@@ -119,6 +126,9 @@ object SourceLanguages {
         subtitleWords.forEach { (code, regex) -> if (regex.containsMatchIn(sample)) subtitles += code }
         // "VOSTFR" releases keep the original audio; French belongs to the subtitles only.
         if (vostfr.containsMatchIn(sample)) audio -= "fr"
+        // A Latino dub (or subtitle) is Spanish too, for viewers who chose plain Spanish.
+        if (LATIN_SPANISH in audio) audio += "es"
+        if (LATIN_SPANISH in subtitles) subtitles += "es"
         return Detected(audio, subtitles, multi.containsMatchIn(sample))
     }
 }

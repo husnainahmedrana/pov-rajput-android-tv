@@ -161,6 +161,7 @@ internal object UsenetPlayback {
             UsenetSessions.get(key) {
                 val providers = NewsProviders(store).active()
                 if (providers.isEmpty()) throw IOException(L10n.tr(R.string.t_add_a_news_provider_in_settings, "Add a news provider in Settings → Sources → Usenet to play Usenet links."))
+                PlaybackStatus.stage(L10n.tr(R.string.t_status_getting_nzb, "Getting the NZB from the indexer"))
                 val text = nzbText(address, key, store, cache)
                 val nzb = Nzb.parse(text)
                 if (nzb.files.isEmpty()) throw IOException(L10n.tr(R.string.t_the_indexer_sent_an_empty_article, "The indexer sent an empty article list for this link."))
@@ -180,10 +181,13 @@ internal object UsenetPlayback {
                         log = { UsenetLog.i("${provider.name}: $it") }, keepOpen = if (index == 0) minOf(warm, provider.connections) else 0)
                 })
                 try {
+                    PlaybackStatus.stage(L10n.tr(R.string.t_status_opening_release_x, "Opening the release on %1\$s", providers[0].name))
                     val opened = try { UsenetMedia.open(chain, nzb, cache) { UsenetLog.i(it) } }
                         // A failed opening of a taken-down release: the check's "missing parts" says it better.
                         catch (error: Exception) { healthy(); throw error }
+                    PlaybackStatus.stage(L10n.tr(R.string.t_status_checking_release, "Checking the release is complete"))
                     try { healthy() } catch (error: Exception) { opened.source.close(); throw error }
+                    PlaybackStatus.stage(L10n.tr(R.string.t_status_first_data, "Downloading the start of the video"))
                     notify("Streaming from ${providers[0].name} · ${providers[0].connections} connections · pipeline ${providers[0].pipelineDepth} · ${opened.kind}" +
                         if (providers.size > 1) " · ${providers.size - 1} backup" else "")
                     UsenetSessions.Session(key, chain, opened.source)
@@ -234,6 +238,16 @@ internal object UsenetPlayback {
 
     /** Whether this Usenet link already failed this session (taken down, an archive it can't play…), for the link list. */
     fun failed(address: String): Boolean = UsenetLinks.isNzb(address) && UsenetSessions.reason(sha1(address)) != null
+
+    /** The NZB for an indexer link (device cache first), for TorBox Usenet. Costs one grab when it isn't cached here. */
+    internal fun nzbFor(address: String, store: SecureStore, cache: java.io.File?): String = nzbText(address, sha1(address), store, cache)
+
+    /** The NZB only when this device already has it (no grab), for checking TorBox before anything is played. */
+    internal fun cachedNzb(address: String, cache: java.io.File?): String? {
+        val file = cache?.let { java.io.File(java.io.File(it, "nzb"), "${sha1(address)}.nzb.gz") } ?: return null
+        if (!file.isFile || System.currentTimeMillis() - file.lastModified() >= KEEP_MS) return null
+        return runCatching { java.util.zip.GZIPInputStream(file.inputStream()).use { it.readBytes().toString(Charsets.UTF_8) } }.getOrNull()
+    }
 
     /** The NZB, from this device's small cache when it was played before (so resuming costs no grab), else from the indexer. */
     private fun nzbText(address: String, key: String, store: SecureStore, cache: java.io.File?): String {
@@ -295,6 +309,7 @@ internal object EasynewsNntp {
         return UsenetSessions.get(key) {
             var pool: NntpPool? = null
             try {
+                PlaybackStatus.stage(L10n.tr(R.string.t_status_connecting_x, "Connecting to %1\$s", "Easynews"))
                 val nzb = EasynewsNzb.fetch(token, Easynews.auth(user, password))?.let(Nzb::parse)
                 if (nzb == null || nzb.files.isEmpty()) { notify("NNTP: Easynews has no article list for this link · using web"); null }
                 else {

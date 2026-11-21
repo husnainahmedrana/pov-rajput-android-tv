@@ -61,7 +61,9 @@ internal class SourceSortPreferences(private val context: Context) {
         get() = if (!languageFirst) null
             else AudioPreferences(context).let { audio ->
                 SourceLanguageOrder(audio.language, SubtitlePreferences(context).language, if (audio.englishFallback) "en" else "",
-                    second = audio.secondLanguage.takeIf { audio.language.isNotEmpty() }.orEmpty())
+                    // Latino first, then the other Spanish links, unless the viewer chose a second language.
+                    second = audio.secondLanguage.takeIf { audio.language.isNotEmpty() }.orEmpty()
+                        .ifEmpty { if (audio.language == dev.pov.tv.data.SourceLanguages.LATIN_SPANISH) "es" else "" })
             }.takeIf { it.active }
     private val languageLabel: String?
         get() = languages?.let { order -> if (order.audio.isNotEmpty()) L10n.tr(R.string.t_x_first, "%1\$s first", languageName(order.audio)) else L10n.tr(R.string.t_x_subtitles_first, "%1\$s subtitles first", languageName(order.subtitle)) }
@@ -81,7 +83,7 @@ internal class SourceSortPreferences(private val context: Context) {
 
     companion object {
         private const val EDIT_WIDTH = 52
-        private fun languageName(code: String) = SubtitlePreferences.LANGUAGES.firstOrNull { it.first == code }?.second ?: code
+        private fun languageName(code: String) = (AudioPreferences.LANGUAGES + SubtitlePreferences.LANGUAGES).firstOrNull { it.first == code }?.second ?: code
 
         /**
          * Link sorting, like Debrid services: Library, Language, Quality and Size as rows in their order. ▲ and ▼ move a row,

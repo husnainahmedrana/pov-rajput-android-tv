@@ -70,6 +70,7 @@ class LinkDebrids internal constructor(
             "alldebrid" -> allDebrid(key, hash)
             "premiumize" -> premiumize(key, hash)
             "debridlink" -> debridLink(key, hash)
+            "deepbrid" -> deepbrid(key, hash)
             else -> error(L10n.tr(R.string.t_unknown_debrid_service, "Unknown debrid service."))
         } ?: return null
         val eligible = try { EpisodeFilename.choices(files.map { VideoCandidate(it.id, it.name, it.size) }, source.title, identity) }
@@ -102,6 +103,7 @@ class LinkDebrids internal constructor(
         "alldebrid" -> allDebridData(transport.get("$ALL_DEBRID/v4/user?agent=$AGENT", bearer(key))).optJSONObject("user") != null
         "premiumize" -> json(transport.get(premiumizeUrl("account/info", key), emptyMap())).optString("status") == "success"
         "debridlink" -> json(transport.get("$DEBRID_LINK/account/infos", bearer(key))).optBoolean("success")
+        "deepbrid" -> json(transport.get("$DEEPBRID/user", bearer(key))).let { deepbridOk(it) && it.length() > 0 }
         else -> false
     }
 
@@ -211,6 +213,89 @@ class LinkDebrids internal constructor(
         return files.mapIndexed { index, file -> DebridFile(index.toLong(), file.optString("name"), file.optLong("size"), file.optString("downloadUrl")) }
     }
 
+    /**
+     * Deepbrid (experimental): no cache API, so the magnet is added and read for a few seconds; a cached torrent is
+     * "downloaded" at once and lists one short link per file. Those links carry no names and redirect to the file, so
+     * each is followed (the key goes only to Deepbrid's own host) to learn its name and size. A torrent that isn't ready,
+     * or fails, is removed again unless it was already on the account.
+     */
+    private fun deepbrid(key: String, hash: String): List<DebridFile>? {
+        val auth = bearer(key)
+        val had = deepbridIds(auth)
+        val added = json(transport.form("POST", "$DEEPBRID/torrents/add", auth, listOf("magnet" to magnet(hash))))
+        if (!deepbridOk(added)) return null
+        val id = sequenceOf(added.opt("id"), added.optJSONObject("torrent")?.opt("id"))
+            .mapNotNull { value -> value?.toString()?.takeIf { it.matches(Regex("[A-Za-z0-9]{1,40}")) && it != "0" } }.firstOrNull()
+            ?: return null
+        fun remove() { if (id !in had) runCatching { transport.delete("$DEEPBRID/torrents/delete/${Net.encode(id)}", auth) } }
+        val links = try {
+            waitFor(DEEPBRID_WAIT_MS) {
+                val info = json(transport.get("$DEEPBRID/torrents/info?id=${Net.encode(id)}", auth))
+                when (info.optString("status")) {
+                    "downloaded" -> info.optJSONArray("links")?.let { array -> (0 until array.length()).map { array.optString(it) }.filter(::isHttps) }
+                        ?.takeIf { it.isNotEmpty() }
+                    "error", "dead", "magnet_error", "virus" -> emptyList()
+                    else -> null
+                }
+            }
+        } catch (error: InterruptedException) { remove(); throw error }
+        if (links.isNullOrEmpty()) { remove(); return null }
+        return links.take(60).mapIndexedNotNull { index, link ->
+            transport.follow(link, if (isDeepbridHost(link)) auth else emptyMap())?.let { (url, name, size) -> DebridFile(index.toLong(), name, size, url) }
+        }.takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * Deepbrid Usenet: uploads an NZB file (never the indexer link) and returns the files Deepbrid serves from it.
+     * Deepbrid reads the NZB at once and streams straight out of the archive, so there is no waiting; a file it can't
+     * serve that way (missing volumes, a compressed archive) comes without a link and is left out.
+     */
+    fun deepbridNzb(nzb: ByteArray, name: String): List<DebridFile> {
+        val key = credential("deepbrid")
+        val response = json(transport.upload("$DEEPBRID/usenet/add", bearer(key), "nzb_file", "${name.take(150)}.nzb", nzb))
+        check(deepbridOk(response)) {
+            response.optString("message").takeIf { it.isNotBlank() && it != "OK" }?.let { "Deepbrid: $it" }
+                ?: L10n.tr(R.string.t_deepbrid_could_not_read_this_nzb, "Deepbrid couldn't read this NZB. Choose another link.")
+        }
+        val files = response.optJSONArray("files") ?: return emptyList()
+        return (0 until files.length()).mapNotNull { files.optJSONObject(it) }.mapIndexedNotNull { index, file ->
+            val link = file.optString("download_url")
+            if (!isHttps(link)) null else DebridFile(index.toLong(), file.optString("filename"), file.optLong("filesize"), link)
+        }
+    }
+
+    /** A Deepbrid short link (Usenet or torrent) followed to the file's own address; the key goes only to Deepbrid. */
+    fun deepbridFileUrl(link: String): String {
+        val key = credential("deepbrid")
+        return transport.follow(link, if (isDeepbridHost(link)) bearer(key) else emptyMap())?.first?.takeIf(::isHttps)
+            ?: throw IllegalStateException(L10n.tr(R.string.t_deepbrid_did_not_return_a_playable, "Deepbrid did not return a playable link."))
+    }
+
+    /**
+     * Adds an uncached torrent to Deepbrid and leaves it downloading there (the viewer asked for it). Playing the link
+     * again once Deepbrid has it finds it ready, and it is never removed by a later check because it is the account's.
+     */
+    fun deepbridKeep(hash: String) {
+        val value = hash.lowercase(Locale.ROOT)
+        require(HASH.matches(value)) { "This source has no valid torrent hash." }
+        val added = json(transport.form("POST", "$DEEPBRID/torrents/add", bearer(credential("deepbrid")), listOf("magnet" to magnet(value))))
+        check(deepbridOk(added)) {
+            added.optString("message").takeIf { it.isNotBlank() && it != "OK" }?.let { "Deepbrid: $it" }
+                ?: L10n.tr(R.string.t_deepbrid_did_not_take_this_torrent, "Deepbrid did not take this torrent.")
+        }
+    }
+
+    private fun deepbridIds(auth: Map<String, String>): Set<String> = try {
+        val list = json(transport.get("$DEEPBRID/torrents/info", auth))
+        list.keys().asSequence().mapNotNull { list.optJSONObject(it)?.opt("id")?.toString() }.toSet()
+    } catch (_: Exception) { emptySet() }
+
+    /** Every Deepbrid answer carries "error": 0 (or nothing) on success. */
+    private fun deepbridOk(response: JSONObject): Boolean = when (val error = response.opt("error")) {
+        null, JSONObject.NULL, "", false -> true
+        else -> error.toString().toIntOrNull() == 0
+    }
+
     private fun <T : Any> waitFor(limitMs: Long, attempt: () -> T?): T? {
         val deadline = now() + limitMs * 1_000_000
         while (true) {
@@ -243,9 +328,9 @@ class LinkDebrids internal constructor(
     }
 
     companion object {
-        val IDS = listOf("realdebrid", "alldebrid", "premiumize", "debridlink")
+        val IDS = listOf("realdebrid", "alldebrid", "premiumize", "debridlink", "deepbrid")
         /** Services that can only tell whether a link is cached by trying it. */
-        val CHECK_ON_PLAY = setOf("realdebrid", "alldebrid", "debridlink")
+        val CHECK_ON_PLAY = setOf("realdebrid", "alldebrid", "debridlink", "deepbrid")
         /** How many links a check-on-play attempt tries before giving up. */
         const val CHECK_LIMIT = 7
         /**
@@ -259,6 +344,13 @@ class LinkDebrids internal constructor(
         private const val ALL_DEBRID = "https://api.alldebrid.com"
         private const val PREMIUMIZE = "https://www.premiumize.me/api"
         private const val DEBRID_LINK = "https://debrid-link.com/api/v2"
+        /** Deepbrid's REST API (key from deepbrid.com/devices, sent as a Bearer token). */
+        private const val DEEPBRID = "https://www.deepbrid.com/api/v1"
+        /** A cached torrent shows as downloaded within a few seconds of the add. */
+        private const val DEEPBRID_WAIT_MS = 6_000L
+        internal fun isDeepbridHost(link: String) = try {
+            java.net.URI(link).host?.lowercase()?.let { it == "deepbrid.com" || it.endsWith(".deepbrid.com") } == true
+        } catch (_: Exception) { false }
         private const val AGENT = "povrajput"
         private val HASH = Regex("[a-f0-9]{40}")
         private val TORRENT_ID = Regex("[A-Za-z0-9_-]{1,64}")
@@ -276,6 +368,14 @@ internal interface LinkTransport {
     fun delete(url: String, headers: Map<String, String>): String
     fun form(method: String, url: String, headers: Map<String, String>, fields: List<Pair<String, String>>): String
     fun json(method: String, url: String, headers: Map<String, String>, body: JSONObject): String
+    /**
+     * Follows a short download link's redirects (sending [headers] only to the first host) and returns the final HTTPS
+     * address with the file's name and size, or null when it leads nowhere usable. Reads no more than the headers.
+     */
+    fun follow(url: String, headers: Map<String, String>): Triple<String, String, Long>? = LinkFollower.follow(url, headers)
+    /** A form post with one file part (an NZB for Deepbrid). */
+    fun upload(url: String, headers: Map<String, String>, field: String, fileName: String, bytes: ByteArray): String =
+        Net.multipart(url, emptyMap(), headers, mapOf(field to (fileName to bytes))).toString()
 
     companion object {
         val NET = object : LinkTransport {
@@ -288,6 +388,40 @@ internal interface LinkTransport {
 }
 
 data class DebridFile(val id: Long, val name: String, val size: Long, val link: String)
+
+/** Redirect walking for [LinkTransport.follow]: a ranged GET of one byte at each hop, so no file is downloaded. */
+internal object LinkFollower {
+    private val FILENAME = Regex("filename\\*?=(?:UTF-8'')?\"?([^\";]+)\"?", RegexOption.IGNORE_CASE)
+
+    fun follow(start: String, headers: Map<String, String>): Triple<String, String, Long>? {
+        var address = start
+        val firstHost = runCatching { java.net.URL(start).host }.getOrNull() ?: return null
+        repeat(10) {
+            val url = java.net.URL(address)
+            if (url.protocol != "https") return null
+            val connection = (url.openConnection() as java.net.HttpURLConnection).apply {
+                instanceFollowRedirects = false; connectTimeout = 15_000; readTimeout = 15_000
+                setRequestProperty("Range", "bytes=0-0")
+                if (url.host == firstHost) headers.forEach { (key, value) -> setRequestProperty(key, value) }
+            }
+            try {
+                val code = connection.responseCode
+                if (code in 300..399) {
+                    address = java.net.URL(url, connection.getHeaderField("Location") ?: return null).toString()
+                    return@repeat
+                }
+                if (code !in 200..299) return null
+                val size = connection.getHeaderField("Content-Range")?.substringAfterLast('/')?.toLongOrNull()
+                    ?: connection.getHeaderField("Content-Length")?.toLongOrNull() ?: 0L
+                val named = FILENAME.find(connection.getHeaderField("Content-Disposition").orEmpty())?.groupValues?.get(1)
+                val raw = named ?: url.path.substringAfterLast('/')
+                val name = runCatching { java.net.URLDecoder.decode(raw, "UTF-8") }.getOrDefault(raw)
+                return Triple(address, name.ifBlank { "video" }, size)
+            } finally { connection.disconnect() }
+        }
+        return null
+    }
+}
 
 /** Real-Debrid is refusing every add on the account for a while (its 451 on names it otherwise takes). */
 class RealDebridPausedException(message: String) : IllegalStateException(message)
