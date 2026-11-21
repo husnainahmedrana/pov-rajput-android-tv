@@ -42,7 +42,7 @@ class WeTrakrInstrumentation : Instrumentation() {
             report.putBoolean("live_library_and_likes_read", true)
             report.putBoolean("home_uses_wetrakr", true)
             if (SecureStore(targetContext).get("wetrakr.home_liked_opt_in") != "true") {
-                check(onMain { views(activity!!.window.decorView).none { it.tag == "wetrakr-home-liked" } })
+                check(onMain { views(activity!!.window.decorView).none { (it.tag as? String)?.startsWith("wetrakr-home-liked") == true } })
                 report.putBoolean("home_liked_rows_disabled_by_default", true)
             }
             passed = true
@@ -108,7 +108,7 @@ class WeTrakrInstrumentation : Instrumentation() {
                     MainActivity::class.java.getDeclaredMethod("homeLikedLists", Int::class.javaPrimitiveType).apply { isAccessible = true }.invoke(main, id)
                 }
                 check(likedRequests.get() == 0)
-                check(onMain { views(main.window.decorView).none { it.tag == "wetrakr-home-liked" } })
+                check(onMain { views(main.window.decorView).none { (it.tag as? String)?.startsWith("wetrakr-home-liked") == true } })
                 onMain { method("settings").invoke(main) }
                 check(onMain { views(main.window.decorView).any { it.contentDescription?.toString() == "WeTrakr liked lists on Home · Off" } })
                 report.putBoolean("home_likes_default_off_without_api_requests", true)

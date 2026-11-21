@@ -33,16 +33,26 @@ import java.util.concurrent.Executors
 class MainActivity : Activity() {
     private lateinit var store: SecureStore
     private lateinit var torbox: TorBoxApi
-    private lateinit var weTrakrApi: WeTrakrApi
-    private lateinit var simklApi: SimklApi
-    private lateinit var weTrakrOutbox: PlaybackStore
-    private lateinit var simklOutbox: PlaybackStore
-    /** The tracker chosen in Settings (WeTrakr or Simkl). Every tracking feature below goes through it. */
-    private val wetrakr: Tracker get() = if (simklChosen) simklApi else weTrakrApi
-    private val wetrakrOutbox: PlaybackStore get() = if (simklChosen) simklOutbox else weTrakrOutbox
+    private val trackerApis = java.util.concurrent.ConcurrentHashMap<String, Tracker>()
+    private val trackerOutboxes = java.util.concurrent.ConcurrentHashMap<String, PlaybackStore>()
+    /** The tracker chosen in Settings (WeTrakr, Trakt or Simkl). Every tracking feature below goes through it. */
+    private fun trackerApi(id: String) = trackerApis.computeIfAbsent(id) { Trackers.create(store, id) }
+    private fun trackerOutbox(id: String) = trackerOutboxes.computeIfAbsent(id) { PlaybackStore(this, Trackers.outboxKey(id)) }
+    private val wetrakr: Tracker get() = trackerApi(trackerChoice)
+    private val wetrakrOutbox: PlaybackStore get() = trackerOutbox(trackerChoice)
+    /** Signed-in, switched-on trackers other than the main one that also keep watch history. */
+    private fun historyMirrors(): List<Tracker> = Trackers.historyTargets(store).filter { it != trackerChoice }.map(::trackerApi).filter { runCatching { it.connected() }.getOrDefault(false) }
+    /** After the main tracker accepted a watched mark, the others get it too (best effort, never shown as an error). */
+    private fun mirrorHistory(write: (Tracker) -> Unit) {
+        val mirrors = historyMirrors(); if (mirrors.isEmpty()) return
+        worker.execute { mirrors.forEach { tracker -> try { write(tracker) } catch (_: Exception) { } } }
+    }
+    /** Trackers with lists whose liked lists Home shows: the main one first, then any other signed-in one. */
+    private fun likedListSources(): List<Tracker> = (listOf(trackerChoice) + Trackers.ALL.filter { it != trackerChoice }).map(::trackerApi)
+        .filter { it.supportsLists && runCatching { it.connected() }.getOrDefault(false) }
     /** Read once (encrypted settings decrypt on every read) and updated when the service changes. */
-    private var simklChosen = false
-    private fun trackerId() = if (simklChosen) Trackers.SIMKL else Trackers.WETRAKR
+    @Volatile private var trackerChoice = Trackers.WETRAKR
+    private fun trackerId() = trackerChoice
     /** The account's watched history behind the ✓ badges on cards and episodes. */
     private var watched = WatchedState.EMPTY
     private val watchedCache by lazy { WatchedCache(java.io.File(filesDir, "watched.json")) }
@@ -50,6 +60,7 @@ class MainActivity : Activity() {
     /** Re-reads the Continue Watching row on Home in place; set while that row exists. */
     /** Refills Home's Continue Watching row; [force] refills it even while it has focus (just back from the player). */
     private var refreshContinue: ((force: Boolean) -> Unit)? = null
+    private var continueRefreshedAt = 0L
     /** Something played since the row was last refilled: Home refreshes it when it comes back on screen. */
     private var continueStale = false
     private var playerClosedAt = 0L
@@ -78,6 +89,8 @@ class MainActivity : Activity() {
     private val navigationViews = mutableMapOf<String, View>()
     private var destination = "home"
     private var isHome = false
+    /** Home and the Movies/Shows tabs: the focused title fills the pinned feature (synopsis, backdrop, trailer). */
+    private var featurePage = false
     // Debug capture uses public discovery only; no account state or viewing history is shown.
     private var publicPreview = false
     private lateinit var anime: AnimeCatalogApi
@@ -164,7 +177,7 @@ class MainActivity : Activity() {
     private var railExpanded = false
     private var railAnimator: ValueAnimator? = null
     private val railLabels = mutableListOf<View>()
-    private val detailsTrailerChrome by lazy { DetailsTrailerChrome({ !isHome && trailerPermitted() }, ::hideDetailsTrailerChrome, ::showDetailsTrailerChrome) }
+    private val detailsTrailerChrome by lazy { DetailsTrailerChrome({ !featurePage && trailerPermitted() }, ::hideDetailsTrailerChrome, ::showDetailsTrailerChrome) }
     private val fadedTrailerViews = java.util.IdentityHashMap<View, Float>()
     private var trailerBackdropY = 0f
     private var trailerFadeGeneration = -1
@@ -206,9 +219,8 @@ class MainActivity : Activity() {
         // Saved accounts the device can no longer decrypt (its Keystore key was lost) would crash every read below.
         val lostAccounts = runCatching { store.recoverUnreadable() }.getOrDefault(0)
         if (lostAccounts > 0) window.decorView.post { toast(getString(R.string.t_saved_accounts_unreadable, lostAccounts)) }
-        metadataSource = MetadataSource.fromJson(store.get(MetadataSource.KEY))?.takeIf { store.get(METADATA_ON) != "false" }; torbox = TorBoxApi(store); weTrakrApi = WeTrakrApi(store); simklApi = SimklApi(store)
-        weTrakrOutbox = PlaybackStore(this, Trackers.outboxKey(Trackers.WETRAKR)); simklOutbox = PlaybackStore(this, Trackers.outboxKey(Trackers.SIMKL))
-        simklChosen = Trackers.selected(store) == Trackers.SIMKL
+        metadataSource = MetadataSource.fromJson(store.get(MetadataSource.KEY))?.takeIf { store.get(METADATA_ON) != "false" }; torbox = TorBoxApi(store)
+        trackerChoice = Trackers.selected(store)
         resolver = SourceResolver(store, torbox); history = PlaybackStore(this)
         StreamChoices.searcher = { identity -> searchStreamsInBackground(identity, delayMs = 0) }
         // The player's Info / Episodes panels read the same cached details and TMDB key as the details page.
@@ -311,7 +323,7 @@ class MainActivity : Activity() {
         authorization?.takeIf { it.isShowing }?.pollNow()
         checkNewerBackup()
         if (playerShown) { playerShown = false; continueStale = true; playerClosedAt = android.os.SystemClock.elapsedRealtime(); scheduleContinueRefresh() }
-        if (!publicPreview && ::store.isInitialized && android.os.SystemClock.elapsedRealtime() - watchedCheckedAt > 60_000) refreshWatched()
+        if (!publicPreview && ::store.isInitialized && android.os.SystemClock.elapsedRealtime() - watchedCheckedAt > 10 * 60_000) refreshWatched()
         if (::shellRoot.isInitialized) { updateMiniPlayer(); refreshHeroTrailer() }
         if (BackHoldGesture.settingsRequested && ::shellRoot.isInitialized) { BackHoldGesture.settingsRequested = false; openSettingsAnywhere() }
         PlayerShowInfo.pickedEpisode?.let { picked ->
@@ -644,7 +656,7 @@ class MainActivity : Activity() {
         }
         // The flix layout keeps a full-screen living backdrop behind every row.
         shellRoot.addView(heroBackdrop, FrameLayout.LayoutParams(-1, if (flix) -1 else dp(325)))
-        scroller = TvScrollView(this) { !(flix && isHome) }.apply { isFillViewport = true; isVerticalScrollBarEnabled = false; clipChildren = false; clipToPadding = false }
+        scroller = TvScrollView(this) { !(flix && featurePage) }.apply { isFillViewport = true; isVerticalScrollBarEnabled = false; clipChildren = false; clipToPadding = false }
         body = CullingLinearLayout(this, resources.displayMetrics.heightPixels / 2).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
         scroller.addView(body)
         focusController = TvFocusController(body, scroller, ::placeFlixRow) {
@@ -817,7 +829,7 @@ class MainActivity : Activity() {
     private fun restorePage(cached: RetainedPage) {
         homeTrailerFocus = null
         heroTrailer?.stop()
-        generation = cached.generation; resolvingGeneration = null; isHome = cached.home; flixScrollTarget = -1
+        generation = cached.generation; resolvingGeneration = null; isHome = cached.home; featurePage = cached.home; flixScrollTarget = -1
         focusController.reset(); body.removeAllViews()
         body.animate().cancel(); body.alpha = 1f; body.translationY = 0f
         body.setPadding(cached.padding[0], cached.padding[1], cached.padding[2], cached.padding[3])
@@ -878,7 +890,7 @@ class MainActivity : Activity() {
         if (!renderingSearch) cancelAutoplayCountdown()
         homeTrailerFocus = null
         heroTrailer?.stop()
-        generation = ++pageSequence; resolvingGeneration = null; isHome = false; wantsContentFocus = true; flixScrollTarget = -1
+        generation = ++pageSequence; resolvingGeneration = null; isHome = false; featurePage = false; wantsContentFocus = true; flixScrollTarget = -1
         featureHandler.removeCallbacksAndMessages(null); featureShown = null; backdropArt.alpha = 1f
         bottomAligner?.let(body::removeOnLayoutChangeListener); bottomAligner = null
         for (index in 0 until body.childCount) body.getChildAt(index).animate().cancel()
@@ -908,7 +920,7 @@ class MainActivity : Activity() {
             else { wantsContentFocus = true; focusAfterRender(generation) }
             return
         }
-        val id = page(""); isHome = true; body.setPadding(0, 0, 0, contentBottomPadding())
+        val id = page(""); isHome = true; featurePage = true; body.setPadding(0, 0, 0, contentBottomPadding())
         localContinueRow = null; homeRevision = pageRevision()
         val remoteHome = !publicPreview && wetrakr.connected()
         val recent = if (publicPreview || remoteHome) emptyList() else history.continueWatching()
@@ -1228,10 +1240,13 @@ class MainActivity : Activity() {
         }
         // The last list is kept encrypted with the account revision, so the row shows instantly on launch.
         val revision = wetrakr.accountRevision()
-        refreshContinue = { force ->
+        refreshContinue = refresh@{ force ->
             val tracker = wetrakr
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (now - continueRefreshedAt < 6_000) return@refresh
+            continueRefreshedAt = now
             worker.execute {
-                val fresh = try { tracker.refreshCaches(); tracker.continueWatching() } catch (_: Exception) { null }
+                val fresh = try { tracker.refreshContinueWatching(); tracker.continueWatching() } catch (_: Exception) { null }
                 runOnUiThread {
                     if (fresh == null || isDestroyed || tracker.accountRevision() != revision || !row.isAttachedToWindow) return@runOnUiThread
                     TvContinueWatching.rememberRemote(this,revision,fresh)
@@ -1253,13 +1268,13 @@ class MainActivity : Activity() {
 
     private fun homeLikedLists(id: Int) {
         if (store.get("wetrakr.home_liked_opt_in") != "true") return
-        likedLists(id, true)
+        likedListSources().forEach { likedLists(id, true, it) }
     }
 
-    private fun likedLists(id: Int, home: Boolean) {
-        val host = column().apply { tag = if (home) "wetrakr-home-liked" else "wetrakr-section-liked" }
+    private fun likedLists(id: Int, home: Boolean, wetrakr: Tracker = this.wetrakr) {
+        val host = column().apply { tag = if (home) "wetrakr-home-liked:${wetrakr.name}" else "wetrakr-section-liked" }
         body.addView(host, margin(-1, -2, top = 10))
-        if (flix) { flixLikedLists(id, host); return }
+        if (flix) { flixLikedLists(id, host, wetrakr); return }
         read(id, { wetrakr.likedLists() }) { lists ->
             if (lists.isEmpty() && !home) host.addView(text(getString(R.string.t_no_liked_lists_on_x_yet, wetrakr.name), 13, muted))
             if (lists.isNotEmpty()) {
@@ -1282,11 +1297,11 @@ class MainActivity : Activity() {
      * Flix: every liked list becomes an ordinary shelf (title, cards, "See all" for the whole list). Each shelf is
      * its own page section so it tucks away under the feature like the others; slots keep the lists' order.
      */
-    private fun flixLikedLists(id: Int, anchor: LinearLayout) {
+    private fun flixLikedLists(id: Int, anchor: LinearLayout, wetrakr: Tracker = this.wetrakr) {
         read(id, { wetrakr.likedLists() }) { lists ->
             var index = body.indexOfChild(anchor)
             lists.forEach { (listId, title) ->
-                val slot = column().apply { tag = "wetrakr-liked:$listId" }
+                val slot = column().apply { tag = "wetrakr-liked:${wetrakr.name}:$listId" }
                 body.addView(slot, ++index, margin(-1, -2))
                 // A liked list its owner made private or deleted answers 401/403 while the account is fine:
                 // drop that shelf instead of a page-wide "authorization expired" error.
@@ -1446,7 +1461,8 @@ class MainActivity : Activity() {
         body.postDelayed(::reveal, 1_200)
     }
 
-    private fun streamingHero(item: MediaItemData, showAction: Boolean, rotation: List<MediaItemData> = emptyList(), compact: Boolean = false, synopsisLines: Int = 0) {
+    private fun streamingHero(item: MediaItemData, showAction: Boolean, rotation: List<MediaItemData> = emptyList(), compact: Boolean = false, synopsisLines: Int = 0, at: Int = -1,
+                              extra: Pair<String, () -> Unit>? = null) {
         val layout = theme.layout
         val height = if (!showAction) 250 else if (compact) COMPACT_HERO_HEIGHT else layout.heroHeightDp
         val frame = (if (showAction && DeviceLayout.tv) LayoutBoundaryFrame(this) else FrameLayout(this)).apply { clipChildren = false; tag = "featured-hero"; setTag(R.id.pov_feature_item, item) }
@@ -1494,17 +1510,22 @@ class MainActivity : Activity() {
             }, margin(if (DeviceLayout.phone) 108 else 122, 38, right = if (DeviceLayout.phone) 8 else 12))
             actions.addView(button(getString(R.string.t_more_info)) { val current = shown(); navigate { details(current) } }.apply { gravity = Gravity.CENTER; maxLines = 1; minWidth = dp(if (DeviceLayout.phone) 124 else 136) },
                 margin(-2, 38, right = if (DeviceLayout.phone) 8 else 12))
-            actions.addView(button(getString(R.string.t_my_list)) {
+            // The phone has room for three buttons: there the tabs' filter takes My list's place.
+            if (extra == null || DeviceLayout.tv) actions.addView(button(getString(R.string.t_my_list)) {
                 val item = shown()
                 val tracker = weTrakrClient()
                 if (tracker.connected()) load(generation, { tracker.setWatchlist(PlaybackIdentity(item.imdbId, item.type, item.title), true) }) { toast(getString(R.string.t_added_to_your_x_watchlist, tracker.name)) }
                 else { toast(getString(R.string.t_connect_a_tracker_to_save_titles)); navigate { weTrakrPage() } }
             }.apply { gravity = Gravity.CENTER }, margin(if (DeviceLayout.phone) 108 else 122, 38))
+            extra?.let { (label, action) ->
+                actions.addView(button(label, action).apply { gravity = Gravity.CENTER; maxLines = 1; tag = "feature-filter" },
+                    margin(-2, 38).apply { leftMargin = dp(if (DeviceLayout.phone) 8 else 12) })
+            }
             if (DeviceLayout.phone) copy.addView(actions, margin(-1, 38, top = 14))
             else frame.addView(actions, FrameLayout.LayoutParams(-2, dp(38), Gravity.BOTTOM or Gravity.START).apply { bottomMargin = dp(26) })
         }
         // Details pages grow to fit the complete synopsis, as does the phone's Home feature.
-        body.addView(frame, margin(-1, if (showAction && DeviceLayout.tv) height else -2).apply { if (!showAction || DeviceLayout.phone) bottomMargin = dp(14) })
+        body.addView(frame, at, margin(-1, if (showAction && DeviceLayout.tv) height else -2).apply { if (!showAction || DeviceLayout.phone) bottomMargin = dp(14) })
         renderFeature(frame, item)
         if (!showAction) {
             val meta = frame.findViewWithTag<TextView>("feature-meta")
@@ -1637,7 +1658,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun featureHero(): FrameLayout? = if (isHome) body.findViewWithTag("featured-hero") else null
+    private fun featureHero(): FrameLayout? = if (featurePage) body.findViewWithTag("featured-hero") else null
     // TMDB backdrops use the 780 px file the cards already load, so opening a title reuses the card's image.
     private fun backdropFor(item: MediaItemData) = item.background.replace("/t/p/w1280/", "/t/p/w780/").ifBlank {
         if (item.imdbId.matches(Regex("tt\\d+"))) "https://images.metahub.space/background/medium/${item.imdbId}/img" else item.poster
@@ -1675,7 +1696,7 @@ class MainActivity : Activity() {
             .filter(String::isNotBlank).joinToString("   ")
         frame.findViewWithTag<TextView>("feature-description").apply { text = item.description; visibility = if (item.description.isBlank()) View.GONE else View.VISIBLE }
         // A longer description may now reach the shelf above the focused one.
-        if (isHome && flixScrollTarget > 0) frame.post { if (isHome && flixScrollTarget > 0) fadeShelvesAbove(flixScrollTarget + featureCopyBottom()) }
+        if (featurePage && flixScrollTarget > 0) frame.post { if (featurePage && flixScrollTarget > 0) fadeShelvesAbove(flixScrollTarget + featureCopyBottom()) }
     }
 
     private var warmedUp = false
@@ -1708,7 +1729,7 @@ class MainActivity : Activity() {
 
     private fun scheduleFeature(item: MediaItemData) {
         prefetchDetails(item)
-        if (!flix || !isHome) return
+        if (!flix || !featurePage) return
         heroTrailer?.stop()
         homeTrailerFocus = currentFocus
         featureHandler.removeCallbacksAndMessages(null)
@@ -1747,26 +1768,26 @@ class MainActivity : Activity() {
         if (!flix || !DeviceLayout.tv || !::heroBackdrop.isInitialized) return null
         if (trailerHero() == null || !heroBackdrop.isShown || heroBackdrop.width == 0 || heroBackdrop.height == 0) return null
         if (!heroBackdrop.getGlobalVisibleRect(android.graphics.Rect())) return null
-        if (isHome) {
+        if (featurePage) {
             // One wide moving hero, weighted to the right and kept near the visible shelf line.
             val height = minOf(dp(FLIX_ROW_LINE + 32), heroBackdrop.height)
             return android.graphics.Rect(0, 0, heroBackdrop.width, height)
         }
         return android.graphics.Rect(0, 0, heroBackdrop.width, heroBackdrop.height)
     }
-    private fun trailerPermitted() = heroTrailersEnabled() && (!isHome || (homeTrailerFocus != null && currentFocus === homeTrailerFocus)) && resumed && hasWindowFocus() && trailerHero() != null && flix &&
+    private fun trailerPermitted() = heroTrailersEnabled() && (!featurePage || (homeTrailerFocus != null && currentFocus === homeTrailerFocus)) && resumed && hasWindowFocus() && trailerHero() != null && flix &&
         !InAppPlaybackSession.hasActive() && !isDestroyed && splash == null && navigationViews.values.none { it.hasFocus() }
 
     private fun refreshHeroTrailer() {
         if (!trailerPermitted()) { heroTrailer?.stop(); return }
-        val item = (if (isHome) featureShown else null) ?: trailerHero()?.getTag(R.id.pov_feature_item) as? MediaItemData ?: return
+        val item = (if (featurePage) featureShown else null) ?: trailerHero()?.getTag(R.id.pov_feature_item) as? MediaItemData ?: return
         scheduleHeroTrailer(item)
     }
     private fun onHeroTrailerPlaying(playing: Boolean) {
         detailsTrailerChrome.playbackChanged(playing)
         if (!::backdropArt.isInitialized) return
         backdropArt.animate().cancel()
-        if (isHome && playing) backdropArt.animate().alpha(0f).setDuration(450).start()
+        if (featurePage && playing) backdropArt.animate().alpha(0f).setDuration(450).start()
         else backdropArt.alpha = 1f
     }
     private fun scheduleHeroTrailer(item: MediaItemData) {
@@ -1786,7 +1807,7 @@ class MainActivity : Activity() {
         fun reveal(loaded: Boolean) {
             if (!loaded || featureShown != item) return
             backdropArt.animate().cancel()
-            backdropArt.alpha = if (isHome && heroTrailer?.status == "playing") 0f else 1f
+            backdropArt.alpha = if (featurePage && heroTrailer?.status == "playing") 0f else 1f
         }
         image(backdropArt, address, keep = true, feature = true) { loaded ->
             if (loaded) reveal(true)
@@ -1796,7 +1817,7 @@ class MainActivity : Activity() {
 
     /** Flix home: focused shelves rise to a fixed line beneath the pinned feature copy. */
     private fun placeFlixRow(view: View): Boolean {
-        if (!flix || !isHome) return false
+        if (!flix || !featurePage) return false
         val hero = featureHero() ?: return false
         val actions = hero.findViewWithTag<View>("feature-actions")
         if (within(view, hero)) {
@@ -1810,7 +1831,15 @@ class MainActivity : Activity() {
         }
         var strip: View? = view
         while (strip != null && strip !is HorizontalScrollView) strip = strip.parent as? View
-        if (strip !is HorizontalScrollView) return false
+        if (strip !is HorizontalScrollView) {
+            val gridRow = (view.parent as? View)?.takeIf { it.tag == "media-grid-row" } ?: return false
+            actions?.animate()?.alpha(0f)?.setDuration(160)?.start()
+            val target = (topInBody(gridRow) - dp(FLIX_ROW_LINE)).coerceIn(0, (body.height - scroller.height).coerceAtLeast(0))
+            flixScrollTarget = target
+            fadeShelvesAbove(target + featureCopyBottom())
+            scrollHomeTo(target)
+            return true
+        }
         val row = strip.getChildAt(0) as? ViewGroup ?: return false
         var card = view
         while (card.parent !== row) card = card.parent as? View ?: return false
@@ -2423,10 +2452,40 @@ class MainActivity : Activity() {
         val chosen = genre.takeIf { it in genres }.orEmpty()
         val offsets = "$type|$chosen|$order"
         if (skip == 0 && query.isBlank()) catalogOffsets[offsets]?.clear()
-        val id = page(if (query.isBlank()) if (type == "movie") getString(R.string.t_movies) else getString(R.string.t_tv_shows) else getString(R.string.t_results_for_x, query), getString(R.string.t_find_something_worth_your_evening))
+        // Streaming layout: like Home, a pinned feature shows the focused title's synopsis, backdrop and trailer.
+        val withFeature = flix && query.isBlank() && !publicPreview
+        val id = if (withFeature) page("").also { featurePage = true; body.setPadding(0, 0, 0, contentBottomPadding()) }
+            else page(if (query.isBlank()) if (type == "movie") getString(R.string.t_movies) else getString(R.string.t_tv_shows) else getString(R.string.t_results_for_x, query), getString(R.string.t_find_something_worth_your_evening))
         fun open(nextGenre: String = chosen, nextSort: String = order) = catalogPage(type, genre = nextGenre, sort = nextSort)
         fun chip(label: String, selected: Boolean, action: () -> Unit) = button(if (selected) "●  $label" else label, action)
-        if (query.isBlank()) {
+        val sortLabel = sorts.firstOrNull { it.first == order }?.second.orEmpty()
+        val genreLabel = if (chosen.isEmpty()) getString(R.string.t_all_genres) else UiText.of(chosen)
+        /** Sort, genre, search and the previous page, from the feature's one filter button. */
+        fun filters() {
+            val options = mutableListOf<Pair<String, () -> Unit>>(
+                getString(R.string.t_sort_by_x, sortLabel) to {
+                    AlertDialog.Builder(this).setTitle(getString(R.string.t_sort_by))
+                        .setSingleChoiceItems(sorts.map { it.second }.toTypedArray(), sorts.indexOfFirst { it.first == order }) { dialog, index ->
+                            dialog.dismiss(); if (sorts[index].first != order) open(nextSort = sorts[index].first)
+                        }.setNegativeButton(getString(R.string.t_cancel), null).show()
+                },
+                getString(R.string.t_genre_x, genreLabel) to {
+                    val names = listOf("") + genres
+                    AlertDialog.Builder(this).setTitle(getString(R.string.t_genres))
+                        .setSingleChoiceItems(names.map { if (it.isEmpty()) getString(R.string.t_all_genres) else UiText.of(it) }.toTypedArray(), names.indexOf(chosen).coerceAtLeast(0)) { dialog, index ->
+                            dialog.dismiss(); if (names[index] != chosen) open(nextGenre = names[index])
+                        }.setNegativeButton(getString(R.string.t_cancel), null).show()
+                },
+                getString(R.string.t_search_movies_tv_2) to { search() })
+            if (skip > 0) options += getString(R.string.t_previous_page) to {
+                catalogPage(type, skip = catalogOffsets[offsets]?.removeLastOrNull() ?: 0, genre = chosen, sort = order)
+            }
+            AlertDialog.Builder(this).setTitle(if (type == "movie") getString(R.string.t_movies) else getString(R.string.t_tv_shows))
+                .setItems(options.map { it.first }.toTypedArray()) { _, index -> options[index].second() }
+                .setNegativeButton(getString(R.string.t_cancel), null).show()
+        }
+        val filterLabel = "$sortLabel · $genreLabel  ▾"
+        if (query.isBlank() && !withFeature) {
             if (DeviceLayout.phone) {
                 body.addView(button(getString(R.string.t_search_movies_tv)) { search() }, margin(-1, 42, bottom = 10))
                 phoneTabs(sorts.map { (key, label) -> (if (key == order) "●  $label" else label) to { open(nextSort = key) } })
@@ -2441,7 +2500,7 @@ class MainActivity : Activity() {
             if (skip > 0) body.addView(button(getString(R.string.t_previous_page)) {
                 catalogPage(type, skip = catalogOffsets[offsets]?.removeLastOrNull() ?: 0, genre = chosen, sort = order)
             }, margin(140, 38, top = 6))
-        } else horizontalRow().addView(button(getString(R.string.t_search_movies_tv_2)) { search() }, margin(190, 38, right = 8))
+        } else if (!withFeature) horizontalRow().addView(button(getString(R.string.t_search_movies_tv_2)) { search() }, margin(190, 38, right = 8))
         read(id, {
             when {
                 query.isNotBlank() -> catalog.search(query, type)
@@ -2453,7 +2512,17 @@ class MainActivity : Activity() {
                 else -> catalog.discover(type, chosen, order, skip)
             }
         }) { items ->
-            if (items.isEmpty()) body.addView(text(getString(R.string.t_nothing_here_yet_try_another_genre), 14, muted), margin(-1, -2, top = 20))
+            if (items.isEmpty()) {
+                // No titles, so no feature to hold the filter: a plain button keeps another genre one press away.
+                if (withFeature) body.addView(button(filterLabel) { filters() }, margin(-2, 40, top = 60))
+                body.addView(text(getString(R.string.t_nothing_here_yet_try_another_genre), 14, muted), margin(-1, -2, top = 20))
+            }
+            if (withFeature && items.isNotEmpty() && featureHero() == null) {
+                // The phone has no focus to follow, so its feature turns through the first titles as Home's does.
+                streamingHero(items.first(), true, if (DeviceLayout.phone) items.take(10) else emptyList(), compact = true, at = 0,
+                    extra = filterLabel to { filters() })
+                featureShown = items.first()
+            }
             mediaGrid(items)
             if (query.isBlank() && items.isNotEmpty()) body.addView(button(getString(R.string.t_more_titles)) {
                 catalogOffsets.getOrPut(offsets) { ArrayDeque() }.addLast(skip)
@@ -2916,7 +2985,7 @@ class MainActivity : Activity() {
         )
         if (result.type == "movie" || episode != null) options += getString(R.string.t_mark_watched) to {
             confirm(getString(R.string.t_mark_x_x_as_watched, result.title, episode?.let { " S${it.season} E${it.episode}" }.orEmpty())) {
-                load(generation, { tracker.markWatched(episode ?: identity) }) {
+                load(generation, { tracker.markWatched(episode ?: identity); mirrorHistory { it.markWatched(episode ?: identity) } }) {
                     hideContinue(identityKey(episode ?: identity)); markedWatched(episode ?: identity); toast(getString(R.string.t_x_history_updated, tracker.name))
                 }
             }
@@ -3544,7 +3613,7 @@ class MainActivity : Activity() {
             if (pending.isEmpty()) toast(getString(R.string.t_no_unwatched_available_episodes_in_x, label))
             else confirm(getString(R.string.t_mark_x_x_of_x_x, pending.size, if (pending.size == 1) "episode" else "episodes", show.title, label, tracker.name)) {
                 val identity = PlaybackIdentity(show.imdbId, "series", show.title)
-                load(generation, { tracker.markSeasonWatched(identity, season, pending.map { it.episode }) }) {
+                load(generation, { tracker.markSeasonWatched(identity, season, pending.map { it.episode }); mirrorHistory { it.markSeasonWatched(identity, season, pending.map { it.episode }) } }) {
                     watched = pending.fold(watched) { state, episode -> state.with(episode) }
                     val markers = pending.map(::identityKey).toSet()
                     fun hide(root: View) {
@@ -5296,6 +5365,7 @@ class MainActivity : Activity() {
             body.addView(button(getString(R.string.t_open_settings)) { navigate { settings() } }, margin(210, 44, top = 10)); return
         }
         if (!tracker.connected()) { body.addView(button(getString(R.string.t_connect_x, tracker.name)) { startWeTrakr() }, margin(210, 44)); return }
+        tracker.waitMessage()?.let { message -> showError(ApiException(429, message)); return }
         if (flix) { flixWeTrakrPage(id); return }
         // Start with the visual library shelves; progress rows must not push them off-screen.
         read(id, { tracker.watchlist("movie") to tracker.watchlist("series") }) { (movies, series) ->
@@ -6481,6 +6551,13 @@ class MainActivity : Activity() {
                 getString(R.string.t_auto_play_the_first_link_its)) { navigate { playbackPage("autoplay") } }
             settingsRow(playback, getString(R.string.t_player), if (MiniPlayerPreferences(this).enabled) getString(R.string.t_mini_player_on) else getString(R.string.t_mini_player_off),
                 getString(R.string.t_mini_player_skip_buttons_seek_previews)) { navigate { playbackPage("player") } }
+            fun connectionsLabel(count: Int) = if (count == 4) getString(R.string.t_connections_x_default, count) else getString(R.string.t_connections_x, count)
+            settingsRow(playback, getString(R.string.t_connections_per_video), connectionsLabel(PlaybackConnections.count(this)), getString(R.string.t_connections_per_video_hint)) {
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_connections_per_video))
+                    .setSingleChoiceItems(PlaybackConnections.CHOICES.map(::connectionsLabel).toTypedArray(), PlaybackConnections.CHOICES.indexOf(PlaybackConnections.count(this))) { dialog, index ->
+                        PlaybackConnections.set(this, PlaybackConnections.CHOICES[index]); dialog.dismiss(); refreshSettings()
+                    }.setNegativeButton(getString(R.string.t_cancel), null).show()
+            }
                 }
                 "captions" -> {
             // Two cards: audio, then subtitles, each with its own English fallback.
@@ -6582,7 +6659,8 @@ class MainActivity : Activity() {
                 }
                 "tracking" -> {
             val tracking = settingsGroup(getString(R.string.t_tracking), "wetrakr")
-            settingsRow(tracking, getString(R.string.t_service), wetrakr.name, getString(R.string.t_wetrakr_or_simkl_watchlists_continue_watching)) { chooseTracker() }
+            settingsRow(tracking, getString(R.string.t_service), if (trackerShowsName(trackerChoice)) wetrakr.name else "", getString(R.string.t_wetrakr_trakt_or_simkl),
+                valueLogo = trackerLogo(trackerChoice)) { chooseTracker() }
             settingsRow(tracking, getString(R.string.t_account), if (wetrakr.signedIn()) getString(R.string.t_connected) else getString(R.string.t_not_connected),
                 if (wetrakr.signedIn()) getString(R.string.t_select_to_sign_in_again) else getString(R.string.t_sign_in_with_a_code_to), status = wetrakr.signedIn()) { startWeTrakr() }
             if (wetrakr.signedIn()) settingsToggle(tracking, getString(R.string.t_use_x, wetrakr.name), getString(R.string.t_off_keeps_you_signed_in_but),
@@ -6595,6 +6673,21 @@ class MainActivity : Activity() {
                 store.get("wetrakr.home_liked_opt_in") == "true", contentLabel = getString(R.string.t_x_liked_lists_on_home, wetrakr.name)) { on -> store.put("wetrakr.home_liked_opt_in", on.toString()) }
             if (wetrakr.signedIn()) settingsRow(tracking, getString(R.string.t_disconnect_x, wetrakr.name), danger = true) {
                 confirm(getString(R.string.t_disconnect_x_on_this_device, wetrakr.name)) { wetrakr.disconnect(); wetrakrOutbox.clearPending(); remoteProgress.clear(); refreshWatched(); refreshSettings() }
+            }
+            // The other services: sign in to keep their watch history too (and show their liked lists on Home).
+            Trackers.ALL.filter { it != trackerChoice }.forEach { id ->
+                val other = trackerApi(id)
+                if (!other.signedIn()) settingsRow(tracking, getString(R.string.t_connect_x, other.name), "", getString(R.string.t_also_keep_history_on_x, other.name, wetrakr.name)) {
+                    authorize(other.name, { other.startDeviceAuth() }, { other.pollDeviceAuth(it) }, cancel = { other.cancelDeviceAuth(it) })
+                } else {
+                    settingsToggle(tracking, getString(R.string.t_send_watch_history_to_x, other.name), getString(R.string.t_also_keep_history_on_x, other.name, wetrakr.name),
+                        Trackers.sendsHistory(store, id), contentLabel = getString(R.string.t_send_watch_history_to_x, other.name)) { on ->
+                        store.put(Trackers.historyKey(id), on.toString()); if (!on) trackerOutbox(id).clearPending()
+                    }
+                    settingsRow(tracking, getString(R.string.t_disconnect_x, other.name), danger = true) {
+                        confirm(getString(R.string.t_disconnect_x_on_this_device, other.name)) { other.disconnect(); trackerOutbox(id).clearPending(); retainedHome = null; refreshSettings() }
+                    }
+                }
             }
                 }
                 "updates" -> {
@@ -6641,6 +6734,7 @@ class MainActivity : Activity() {
                 Triple(0, getString(R.string.t_kitsu), getString(R.string.t_anime_catalogs_and_ids)),
                 Triple(R.drawable.pov_about_queuedup, getString(R.string.t_queued_up), getString(R.string.t_catalogs)),
                 Triple(R.drawable.wetrakr_logo, getString(R.string.t_wetrakr), getString(R.string.t_tracking_and_lists)),
+                Triple(R.drawable.trakt_logo, getString(R.string.t_trakt), getString(R.string.t_tracking_and_lists)),
                 Triple(R.drawable.pov_about_simkl, getString(R.string.t_simkl), getString(R.string.t_tracking_and_lists)),
                 Triple(R.drawable.pov_about_introdb, getString(R.string.t_theintrodb), getString(R.string.t_skip_intro_recap_and_credits_times)),
                 Triple(R.drawable.pov_about_skipdb, getString(R.string.t_skipdb), getString(R.string.t_skipdb_credit)),
@@ -6837,7 +6931,7 @@ class MainActivity : Activity() {
 
     /** One settings row: label and help text on the left, the current value and a chevron on the right. */
     private fun settingsRow(card: LinearLayout, label: String, value: String = "", description: String = "",
-                            status: Boolean? = null, danger: Boolean = false, action: () -> Unit) {
+                            status: Boolean? = null, danger: Boolean = false, valueLogo: Int = 0, action: () -> Unit) {
         settingsDivider(card)
         val row = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(11), dp(12), dp(11))
@@ -6851,8 +6945,11 @@ class MainActivity : Activity() {
         // A connection value is tinted: green when connected, muted otherwise.
         val tint = when (status) { true -> 0xFF46D369.toInt(); else -> muted }
         if (DeviceLayout.phone && value.length > PHONE_INLINE_VALUE) copy.addView(text(value, 12, tint, true), margin(-1, -2, top = 6))
-        else if (value.isNotBlank()) {
-            row.addView(text(value, 12, tint, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; gravity = Gravity.END }, margin(-2, -2).apply { leftMargin = dp(16) })
+        else if (value.isNotBlank() || valueLogo != 0) {
+            if (valueLogo != 0) row.addView(ImageView(this).apply { setImageResource(valueLogo); adjustViewBounds = true; scaleType = ImageView.ScaleType.FIT_CENTER },
+                LinearLayout.LayoutParams(-2, dp(18)).apply { leftMargin = dp(16) })
+            if (value.isNotBlank()) row.addView(text(value, 12, tint, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; gravity = Gravity.END },
+                margin(-2, -2).apply { leftMargin = dp(if (valueLogo != 0) 8 else 16) })
         }
         if (!danger) row.addView(text("›", 18, muted, true), margin(-2, -2).apply { leftMargin = dp(10) })
         row.setOnFocusChangeListener { view, focused ->
@@ -7527,11 +7624,21 @@ class MainActivity : Activity() {
         // While a dialog is open the page has no focused row, so fall back to the row that opened it.
         val focused = focusController.focusedIndex()
         val index = if (focused >= 0) focused else settingsReturnIndex
-        val scroll = if (focused >= 0) scroller.scrollY else settingsReturnScroll
+        // Touch screens (phone, tablet) have no focused row at all: the page simply stays where it was scrolled.
+        val touch = scroller.isInTouchMode
+        val scroll = if (focused >= 0 || touch) scroller.scrollY else settingsReturnScroll
         // Sub-pages (Debrid services, Home rows) redraw themselves; anywhere else Settings is shown.
         refreshingSettings = true
         try { if (destination == "settings") current() else settings() } finally { refreshingSettings = false }
-        body.post { if (!isDestroyed && destination == "settings") focusController.restoreIndex(index, scroll) }
+        if (touch) {
+            // The redrawn page may not be laid out yet; scroll once it is tall enough again.
+            scroller.scrollTo(0, scroll)
+            body.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+                override fun onLayoutChange(v: View, l: Int, t: Int, r: Int, b: Int, ol: Int, ot: Int, or: Int, ob: Int) {
+                    v.removeOnLayoutChangeListener(this); if (!isDestroyed && destination == "settings") scroller.scrollTo(0, scroll)
+                }
+            })
+        } else body.post { if (!isDestroyed && destination == "settings") focusController.restoreIndex(index, scroll) }
     }
 
     /** A settings row with a sliding switch that changes in place; the page never reloads. */
@@ -8003,6 +8110,10 @@ class MainActivity : Activity() {
     }
 
     private fun weTrakrClient() = wetrakr
+    private fun trackerLogo(id: String) = when (id) { Trackers.SIMKL -> R.drawable.pov_about_simkl; Trackers.TRAKT -> R.drawable.trakt_logo; else -> R.drawable.wetrakr_logo }
+    private fun trackerName(id: String) = when (id) { Trackers.SIMKL -> getString(R.string.t_simkl); Trackers.TRAKT -> getString(R.string.t_trakt); else -> getString(R.string.t_wetrakr) }
+    /** WeTrakr's logo is its wordmark (it already spells the name); Trakt and Simkl show their mark with the name. */
+    private fun trackerShowsName(id: String) = id != Trackers.WETRAKR
     /** Sign-in to the chosen tracker with an on-screen code and QR; both apps' public Client IDs are built in. */
     private fun startWeTrakr() {
         val tracker = wetrakr
@@ -8010,14 +8121,33 @@ class MainActivity : Activity() {
             cancel = { tracker.cancelDeviceAuth(it) })
     }
 
-    /** WeTrakr or Simkl. The menu, Home rows and Settings follow the choice; each keeps its own sign-in. */
+    /** WeTrakr, Trakt or Simkl. The menu, Home rows and Settings follow the choice; each keeps its own sign-in. */
     private fun chooseTracker() {
-        val ids = listOf(Trackers.WETRAKR, Trackers.SIMKL)
+        val ids = Trackers.ALL
+        val selected = Trackers.selected(store)
+        val adapter = object : android.widget.BaseAdapter() {
+            override fun getCount() = ids.size
+            override fun getItem(position: Int) = ids[position]
+            override fun getItemId(position: Int) = position.toLong()
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val id = ids[position]
+                return LinearLayout(this@MainActivity).apply {
+                    gravity = Gravity.CENTER_VERTICAL; setPadding(dp(20), dp(12), dp(20), dp(12)); minimumHeight = dp(52)
+                    contentDescription = trackerName(id)
+                    addView(ImageView(this@MainActivity).apply { setImageResource(trackerLogo(id)); adjustViewBounds = true; scaleType = ImageView.ScaleType.FIT_CENTER },
+                        LinearLayout.LayoutParams(-2, dp(if (id == Trackers.WETRAKR) 20 else 26)))
+                    if (trackerShowsName(id)) addView(TextView(this@MainActivity).apply { text = trackerName(id); textSize = 16f; setTextColor(Color.WHITE) },
+                        LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(12) })
+                    addView(View(this@MainActivity), LinearLayout.LayoutParams(0, 1, 1f))
+                    if (id == selected) addView(TextView(this@MainActivity).apply { text = "✓"; textSize = 18f; setTextColor(Color.WHITE) })
+                }
+            }
+        }
         AlertDialog.Builder(this).setTitle(getString(R.string.t_tracking_service))
-            .setSingleChoiceItems(arrayOf(getString(R.string.t_wetrakr), getString(R.string.t_simkl)), ids.indexOf(Trackers.selected(store))) { dialog, index ->
+            .setAdapter(adapter) { dialog, index ->
                 dialog.dismiss()
-                if (ids[index] == Trackers.selected(store)) return@setSingleChoiceItems
-                Trackers.select(store, ids[index]); simklChosen = ids[index] == Trackers.SIMKL; remoteProgress.clear(); retainedHome = null
+                if (ids[index] == Trackers.selected(store)) return@setAdapter
+                Trackers.select(store, ids[index]); trackerChoice = ids[index]; remoteProgress.clear(); retainedHome = null
                 watched = WatchedState.EMPTY; refreshWatched()
                 // The menu's tracker entry is renamed, so the shell is rebuilt around Settings,
                 // returning to the same row and scroll position.
@@ -8033,7 +8163,7 @@ class MainActivity : Activity() {
                           cancel: (DeviceAuth?) -> Unit = {}, configure: (() -> Unit)? = null) {
         if (authorization?.isShowing == true) return
         authorization = DeviceAuthorizationDialog(this, name, authWorker, start, poll, onConnected = {
-            if (name == wetrakr.name) { wetrakrOutbox.clearPending(); remoteProgress.clear(); refreshWatched(force = true) }
+            if (name == wetrakr.name) { wetrakrOutbox.clearPending(); remoteProgress.clear(); refreshWatched(force = true) } else retainedHome = null
             toast("$name connected"); if (destination == "settings") refreshSettings() else current()
         }, onCancel = cancel, configure = configure).also { it.show() }
     }
@@ -8041,14 +8171,17 @@ class MainActivity : Activity() {
     private fun retrySync() {
         worker.execute {
             try {
-                val revision = wetrakr.accountRevision()
-                val scrobbleRevision = wetrakr.scrobbleRevision()
-                if (wetrakr.connected() && wetrakr.scrobblingEnabled()) wetrakrOutbox.pending().take(10).forEach { event ->
-                    if (event.accountRevision != revision || event.timestamp.isBlank() || event.scrobbleRevision != scrobbleRevision || history.isHidden(identity = event.identity)) wetrakrOutbox.acknowledge(event.identity, event.revision)
-                    else try {
-                        if (wetrakr.restoreProgress(event.identity, event.percent, event.action, event.timestamp, revision, scrobbleRevision))
-                            wetrakrOutbox.acknowledge(event.identity, event.revision)
-                    } catch (_: Exception) { /* Retain this account's final state for a future launch. */ }
+                for (id in Trackers.historyTargets(store)) {
+                    val tracker = trackerApi(id); val outbox = trackerOutbox(id)
+                    val revision = tracker.accountRevision()
+                    val scrobbleRevision = tracker.scrobbleRevision()
+                    if (tracker.connected() && tracker.scrobblingEnabled()) outbox.pending().take(10).forEach { event ->
+                        if (event.accountRevision != revision || event.timestamp.isBlank() || event.scrobbleRevision != scrobbleRevision || history.isHidden(identity = event.identity)) outbox.acknowledge(event.identity, event.revision)
+                        else try {
+                            if (tracker.restoreProgress(event.identity, event.percent, event.action, event.timestamp, revision, scrobbleRevision))
+                                outbox.acknowledge(event.identity, event.revision)
+                        } catch (_: Exception) { /* Retain this account's final state for a future launch. */ }
+                    }
                 }
             } catch (_: Exception) { /* Keep playback usable when tracking is unavailable. */ }
         }
@@ -8414,7 +8547,7 @@ class MainActivity : Activity() {
         val tracker = weTrakrClient()
         if (playable && item.type == "movie" && tracker.connected()) {
             val identity = PlaybackIdentity(item.imdbId, item.type, item.title)
-            options += getString(R.string.t_mark_as_watched) to { load(generation, { tracker.markWatched(identity) }) { markedWatched(identity); toast(getString(R.string.t_x_marked_watched, item.title)) } }
+            options += getString(R.string.t_mark_as_watched) to { load(generation, { tracker.markWatched(identity); mirrorHistory { it.markWatched(identity) } }) { markedWatched(identity); toast(getString(R.string.t_x_marked_watched, item.title)) } }
         }
         holdMenu(item.title, options)
     }
@@ -8426,7 +8559,7 @@ class MainActivity : Activity() {
             getString(R.string.t_play) to { navigate { showSources(identity) } },
             getString(R.string.t_streams) to { navigate { showSources(identity, manual = true) } })
         if (tracker.connected()) options += getString(R.string.t_mark_as_watched) to {
-            load(generation, { tracker.markWatched(identity) }) { markedWatched(identity); toast(getString(R.string.t_episode_marked_watched)) }
+            load(generation, { tracker.markWatched(identity); mirrorHistory { it.markWatched(identity) } }) { markedWatched(identity); toast(getString(R.string.t_episode_marked_watched)) }
         }
         holdMenu("${identity.title} · $number", options)
     }

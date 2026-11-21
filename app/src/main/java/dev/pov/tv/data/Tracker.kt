@@ -37,6 +37,10 @@ interface Tracker {
     fun continueWatching(): List<Pair<PlaybackIdentity, Double>>
     /** Forgets cached library reads, so the next one asks the service again (e.g. after the player closes). */
     fun refreshCaches()
+    /** Forgets only the progress reads (Continue Watching, Up Next), e.g. after the player closes. */
+    fun refreshContinueWatching() = refreshCaches()
+    /** A message while the service has asked the app to wait (rate limit or daily quota); no request is sent then. */
+    fun waitMessage(): String? = null
     fun removeContinueWatching(identity: PlaybackIdentity, revision: String = accountRevision())
     fun nextEpisodes(): List<PlaybackIdentity>
     fun watchlist(type: String): List<MediaItemData>
@@ -64,8 +68,19 @@ object Trackers {
     const val KEY = "tracker.service"
     const val SIMKL = "simkl"
     const val WETRAKR = "wetrakr"
-    fun selected(store: SecureStore) = if (store.get(KEY) == SIMKL) SIMKL else WETRAKR
-    fun select(store: SecureStore, id: String) = store.put(KEY, if (id == SIMKL) SIMKL else WETRAKR)
+    const val TRAKT = "trakt"
+    val ALL = listOf(WETRAKR, TRAKT, SIMKL)
+    fun selected(store: SecureStore) = store.get(KEY).takeIf { it in ALL } ?: WETRAKR
+    fun select(store: SecureStore, id: String) = store.put(KEY, id.takeIf { it in ALL } ?: WETRAKR)
     /** Each service keeps its own offline scrobble queue. */
-    fun outboxKey(id: String) = if (id == SIMKL) "simkl.pending" else "wetrakr.pending"
+    fun outboxKey(id: String) = when (id) { SIMKL -> "simkl.pending"; TRAKT -> "trakt.pending"; else -> "wetrakr.pending" }
+    fun create(store: SecureStore, id: String): Tracker = when (id) { SIMKL -> SimklApi(store); TRAKT -> TraktApi(store); else -> WeTrakrApi(store) }
+    /**
+     * The main service supplies Continue Watching, Up Next, watchlists and lists. Every other service the viewer
+     * signed in to also gets watch history (scrobbles and marked-watched titles) unless switched off here.
+     */
+    fun historyKey(id: String) = "tracker.history.$id"
+    fun sendsHistory(store: SecureStore, id: String) = id == selected(store) || store.get(historyKey(id)) != "false"
+    /** Main first, then the others that send history; callers still check [Tracker.connected]. */
+    fun historyTargets(store: SecureStore): List<String> = selected(store).let { main -> listOf(main) + ALL.filter { it != main && sendsHistory(store, it) } }
 }

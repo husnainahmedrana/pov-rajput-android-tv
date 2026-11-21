@@ -1612,7 +1612,6 @@
     <string name="t_wetrakr_could_not_mark_every_episode">O WeTrakr não conseguiu marcar todos os episódios. Atualiza a tua biblioteca antes de tentar de novo.</string>
     <string name="t_wetrakr_did_not_accept_this_playback">O WeTrakr não aceitou esta atualização de reprodução.</string>
     <string name="t_wetrakr_did_not_confirm_removal_try">O WeTrakr não confirmou a remoção. Tenta de novo.</string>
-    <string name="t_wetrakr_or_simkl_watchlists_continue_watching">WeTrakr ou Simkl: listas, Continuar a ver, A seguir e sincronização do progresso.</string>
     <string name="t_wetrakr_returned_an_unreadable_response_try">O WeTrakr devolveu uma resposta ilegível. Tenta mais tarde.</string>
     <string name="t_what_play_starts_on_its_own">O que Reproduzir inicia sozinho, e o próximo episódio.</string>
     <string name="t_what_play_starts_on_its_own_2">"O que Reproduzir inicia sozinho, pela tua ordenação: o primeiro link bom assim que chega, o melhor após alguns segundos ou o melhor quando a pesquisa termina. "</string>
@@ -1900,4 +1899,27 @@
     <string name="t_opening_in_x">Abrindo no %1$s</string>
     <string name="t_subtitles_synced_automatically_x">Legendas sincronizadas automaticamente (%1$s)</string>
     <string name="t_to_resume_in_kodi_turn_on">Para continuar de onde parou no Kodi, ative no Kodi Configurações → Serviços → Controle → Permitir controle remoto por aplicativos neste sistema.</string>
+    <string name="t_trakt">Trakt</string>
+    <string name="t_wetrakr_trakt_or_simkl">WeTrakr, Trakt ou Simkl: listas para ver, Continuar a ver, A seguir e sincronização do progresso.</string>
+    <string name="t_wetrakr_app_quota_used">O Nabrio esgotou os pedidos de hoje ao WeTrakr para todos os utilizadores. O WeTrakr renova-os às %1$s.</string>
+    <string name="t_wetrakr_user_quota_used">A tua conta WeTrakr esgotou os pedidos de hoje. O WeTrakr renova-os às %1$s.</string>
+    <string name="t_trakt_asked_us_to_wait">O Trakt pediu para esperar antes de mais pedidos. Tenta novamente dentro de %1$s segundos.</string>
+    <string name="t_trakt_account_limit">A tua conta Trakt atingiu o limite de listas ou da lista para ver. Remove itens em trakt.tv ou passa a VIP.</string>
+    <string name="t_trakt_could_not_confirm_list_removal">O Trakt não conseguiu confirmar a remoção da lista. Atualiza a lista e tenta novamente.</string>
+    <string name="t_trakt_could_not_mark_every_episode">O Trakt não conseguiu marcar todos os episódios. Atualiza a tua biblioteca antes de tentar novamente.</string>
+    <string name="t_trakt_could_not_apply_this_update">O Trakt não conseguiu aplicar esta alteração. Atualiza a tua biblioteca para ver o estado atual.</string>
+    <string name="t_trakt_did_not_accept_this_playback">O Trakt não aceitou esta atualização de reprodução.</string>
+    <string name="t_connect_trakt_in_settings_first">Liga primeiro o Trakt nas Definições.</string>
+    <string name="t_link_trakt_again_to_renew_this">Liga o Trakt novamente para renovar esta sessão.</string>
+    <string name="t_this_trakt_list_is_too_large">Esta lista do Trakt é demasiado grande para carregar de uma vez. Abre-a em trakt.tv.</string>
+    <string name="t_trakt_returned_an_unreadable_response">O Trakt devolveu uma resposta ilegível. Tenta mais tarde.</string>
+    <string name="t_this_trakt_connection_changed_or_expired">Esta ligação ao Trakt mudou ou expirou. Liga-a novamente nas Definições.</string>
+    <string name="t_send_watch_history_to_x">Enviar histórico para %1$s</string>
+    <string name="t_also_keep_history_on_x">As reproduções e marcas de visto também vão para %1$s, e as suas listas gostadas podem aparecer no Início. Continuar a ver, A seguir e listas para ver vêm de %2$s.</string>
+    <string name="t_connections_per_video">Ligações por vídeo</string>
+    <string name="t_connections_x_default">%1$s (predefinido)</string>
+    <string name="t_connections_per_video_hint">Os vídeos debrid e diretos descarregam por várias ligações durante a reprodução. Escolhe 1 se os vídeos nunca começarem neste dispositivo. Só este dispositivo.</string>
+    <string name="t_sort_by">Ordenar por</string>
+    <string name="t_sort_by_x">Ordenar por: %1$s</string>
+    <string name="t_genre_x">Género: %1$s</string>
 </resources>

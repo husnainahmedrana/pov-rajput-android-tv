@@ -56,6 +56,7 @@ internal class ParallelHttpDataSource(
         val path = dataSpec.uri.path.orEmpty().lowercase()
         canSwitch = dataSpec.length == C.LENGTH_UNSET.toLong() && dataSpec.httpMethod == DataSpec.HTTP_METHOD_GET &&
             (scheme == "https" || scheme == "http") && !path.endsWith(".m3u8") && !path.endsWith(".mpd") && !path.endsWith(".ts")
+        if (connections <= 1 || dataSpec.uri.host in singleHosts) canSwitch = false
         spec = dataSpec; consumed = 0
         active = single
         return single.open(dataSpec)
@@ -63,9 +64,27 @@ internal class ParallelHttpDataSource(
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
         if (canSwitch && consumed >= switchAfter) switchToPieces()
-        val count = checkNotNull(active).read(buffer, offset, length)
+        val current = checkNotNull(active)
+        val count = try { current.read(buffer, offset, length) } catch (error: IOException) {
+            if (current === single || error is InterruptedIOException) throw error
+            fallBackToSingle(error)
+            return checkNotNull(active).read(buffer, offset, length).also { if (it > 0) consumed += it }
+        }
         if (count > 0) consumed += count
         return count
+    }
+
+    /**
+     * The pieces stopped delivering (some networks or devices handle several connections to one server badly): carry
+     * on over one connection from the same byte. The host then stays on one connection until the app restarts.
+     */
+    private fun fallBackToSingle(error: IOException) {
+        val from = spec ?: throw error
+        android.util.Log.w(TAG, "several connections stalled (${error.javaClass.simpleName}); back to one at $consumed")
+        from.uri.host?.let(singleHosts::add)
+        runCatching { active?.close() }
+        active = single
+        single.open(from.subrange(consumed))
     }
 
     /** Playback is reading on: carry on from here over several connections; on any trouble stay on one. */
@@ -220,9 +239,12 @@ internal class ParallelHttpDataSource(
             // Like a socket: a cancelled load (seek) is let finish its element for up to INTERRUPTED_WAIT_MS (see
             // EasynewsParallelDataSource: aborting mid-element crashed the MKV reader).
             var interruptedAt = 0L
+            val waitingSince = android.os.SystemClock.elapsedRealtime()
             synchronized(piece.lock) {
                 while (!closed && piece.filled <= readOffset && piece.failure == null) {
                     if (Thread.interrupted() && interruptedAt == 0L) interruptedAt = android.os.SystemClock.elapsedRealtime()
+                    if (interruptedAt == 0L && android.os.SystemClock.elapsedRealtime() - waitingSince > STALL_MS)
+                        throw IOException("No data over several connections for ${STALL_MS / 1000} s.")
                     if (interruptedAt != 0L && android.os.SystemClock.elapsedRealtime() - interruptedAt > INTERRUPTED_WAIT_MS)
                         throw InterruptedIOException("Load cancelled.")
                     try { piece.lock.wait(250) }
@@ -258,5 +280,9 @@ internal class ParallelHttpDataSource(
     private companion object {
         const val TAG = "PovHttp"
         const val INTERRUPTED_WAIT_MS = 10_000L
+        /** No new byte from the pieces for this long (and no seek): treat several connections as not working here. */
+        const val STALL_MS = 8_000L
+        /** Hosts where several connections stalled this run: they stay on one. */
+        val singleHosts: MutableSet<String> = Collections.synchronizedSet(HashSet())
     }
 }

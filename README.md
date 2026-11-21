@@ -136,9 +136,9 @@ Source cards show quality, provider-reported size and release badges (DV, HDR, W
 
 Offcloud cached sources resolve directly without adding a dashboard entry. TorBox resolves direct links and removes newly created cached entries before playback.
 
-## WeTrakr or Simkl
+## WeTrakr, Trakt or Simkl
 
-Choose your tracking service in **Settings → Tracking**. Press Connect, scan the QR code or approve the code at **wetrakr.com/activate** or **simkl.com/pin**, and it supplies Home's Continue Watching (shown instantly from your last visit, then refreshed), watchlists, liked lists and Up Next (Simkl has no list API yet, so its personal and liked lists aren't shown). **Use WeTrakr/Simkl** (off keeps you signed in), **Scrobbling** and **Liked lists on Home** are switches in Settings. Tokens are stored with Android Keystore encryption; library reads are cached and server retry limits are respected. API references: [api.wetrakr.com](https://api.wetrakr.com/), [api.simkl.org](https://api.simkl.org/).
+Choose your main tracking service in **Settings → Tracking**. Press Connect, scan the QR code or approve the code at **wetrakr.com/activate**, **auth.trakt.tv/activate** or **simkl.com/pin**, and it supplies Home's Continue Watching (shown instantly from your last visit, then refreshed), watchlists, liked lists and Up Next (Simkl has no list API yet, so its personal and liked lists aren't shown). **Use WeTrakr/Simkl** (off keeps you signed in), **Scrobbling** and **Liked lists on Home** are switches in Settings. Sign in to the other services too and they also receive your plays and watched marks (**Send watch history to …**), and their liked lists can show on Home. Tokens are stored with Android Keystore encryption; library reads are cached and server retry limits are respected. API references: [api.wetrakr.com](https://api.wetrakr.com/), [Trakt API](https://developer.trakt.tv/), [api.simkl.org](https://api.simkl.org/).
 
 ## Nabrio account and backup
 

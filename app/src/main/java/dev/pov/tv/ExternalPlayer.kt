@@ -277,10 +277,9 @@ internal class ExternalProgress(
 ) {
     private val store = SecureStore(context)
     private val history = PlaybackStore(context)
-    private val simkl get() = dev.pov.tv.data.Trackers.selected(store) == dev.pov.tv.data.Trackers.SIMKL
-    private val tracker: dev.pov.tv.data.Tracker by lazy { if (simkl) dev.pov.tv.data.SimklApi(store) else dev.pov.tv.data.WeTrakrApi(store) }
-    private val outbox: PlaybackStore by lazy {
-        PlaybackStore(context, dev.pov.tv.data.Trackers.outboxKey(if (simkl) dev.pov.tv.data.Trackers.SIMKL else dev.pov.tv.data.Trackers.WETRAKR))
+    /** The main tracker and the other signed-in ones that also keep watch history, each with its own offline queue. */
+    private val trackers: List<Pair<dev.pov.tv.data.Tracker, PlaybackStore>> by lazy {
+        dev.pov.tv.data.Trackers.historyTargets(store).map { id -> dev.pov.tv.data.Trackers.create(store, id) to PlaybackStore(context, dev.pov.tv.data.Trackers.outboxKey(id)) }
     }
     private val worker = java.util.concurrent.Executors.newSingleThreadExecutor()
     private var started = false
@@ -299,7 +298,7 @@ internal class ExternalProgress(
             worker.execute {
                 duration = server.durationMs() ?: runtimeMs
                 runCatching { history.show(key, identity) }
-                identity?.let { runCatching { tracker.allowPlayback(it) } }
+                identity?.let { media -> trackers.forEach { (tracker, _) -> runCatching { tracker.allowPlayback(media) } } }
                 scrobble("start", percent() ?: 0.0)
             }
             return false
@@ -358,8 +357,9 @@ internal class ExternalProgress(
     /** The same calls as the built-in player's scrobbles, through the tracker's offline queue. */
     private fun scrobble(action: String, percent: Double) {
         val media = identity ?: return
-        try {
-            if (!tracker.scrobblingEnabled() || history.isHidden(identity = media) || !tracker.connected()) return
+        if (history.isHidden(identity = media)) return
+        for ((tracker, outbox) in trackers) try {
+            if (!tracker.scrobblingEnabled() || !tracker.connected()) continue
             val account = tracker.accountRevision()
             val scrobbleRevision = tracker.scrobbleRevision()
             val revision = if (action != "start") runCatching { outbox.queue(media, percent, action, account, scrobbleRevision = scrobbleRevision) }.getOrNull() else null

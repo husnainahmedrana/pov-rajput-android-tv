@@ -107,7 +107,7 @@ internal class TvContinueWatching(private val context: Context) {
         if(!supported(context)) return
         val store=SecureStore(context)
         val selected=Trackers.selected(store)
-        val tracker:Tracker=if(Trackers.selected(store)==Trackers.SIMKL) SimklApi(store) else WeTrakrApi(store)
+        val tracker:Tracker=Trackers.create(store,selected)
         val scope=if(tracker.connected()) "${Trackers.selected(store)}:${tracker.accountRevision()}" else "local"
         if(prefs.getString("scope","")!=scope) prefs.edit().putString("scope",scope).remove("dismissed").remove("published").apply()
         if(refreshRemote && tracker.connected() && enabled(context)) {

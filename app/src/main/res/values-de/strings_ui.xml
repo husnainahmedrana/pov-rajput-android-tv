@@ -1612,7 +1612,6 @@
     <string name="t_wetrakr_could_not_mark_every_episode">WeTrakr konnte nicht alle Folgen markieren. Aktualisiere deine Bibliothek, bevor du es erneut versuchst.</string>
     <string name="t_wetrakr_did_not_accept_this_playback">WeTrakr hat dieses Wiedergabe-Update nicht akzeptiert.</string>
     <string name="t_wetrakr_did_not_confirm_removal_try">WeTrakr hat das Entfernen nicht bestätigt. Versuche es erneut.</string>
-    <string name="t_wetrakr_or_simkl_watchlists_continue_watching">WeTrakr oder Simkl: Merklisten, Weiterschauen, Als Nächstes und Fortschritts-Sync.</string>
     <string name="t_wetrakr_returned_an_unreadable_response_try">WeTrakr hat eine unlesbare Antwort geliefert. Versuche es später erneut.</string>
     <string name="t_what_play_starts_on_its_own">Was Abspielen von selbst startet, und die nächste Folge.</string>
     <string name="t_what_play_starts_on_its_own_2">"Was Abspielen von selbst startet, in deiner Sortierung: der erste gute Link, sobald er da ist, der beste nach einigen Sekunden oder der beste nach Ende der Suche. "</string>
@@ -1900,4 +1899,27 @@
     <string name="t_opening_in_x">Wird in %1$s geöffnet</string>
     <string name="t_subtitles_synced_automatically_x">Untertitel automatisch angepasst (%1$s)</string>
     <string name="t_to_resume_in_kodi_turn_on">Damit Kodi dort weitermacht, wo du aufgehört hast, aktiviere in Kodi Einstellungen → Dienste → Steuerung → Fernsteuerung durch Anwendungen auf diesem System erlauben.</string>
+    <string name="t_trakt">Trakt</string>
+    <string name="t_wetrakr_trakt_or_simkl">WeTrakr, Trakt oder Simkl: Merklisten, Weiterschauen, Als Nächstes und Fortschritts-Sync.</string>
+    <string name="t_wetrakr_app_quota_used">Nabrio hat die heutigen WeTrakr-Anfragen für alle Nutzer aufgebraucht. WeTrakr setzt sie um %1$s zurück.</string>
+    <string name="t_wetrakr_user_quota_used">Dein WeTrakr-Konto hat die heutigen Anfragen aufgebraucht. WeTrakr setzt sie um %1$s zurück.</string>
+    <string name="t_trakt_asked_us_to_wait">Trakt bittet um eine Pause vor weiteren Anfragen. Versuche es in %1$s Sekunden erneut.</string>
+    <string name="t_trakt_account_limit">Dein Trakt-Konto hat sein Listen- oder Merklistenlimit erreicht. Entferne Einträge auf trakt.tv oder wechsle zu VIP.</string>
+    <string name="t_trakt_could_not_confirm_list_removal">Trakt konnte das Entfernen aus der Liste nicht bestätigen. Aktualisiere die Liste und versuche es erneut.</string>
+    <string name="t_trakt_could_not_mark_every_episode">Trakt konnte nicht jede Folge markieren. Aktualisiere deine Bibliothek, bevor du es erneut versuchst.</string>
+    <string name="t_trakt_could_not_apply_this_update">Trakt konnte diese Änderung nicht übernehmen. Aktualisiere deine Bibliothek, um den aktuellen Stand zu prüfen.</string>
+    <string name="t_trakt_did_not_accept_this_playback">Trakt hat diese Wiedergabe-Aktualisierung nicht angenommen.</string>
+    <string name="t_connect_trakt_in_settings_first">Verbinde zuerst Trakt in den Einstellungen.</string>
+    <string name="t_link_trakt_again_to_renew_this">Verknüpfe Trakt erneut, um diese Sitzung zu erneuern.</string>
+    <string name="t_this_trakt_list_is_too_large">Diese Trakt-Liste ist zu groß, um sie auf einmal zu laden. Öffne sie auf trakt.tv.</string>
+    <string name="t_trakt_returned_an_unreadable_response">Trakt hat eine unlesbare Antwort geliefert. Versuche es später erneut.</string>
+    <string name="t_this_trakt_connection_changed_or_expired">Diese Trakt-Verbindung hat sich geändert oder ist abgelaufen. Verknüpfe sie in den Einstellungen erneut.</string>
+    <string name="t_send_watch_history_to_x">Wiedergabeverlauf an %1$s senden</string>
+    <string name="t_also_keep_history_on_x">Wiedergaben und Gesehen-Markierungen gehen auch an %1$s, und seine gelikten Listen können auf der Startseite erscheinen. Weiterschauen, Als Nächstes und Merklisten kommen von %2$s.</string>
+    <string name="t_connections_per_video">Verbindungen pro Video</string>
+    <string name="t_connections_x_default">%1$s (Standard)</string>
+    <string name="t_connections_per_video_hint">Debrid- und Direktvideos laden beim Abspielen über mehrere Verbindungen. Wähle 1, wenn Videos auf diesem Gerät nie starten. Nur dieses Gerät.</string>
+    <string name="t_sort_by">Sortieren nach</string>
+    <string name="t_sort_by_x">Sortieren nach: %1$s</string>
+    <string name="t_genre_x">Genre: %1$s</string>
 </resources>

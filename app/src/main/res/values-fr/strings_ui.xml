@@ -1612,7 +1612,6 @@
     <string name="t_wetrakr_could_not_mark_every_episode">WeTrakr n\'a pas pu marquer tous les épisodes. Actualisez votre bibliothèque avant de réessayer.</string>
     <string name="t_wetrakr_did_not_accept_this_playback">WeTrakr n\'a pas accepté cette mise à jour de lecture.</string>
     <string name="t_wetrakr_did_not_confirm_removal_try">WeTrakr n\'a pas confirmé la suppression. Réessayez.</string>
-    <string name="t_wetrakr_or_simkl_watchlists_continue_watching">WeTrakr ou Simkl : listes, Reprendre, À suivre et synchronisation de la progression.</string>
     <string name="t_wetrakr_returned_an_unreadable_response_try">WeTrakr a renvoyé une réponse illisible. Réessayez plus tard.</string>
     <string name="t_what_play_starts_on_its_own">Ce que Lecture lance tout seul, et l\'épisode suivant.</string>
     <string name="t_what_play_starts_on_its_own_2">"Ce que Lecture lance tout seul, dans votre ordre de tri : le premier lien correct dès qu\'il arrive, le meilleur après quelques secondes, ou le meilleur à la fin de la recherche. "</string>
@@ -1900,4 +1899,27 @@
     <string name="t_opening_in_x">Ouverture dans %1$s</string>
     <string name="t_subtitles_synced_automatically_x">Sous-titres synchronisés automatiquement (%1$s)</string>
     <string name="t_to_resume_in_kodi_turn_on">Pour reprendre là où vous en étiez dans Kodi, activez dans Kodi Paramètres → Services → Contrôle → Autoriser le contrôle à distance par des applications sur ce système.</string>
+    <string name="t_trakt">Trakt</string>
+    <string name="t_wetrakr_trakt_or_simkl">WeTrakr, Trakt ou Simkl : listes à voir, Reprendre, À suivre et synchronisation de la progression.</string>
+    <string name="t_wetrakr_app_quota_used">Nabrio a épuisé les requêtes WeTrakr du jour pour tous ses utilisateurs. WeTrakr les renouvelle à %1$s.</string>
+    <string name="t_wetrakr_user_quota_used">Votre compte WeTrakr a épuisé les requêtes du jour. WeTrakr les renouvelle à %1$s.</string>
+    <string name="t_trakt_asked_us_to_wait">Trakt demande de patienter avant d\'autres requêtes. Réessayez dans %1$s secondes.</string>
+    <string name="t_trakt_account_limit">Votre compte Trakt a atteint sa limite de listes ou de liste à voir. Retirez des éléments sur trakt.tv ou passez VIP.</string>
+    <string name="t_trakt_could_not_confirm_list_removal">Trakt n\'a pas pu confirmer le retrait de la liste. Actualisez la liste et réessayez.</string>
+    <string name="t_trakt_could_not_mark_every_episode">Trakt n\'a pas pu marquer tous les épisodes. Actualisez votre bibliothèque avant de réessayer.</string>
+    <string name="t_trakt_could_not_apply_this_update">Trakt n\'a pas pu appliquer cette mise à jour. Actualisez votre bibliothèque pour vérifier son état.</string>
+    <string name="t_trakt_did_not_accept_this_playback">Trakt n\'a pas accepté cette mise à jour de lecture.</string>
+    <string name="t_connect_trakt_in_settings_first">Connectez d\'abord Trakt dans les Réglages.</string>
+    <string name="t_link_trakt_again_to_renew_this">Reliez Trakt à nouveau pour renouveler cette session.</string>
+    <string name="t_this_trakt_list_is_too_large">Cette liste Trakt est trop grande pour être chargée d\'un coup. Ouvrez-la sur trakt.tv.</string>
+    <string name="t_trakt_returned_an_unreadable_response">Trakt a renvoyé une réponse illisible. Réessayez plus tard.</string>
+    <string name="t_this_trakt_connection_changed_or_expired">Cette connexion Trakt a changé ou expiré. Reliez-la dans les Réglages.</string>
+    <string name="t_send_watch_history_to_x">Envoyer l\'historique à %1$s</string>
+    <string name="t_also_keep_history_on_x">Les lectures et marques « vu » vont aussi à %1$s, et ses listes aimées peuvent s\'afficher sur l\'Accueil. Reprendre, À suivre et les listes à voir viennent de %2$s.</string>
+    <string name="t_connections_per_video">Connexions par vidéo</string>
+    <string name="t_connections_x_default">%1$s (par défaut)</string>
+    <string name="t_connections_per_video_hint">Les vidéos debrid et directes se téléchargent sur plusieurs connexions pendant la lecture. Choisissez 1 si les vidéos ne démarrent jamais sur cet appareil. Cet appareil uniquement.</string>
+    <string name="t_sort_by">Trier par</string>
+    <string name="t_sort_by_x">Trier par : %1$s</string>
+    <string name="t_genre_x">Genre : %1$s</string>
 </resources>

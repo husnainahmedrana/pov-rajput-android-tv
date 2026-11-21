@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Trakt's logomark (white mark on Trakt blue), from trakt/trakt-api projects/developer/static/trakt-logomark.svg. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp" android:viewportWidth="1512" android:viewportHeight="1512">
+    <path android:fillColor="#0E95EB"
+        android:pathData="M338,0H1174A338,338 0,0 1,1512 338V1174A338,338 0,0 1,1174 1512H338A338,338 0,0 1,0 1174V338A338,338 0,0 1,338 0Z" />
+    <group android:translateX="317.52" android:translateY="317.52" android:scaleX="14.3764" android:scaleY="14.3764">
+        <path android:strokeColor="#FFFFFF" android:strokeWidth="6" android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M56,38.95A27.5,27.5 0,1 1,36.19 3.2" />
+        <path android:strokeColor="#FFFFFF" android:strokeWidth="6" android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M16.93,27.11L35.82,42.96M29.92,34.75L53.89,6.17M56.69,18.31L42.49,35.24M26.88,22.41L23.36,19.45" />
+    </group>
+</vector>

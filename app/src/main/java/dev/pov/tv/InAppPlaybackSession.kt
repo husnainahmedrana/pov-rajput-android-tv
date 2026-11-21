@@ -55,14 +55,13 @@ object InAppPlaybackSession {
     private var targetView: WeakReference<PlayerView>? = null
     private lateinit var history: PlaybackStore
     private lateinit var secureStore: SecureStore
-    private lateinit var weTrakrApi: WeTrakrApi
-    private lateinit var simklApi: dev.pov.tv.data.SimklApi
-    private lateinit var weTrakrOutbox: PlaybackStore
-    private lateinit var simklOutbox: PlaybackStore
+    private val trackerApis = java.util.concurrent.ConcurrentHashMap<String, dev.pov.tv.data.Tracker>()
+    private val trackerOutboxes = java.util.concurrent.ConcurrentHashMap<String, PlaybackStore>()
     /** Scrobbles go to the tracker chosen in Settings, each with its own offline queue. */
-    private val simklSelected get() = dev.pov.tv.data.Trackers.selected(secureStore) == dev.pov.tv.data.Trackers.SIMKL
-    private val wetrakr: dev.pov.tv.data.Tracker get() = if (simklSelected) simklApi else weTrakrApi
-    private val wetrakrOutbox: PlaybackStore get() = if (simklSelected) simklOutbox else weTrakrOutbox
+    private val selectedTracker get() = dev.pov.tv.data.Trackers.selected(secureStore)
+    private val wetrakr: dev.pov.tv.data.Tracker get() = trackerApi(selectedTracker)
+    private fun trackerApi(id: String) = trackerApis.computeIfAbsent(id) { dev.pov.tv.data.Trackers.create(secureStore, id) }
+    private fun trackerOutbox(id: String) = trackerOutboxes.computeIfAbsent(id) { PlaybackStore(application!!, dev.pov.tv.data.Trackers.outboxKey(id)) }
     var sourceUrl = ""
         private set
     private var sourceKey = ""
@@ -213,9 +212,6 @@ object InAppPlaybackSession {
         history = PlaybackStore(app)
         secureStore = SecureStore(app)
         dev.pov.tv.data.MediaFlowProxy.install(secureStore)
-        weTrakrApi = WeTrakrApi(secureStore); simklApi = dev.pov.tv.data.SimklApi(secureStore)
-        weTrakrOutbox = PlaybackStore(app, dev.pov.tv.data.Trackers.outboxKey(dev.pov.tv.data.Trackers.WETRAKR))
-        simklOutbox = PlaybackStore(app, dev.pov.tv.data.Trackers.outboxKey(dev.pov.tv.data.Trackers.SIMKL))
         app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityStarted(activity: Activity) { foregroundGate.started(activity) }
             override fun onActivityStopped(activity: Activity) { foregroundGate.stopped(activity) }
@@ -357,11 +353,12 @@ object InAppPlaybackSession {
             .setDefaultRequestProperties(routed.headers)
         // Debrid and direct videos over several connections: one connection to a far CDN is often capped below the
         // film's bitrate (Kodi, asking in parallel through Nabrio, played the same Offcloud remux smoothly).
-        val fast = ParallelHttpDataSource.Factory(http, routed.headers, listener = sizeFromServer(playing, routed.url))
+        val fast = ParallelHttpDataSource.Factory(http, routed.headers, connections = PlaybackConnections.count(application!!),
+            listener = sizeFromServer(playing, routed.url))
         val playerSources = DefaultDataSource.Factory(application!!,
                 // Easynews links get the saved login inside the player; it is never in the link or the intent.
                 EasynewsRoutingDataSource.Factory(fast, { if (easynewsSingle) 1 else dev.pov.tv.data.Easynews.connections(secureStore) },
-                    usenet = { address -> UsenetPlayback.session(address, secureStore, application?.cacheDir) { note -> handler.post { application?.let { android.widget.Toast.makeText(it, note, android.widget.Toast.LENGTH_LONG).show() } } } }) { dev.pov.tv.data.Easynews.credentials(secureStore)?.let { (user, password) ->
+                    usenet = { address -> UsenetPlayback.session(address, secureStore, application?.cacheDir) { note -> UsenetLog.i("failure: $note") } }) { dev.pov.tv.data.Easynews.credentials(secureStore)?.let { (user, password) ->
                     runCatching { dev.pov.tv.data.Easynews.auth(user, password) }.getOrNull() } })
         val mediaSources = DefaultMediaSourceFactory(playerSources)
             // A Usenet link already found unplayable fails straight away instead of being asked three more times.
@@ -982,25 +979,28 @@ object InAppPlaybackSession {
         val media = identity ?: return
         val exo = player ?: return
         if (exo.duration <= 0) return
-        if (!wetrakr.scrobblingEnabled() || history.isHidden(identity = media)) return
-        val targets = listOf(wetrakr).mapNotNull { client ->
-            try { if (client.connected()) client to client.accountRevision() else null } catch (_: Exception) { null }
+        if (history.isHidden(identity = media)) return
+        // The main tracker and every other signed-in tracker that also keeps watch history, each with its own queue.
+        val targets = dev.pov.tv.data.Trackers.historyTargets(secureStore).mapNotNull { id ->
+            try { trackerApi(id).takeIf { it.connected() && it.scrobblingEnabled() }?.let { Triple(it, it.accountRevision(), id) } } catch (_: Exception) { null }
         }
         if (targets.isEmpty()) return
         val percent = (exo.currentPosition.toDouble() * 100 / exo.duration).coerceIn(0.0, 100.0)
         val now = android.os.SystemClock.elapsedRealtime()
-        if (action == lastSyncAction && now - lastSyncAt < 3_000) return
+        if (action == lastSyncAction && (action == "start" || now - lastSyncAt < 3_000)) return
         lastSyncAction = action; lastSyncAt = now
-        val scrobbleRevision = wetrakr.scrobbleRevision()
-        val updates = targets.map { (client, account) ->
-            val outbox = wetrakrOutbox
+        val updates = targets.map { (client, account, id) ->
+            val outbox = trackerOutbox(id)
+            val scrobbleRevision = client.scrobbleRevision()
             val revision = try { if (action != "start") outbox.queue(media, percent, action, account, scrobbleRevision = scrobbleRevision) else null } catch (_: Exception) { null }
-            Triple(client, account, outbox to revision)
+            listOf(client, account, outbox, revision, scrobbleRevision)
         }
         syncWorker.execute {
-            updates.forEach { (client, account, queued) ->
+            updates.forEach { update ->
+                val client = update[0] as dev.pov.tv.data.Tracker; val account = update[1] as String
+                val outbox = update[2] as PlaybackStore; val revision = update[3] as String?; val scrobbleRevision = update[4] as String
                 try {
-                    if (!history.isHidden(identity = media) && client.progressForAccount(media, percent, action, account, scrobbleRevision) && queued.second != null) queued.first.acknowledge(media, queued.second!!)
+                    if (!history.isHidden(identity = media) && client.progressForAccount(media, percent, action, account, scrobbleRevision) && revision != null) outbox.acknowledge(media, revision)
                 } catch (_: Exception) { /* Each provider keeps its own final-state retry. */ }
             }
         }

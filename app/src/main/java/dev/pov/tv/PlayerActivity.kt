@@ -279,8 +279,15 @@ class PlayerActivity : Activity() {
         }
         val keys = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
-            addView(key("OK", getString(R.string.t_play_now)))
-            addView(key("BACK", getString(R.string.t_leave)), LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(28) })
+            // Touch screens (phone, tablet, car) tap the same hints the remote presses.
+            addView(key("OK", getString(R.string.t_play_now)).apply {
+                isClickable = true; setPadding(dp(10), dp(10), dp(10), dp(10))
+                setOnClickListener { if (previewPrep != null) BuiltInSeekPreviews.playNow() }
+            })
+            addView(key("BACK", getString(R.string.t_leave)).apply {
+                isClickable = true; setPadding(dp(10), dp(10), dp(10), dp(10))
+                setOnClickListener { if (previewPrep != null) { BuiltInSeekPreviews.cancel(); previewPrep = null; finish() } }
+            }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(18) })
         }
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
@@ -1414,7 +1421,8 @@ class PlayerActivity : Activity() {
 
     override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
         if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) controls.userInteraction()
-        if (activeDialog?.isShowing != true && gestures?.onTouch(event) == true) return true
+        // While previews are prepared the loading screen's own buttons take the taps (the player gestures have no video yet).
+        if (previewPrep == null && activeDialog?.isShowing != true && gestures?.onTouch(event) == true) return true
         return super.dispatchTouchEvent(event)
     }
 

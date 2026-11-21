@@ -126,11 +126,14 @@ class WeTrakrApi internal constructor(
         require(id.matches(Regex("[1-9][0-9]{0,18}"))) { "Invalid WeTrakr list." }
         val path = "/lists/$id/items/all?page=1&limit=20"
         val key = "${accountRevision()}:$path"
-        cache[key]?.takeIf { elapsed() - it.at in 0..120_000 }?.let { return it.records.mapNotNull(::media) }
-        val array = try { JSONArray(request(path)) } catch (error: ApiException) { throw error } catch (_: Exception) { malformed() }
-        val records = (0 until array.length()).mapNotNull(array::optJSONObject)
-        cache[key] = Cached(elapsed(), records)
-        return records.mapNotNull(::media)
+        cache[key]?.takeIf { elapsed() - it.at in 0..ttl(path) }?.let { return it.records.mapNotNull(::media) }
+        synchronized(inFlight.computeIfAbsent(key) { Any() }) {
+            cache[key]?.takeIf { elapsed() - it.at in 0..ttl(path) }?.let { return it.records.mapNotNull(::media) }
+            val array = try { JSONArray(request(path)) } catch (error: ApiException) { throw error } catch (_: Exception) { malformed() }
+            val records = (0 until array.length()).mapNotNull(array::optJSONObject)
+            cache[key] = Cached(elapsed(), records)
+            return records.mapNotNull(::media)
+        }
     }
     private fun playbackBody(identity: PlaybackIdentity): JSONObject {
         val media = JSONObject().put("ids", JSONObject().put("imdb", identity.imdbId))
@@ -183,20 +186,37 @@ class WeTrakrApi internal constructor(
         val limitingClient = appClient ?: clientId()
         if (appClient != null && appClient != clientId()) ended()
         val until = credentials.get("retry_at").toLongOrNull() ?: 0
-        if (now() < until) throw ApiException(429, L10n.tr(R.string.t_wetrakr_asked_us_to_wait_before, "WeTrakr asked us to wait before making more requests."), retryAfterSeconds = ((until - now() + 999) / 1000).toInt())
+        if (now() < until) throw waitError(until)
         val headers = mutableMapOf("wetrakr-api-version" to "1")
         if (access != null) { headers["wetrakr-api-key"] = checkNotNull(appClient); headers["Authorization"] = "Bearer $access" }
         try { return transport(path, method, headers, body) }
         catch (error: ApiException) {
             if (error.code == 429) {
                 val fallback = if (path == "/oauth/device/code") 900 else if (error.errorKey == "slow_down") 5 else 60
+                val retryAt = now() + maxOf(fallback, error.retryAfterSeconds) * 1000L
                 synchronized(stateLock) {
                     if (clientId() == limitingClient)
-                        credentials.put(mapOf("retry_at" to (now() + maxOf(fallback, error.retryAfterSeconds) * 1000L).toString()))
+                        credentials.put(mapOf("retry_at" to retryAt.toString(), "retry_reason" to error.errorKey))
                 }
+                if ("QUOTA" in error.errorKey) throw waitError(retryAt, error.errorKey)
             }
             throw error
         }
+    }
+    /** Set while WeTrakr's limit is in force: one clear reason (with the reset time for a daily quota) and no network call. */
+    override fun waitMessage(): String? {
+        val until = credentials.get("retry_at").toLongOrNull() ?: return null
+        return if (now() < until) waitError(until).message else null
+    }
+    private fun waitError(until: Long, reason: String = credentials.get("retry_reason")): ApiException {
+        val reset = java.time.format.DateTimeFormatter.ofLocalizedTime(java.time.format.FormatStyle.SHORT)
+            .format(java.time.Instant.ofEpochMilli(until).atZone(java.time.ZoneId.systemDefault()))
+        val message = when {
+            reason == APP_QUOTA -> L10n.tr(R.string.t_wetrakr_app_quota_used, "Nabrio has used up today's WeTrakr requests for all its users. WeTrakr resets them at %1\$s.", reset)
+            "QUOTA" in reason -> L10n.tr(R.string.t_wetrakr_user_quota_used, "Your WeTrakr account has used up today's requests. WeTrakr resets them at %1\$s.", reset)
+            else -> L10n.tr(R.string.t_wetrakr_asked_us_to_wait_before, "WeTrakr asked us to wait before making more requests.")
+        }
+        return ApiException(429, message, errorKey = reason, retryAfterSeconds = ((until - now() + 999) / 1000).toInt())
     }
     private fun objectCall(path: String, body: JSONObject) = parseObject(call(path, "POST", body))
     private fun request(path: String, method: String = "GET", body: JSONObject? = null): String {
@@ -215,13 +235,17 @@ class WeTrakrApi internal constructor(
         val revision = accountRevision()
         if (!connected() || revision.isBlank()) throw ApiException(401, L10n.tr(R.string.t_connect_wetrakr_in_settings_first, "Connect WeTrakr in Settings first."))
         val key = "$revision:$path"
-        cache[key]?.takeIf { elapsed() - it.at in 0..120_000 }?.let { return it.records }
-        val records = mutableListOf<JSONObject>()
-        for (page in 1..20) {
-            val raw = request(if (paginated) path + (if ('?' in path) "&" else "?") + "page=$page&limit=100" else path)
-            val array = try { JSONArray(raw) } catch (_: Exception) { malformed() }
-            for (index in 0 until array.length()) array.optJSONObject(index)?.let(records::add)
-            if (!paginated || array.length() < 100) { cache[key] = Cached(elapsed(), records); return records }
+        cache[key]?.takeIf { elapsed() - it.at in 0..ttl(path) }?.let { return it.records }
+        // Two rows asking for the same read at once (Home and a refresh) share one request.
+        synchronized(inFlight.computeIfAbsent(key) { Any() }) {
+            cache[key]?.takeIf { elapsed() - it.at in 0..ttl(path) }?.let { return it.records }
+            val records = mutableListOf<JSONObject>()
+            for (page in 1..20) {
+                val raw = request(if (paginated) path + (if ('?' in path) "&" else "?") + "page=$page&limit=100" else path)
+                val array = try { JSONArray(raw) } catch (_: Exception) { malformed() }
+                for (index in 0 until array.length()) array.optJSONObject(index)?.let(records::add)
+                if (!paginated || array.length() < 100) { cache[key] = Cached(elapsed(), records); return records }
+            }
         }
         throw ApiException(0, L10n.tr(R.string.t_this_wetrakr_list_is_too_large, "This WeTrakr list is too large to load at once. Open it on the website."))
     }
@@ -286,6 +310,11 @@ class WeTrakrApi internal constructor(
         return MediaItemData(id, type, title, item.optString(if (type == "movie") "release_date" else "first_air_date").take(4), image("poster_path"), image("backdrop_path"))
     }
     override fun refreshCaches() = cache.clear()
+    /** Only Continue Watching and Up Next are read again; watchlists and lists keep their cache. */
+    override fun refreshContinueWatching() = forget(PLAYING, WATCHING)
+    private fun forget(vararg prefixes: String) { cache.keys.removeIf { key -> prefixes.any { key.substringAfter(':').startsWith(it) } } }
+    /** Progress rows change with every play; libraries and lists only when the viewer edits them (which clears the cache). */
+    private fun ttl(path: String) = if (path.startsWith(PLAYING) || path.startsWith(WATCHING)) 120_000L else 15 * 60_000L
 
     override fun watchedStamp(): String {
         val activity = parseObject(request("/sync/last_activities"))
@@ -388,7 +417,9 @@ class WeTrakrApi internal constructor(
         val result = parseObject(request("/scrobble/$action?min_progress=95", "POST", body))
         val accepted = if (action == "stop") setOf("pause", "scrobble") else setOf(action)
         if (result.optBoolean("ignored") || result.optString("action") !in accepted) throw ApiException(0, L10n.tr(R.string.t_wetrakr_did_not_accept_this_playback, "WeTrakr did not accept this playback update."))
-        cache.clear(); true
+        // A finished play can also move watchlists; a start or pause only changes the progress rows.
+        if (result.optString("action") == "scrobble") cache.clear() else forget(PLAYING, WATCHING)
+        true
     }
     private fun validate(identity: PlaybackIdentity) {
         require(identity.imdbId.matches(Regex("tt[0-9]{5,12}")) && identity.type in setOf("movie", "series")) { "A matched movie or TV episode is required for WeTrakr." }
@@ -412,6 +443,10 @@ class WeTrakrApi internal constructor(
         private val refreshLock = Any()
         private var generation = 0L
         private val cache = ConcurrentHashMap<String, Cached>()
+        private val inFlight = ConcurrentHashMap<String, Any>()
+        private const val PLAYING = "/sync/tracking/playing/"
+        private const val WATCHING = "/sync/tracking/watching/"
+        private const val APP_QUOTA = "APP_QUOTA_EXCEEDED"
     }
 }
 internal interface WeTrakrCredentials {

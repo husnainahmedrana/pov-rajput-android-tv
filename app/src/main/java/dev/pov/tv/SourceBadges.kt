@@ -196,7 +196,9 @@ internal object SourceBadges {
         // "ENG SUBS" (no flag: flags are for audio only) when it has subtitles in yours. Hindi, Tamil and Telugu share a
         // flag, so the code tells them apart.
         val found = languages?.detect(source) ?: SourceLanguages.detect("${source.title} · ${source.detail}")
-        val spoken = found.audio.sortedBy { if (languages != null && it == languages.audio) 0 else 1 }
+        // A Latino release also counts as plain Spanish for matching; its badge is LAT alone, not LAT plus a Spain SPA.
+        val spoken = found.audio.let { if (SourceLanguages.LATIN_SPANISH in it) it - "es" else it }
+            .sortedBy { if (languages != null && it == languages.audio) 0 else 1 }
         spoken.take(MAX_LANGUAGES).forEach { add(SourceBadge(languageTag(it), SourceBadgeTone.LANGUAGE)) }
         if (spoken.size > MAX_LANGUAGES) add(SourceBadge("+${spoken.size - MAX_LANGUAGES}", SourceBadgeTone.LANGUAGE))
         if (spoken.isEmpty() && found.multiAudio) add(SourceBadge(L10n.tr(R.string.t_multi_audio, "MULTI AUDIO"), SourceBadgeTone.LANGUAGE))
@@ -267,7 +269,11 @@ internal object SourceBadges {
         (runCatching { java.util.Locale.forLanguageTag(code).isO3Language }.getOrNull()?.takeIf { it.isNotBlank() } ?: code).uppercase()
 
     /** An audio language: its flag and code ("ENG" after the GB flag). */
-    fun languageTag(code: String): String = "${flag(code)} ${languageCode(code)}".trim()
+    fun languageTag(code: String): String =
+        // Spanish as spoken in Latin America (es-419): Mexico's flag and LAT, as release names write it, so it never
+        // reads the same as Spain's SPA.
+        if (code.equals(SourceLanguages.LATIN_SPANISH, true)) "${String(Character.toChars(0x1F1F2))}${String(Character.toChars(0x1F1FD))} LAT"
+        else "${flag(code)} ${languageCode(code)}".trim()
 
     /** A badge's gradient, left to right, in the Aurora (default) or Sunset set. */
     fun gradient(badge: SourceBadge, style: BadgeStyle = BadgeStyle.AURORA): Pair<String, String>? = if (style == BadgeStyle.SUNSET) sunset(badge) else when (badge.tone) {

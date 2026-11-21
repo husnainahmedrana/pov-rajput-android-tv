@@ -50,7 +50,21 @@ internal object SpacedChoiceDialog {
             buttons.addView(main, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(12) })
         }
         dialog = AlertDialog.Builder(activity).setTitle(title).setMessage(message).setView(buttons).create()
-        dialog.setOnShowListener { main.requestFocus() }
+        dialog.setOnShowListener {
+            main.requestFocus()
+            // Side by side only when both buttons fit (a car tablet or small screen got them cut off): otherwise stacked.
+            buttons.post {
+                fun natural(view: TextView) = view.apply { measure(android.view.View.MeasureSpec.UNSPECIFIED, android.view.View.MeasureSpec.UNSPECIFIED) }.measuredWidth
+                val needed = buttons.paddingLeft + buttons.paddingRight + natural(other) + natural(main) + dp(12)
+                if (!phone && needed > buttons.width) {
+                    buttons.orientation = LinearLayout.VERTICAL
+                    buttons.removeAllViews()
+                    buttons.addView(main, LinearLayout.LayoutParams(-1, -2))
+                    buttons.addView(other, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+                    main.requestFocus()
+                }
+            }
+        }
         dialog.show()
     }
 }

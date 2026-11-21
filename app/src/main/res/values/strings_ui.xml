@@ -1612,7 +1612,6 @@
     <string name="t_wetrakr_could_not_mark_every_episode">WeTrakr could not mark every episode. Refresh your library before retrying.</string>
     <string name="t_wetrakr_did_not_accept_this_playback">WeTrakr did not accept this playback update.</string>
     <string name="t_wetrakr_did_not_confirm_removal_try">WeTrakr did not confirm removal. Try again.</string>
-    <string name="t_wetrakr_or_simkl_watchlists_continue_watching">WeTrakr or Simkl: watchlists, Continue Watching, Up Next and progress sync.</string>
     <string name="t_wetrakr_returned_an_unreadable_response_try">WeTrakr returned an unreadable response. Try again later.</string>
     <string name="t_what_play_starts_on_its_own">What Play starts on its own, and the next episode.</string>
     <string name="t_what_play_starts_on_its_own_2">"What Play starts on its own, in your sort order: the first good link as soon as one is in, the best after a few seconds, or the best once the search ends. "</string>
@@ -1900,4 +1899,27 @@
     <string name="t_opening_in_x">Opening in %1$s</string>
     <string name="t_subtitles_synced_automatically_x">Subtitles synced automatically (%1$s)</string>
     <string name="t_to_resume_in_kodi_turn_on">To resume where you left off in Kodi, turn on Kodi\'s Settings → Services → Control → Allow remote control from applications on this system.</string>
+    <string name="t_trakt">Trakt</string>
+    <string name="t_wetrakr_trakt_or_simkl">WeTrakr, Trakt or Simkl: watchlists, Continue Watching, Up Next and progress sync.</string>
+    <string name="t_wetrakr_app_quota_used">Nabrio has used up today\'s WeTrakr requests for all its users. WeTrakr resets them at %1$s.</string>
+    <string name="t_wetrakr_user_quota_used">Your WeTrakr account has used up today\'s requests. WeTrakr resets them at %1$s.</string>
+    <string name="t_trakt_asked_us_to_wait">Trakt asked us to wait before making more requests. Try again in %1$s seconds.</string>
+    <string name="t_trakt_account_limit">Your Trakt account has reached its list or watchlist limit. Remove items on trakt.tv or upgrade to VIP.</string>
+    <string name="t_trakt_could_not_confirm_list_removal">Trakt could not confirm list removal. Refresh the list and try again.</string>
+    <string name="t_trakt_could_not_mark_every_episode">Trakt could not mark every episode. Refresh your library before retrying.</string>
+    <string name="t_trakt_could_not_apply_this_update">Trakt could not apply this update. Refresh your library to check its current state.</string>
+    <string name="t_trakt_did_not_accept_this_playback">Trakt did not accept this playback update.</string>
+    <string name="t_connect_trakt_in_settings_first">Connect Trakt in Settings first.</string>
+    <string name="t_link_trakt_again_to_renew_this">Link Trakt again to renew this session.</string>
+    <string name="t_this_trakt_list_is_too_large">This Trakt list is too large to load at once. Open it on trakt.tv.</string>
+    <string name="t_trakt_returned_an_unreadable_response">Trakt returned an unreadable response. Try again later.</string>
+    <string name="t_this_trakt_connection_changed_or_expired">This Trakt connection changed or expired. Link it again in Settings.</string>
+    <string name="t_send_watch_history_to_x">Send watch history to %1$s</string>
+    <string name="t_also_keep_history_on_x">Plays and watched marks also go to %1$s, and its liked lists can show on Home. Continue Watching, Up Next and watchlists come from %2$s.</string>
+    <string name="t_connections_per_video">Connections per video</string>
+    <string name="t_connections_x_default">%1$s (default)</string>
+    <string name="t_connections_per_video_hint">Debrid and direct videos download over several connections once playing. Choose 1 if videos never start on this device. Only this device.</string>
+    <string name="t_sort_by">Sort by</string>
+    <string name="t_sort_by_x">Sort by: %1$s</string>
+    <string name="t_genre_x">Genre: %1$s</string>
 </resources>

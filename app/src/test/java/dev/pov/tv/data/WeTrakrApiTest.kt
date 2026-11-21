@@ -149,7 +149,9 @@ class WeTrakrApiTest {
         }
         assertEquals(101, h.api.watchlist("movie").size); assertEquals(2, h.calls.size)
         assertEquals(101, h.api.watchlist("movie").size); assertEquals(2, h.calls.size)
-        h.advance(120001); h.api.watchlist("movie"); assertEquals(4, h.calls.size)
+        // Libraries keep their cache for 15 minutes (progress rows for 2): two minutes later it is still served from memory.
+        h.advance(120001); h.api.watchlist("movie"); assertEquals(2, h.calls.size)
+        h.advance(15 * 60_000L - 120_000L); h.api.watchlist("movie"); assertEquals(4, h.calls.size)
     }
     @Test fun `unknown IDs are not guessed and episode identities use parent show IDs`() {
         val h = Harness(); assertNull(h.api.media(JSONObject().put("id", 123).put("type", "movie").put("title", "Example")))

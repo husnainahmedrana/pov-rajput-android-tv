@@ -1612,7 +1612,6 @@
     <string name="t_wetrakr_could_not_mark_every_episode">WeTrakr kon niet alle afleveringen markeren. Vernieuw je bibliotheek voordat je het opnieuw probeert.</string>
     <string name="t_wetrakr_did_not_accept_this_playback">WeTrakr accepteerde deze afspeelupdate niet.</string>
     <string name="t_wetrakr_did_not_confirm_removal_try">WeTrakr bevestigde het verwijderen niet. Probeer het opnieuw.</string>
-    <string name="t_wetrakr_or_simkl_watchlists_continue_watching">WeTrakr of Simkl: kijklijsten, Verder kijken, Hierna en voortgangssynchronisatie.</string>
     <string name="t_wetrakr_returned_an_unreadable_response_try">WeTrakr gaf een onleesbaar antwoord terug. Probeer het later opnieuw.</string>
     <string name="t_what_play_starts_on_its_own">Wat Afspelen vanzelf start, en de volgende aflevering.</string>
     <string name="t_what_play_starts_on_its_own_2">Wat Afspelen vanzelf start, in jouw sortering: de eerste goede link zodra die er is, de beste na een paar seconden, of de beste als het zoeken klaar is.</string>
@@ -1900,4 +1899,27 @@
     <string name="t_opening_in_x">Openen in %1$s</string>
     <string name="t_subtitles_synced_automatically_x">Ondertiteling automatisch gesynchroniseerd (%1$s)</string>
     <string name="t_to_resume_in_kodi_turn_on">Om in Kodi verder te gaan waar je was, zet in Kodi Instellingen → Diensten → Bediening → Bediening op afstand door toepassingen op dit systeem toestaan aan.</string>
+    <string name="t_trakt">Trakt</string>
+    <string name="t_wetrakr_trakt_or_simkl">WeTrakr, Trakt of Simkl: kijklijsten, Verder kijken, Hierna en voortgang synchroniseren.</string>
+    <string name="t_wetrakr_app_quota_used">Nabrio heeft de WeTrakr-verzoeken van vandaag voor alle gebruikers opgebruikt. WeTrakr zet ze om %1$s terug.</string>
+    <string name="t_wetrakr_user_quota_used">Je WeTrakr-account heeft de verzoeken van vandaag opgebruikt. WeTrakr zet ze om %1$s terug.</string>
+    <string name="t_trakt_asked_us_to_wait">Trakt vraagt even te wachten met meer verzoeken. Probeer het over %1$s seconden opnieuw.</string>
+    <string name="t_trakt_account_limit">Je Trakt-account heeft de limiet voor lijsten of de kijklijst bereikt. Verwijder items op trakt.tv of word VIP.</string>
+    <string name="t_trakt_could_not_confirm_list_removal">Trakt kon het verwijderen uit de lijst niet bevestigen. Vernieuw de lijst en probeer het opnieuw.</string>
+    <string name="t_trakt_could_not_mark_every_episode">Trakt kon niet elke aflevering markeren. Vernieuw je bibliotheek voordat je het opnieuw probeert.</string>
+    <string name="t_trakt_could_not_apply_this_update">Trakt kon deze wijziging niet toepassen. Vernieuw je bibliotheek om de huidige stand te zien.</string>
+    <string name="t_trakt_did_not_accept_this_playback">Trakt heeft deze afspeelupdate niet geaccepteerd.</string>
+    <string name="t_connect_trakt_in_settings_first">Koppel eerst Trakt in Instellingen.</string>
+    <string name="t_link_trakt_again_to_renew_this">Koppel Trakt opnieuw om deze sessie te vernieuwen.</string>
+    <string name="t_this_trakt_list_is_too_large">Deze Trakt-lijst is te groot om in één keer te laden. Open hem op trakt.tv.</string>
+    <string name="t_trakt_returned_an_unreadable_response">Trakt gaf een onleesbaar antwoord. Probeer het later opnieuw.</string>
+    <string name="t_this_trakt_connection_changed_or_expired">Deze Trakt-koppeling is gewijzigd of verlopen. Koppel hem opnieuw in Instellingen.</string>
+    <string name="t_send_watch_history_to_x">Kijkgeschiedenis naar %1$s sturen</string>
+    <string name="t_also_keep_history_on_x">Afspelen en gezien-markeringen gaan ook naar %1$s, en zijn gelikete lijsten kunnen op Start staan. Verder kijken, Hierna en kijklijsten komen van %2$s.</string>
+    <string name="t_connections_per_video">Verbindingen per video</string>
+    <string name="t_connections_x_default">%1$s (standaard)</string>
+    <string name="t_connections_per_video_hint">Debrid- en directe video\'s downloaden tijdens het afspelen over meerdere verbindingen. Kies 1 als video\'s op dit apparaat nooit starten. Alleen dit apparaat.</string>
+    <string name="t_sort_by">Sorteren op</string>
+    <string name="t_sort_by_x">Sorteren op: %1$s</string>
+    <string name="t_genre_x">Genre: %1$s</string>
 </resources>

@@ -188,7 +188,7 @@ internal object UsenetPlayback {
                     PlaybackStatus.stage(L10n.tr(R.string.t_status_checking_release, "Checking the release is complete"))
                     try { healthy() } catch (error: Exception) { opened.source.close(); throw error }
                     PlaybackStatus.stage(L10n.tr(R.string.t_status_first_data, "Downloading the start of the video"))
-                    notify("Streaming from ${providers[0].name} · ${providers[0].connections} connections · pipeline ${providers[0].pipelineDepth} · ${opened.kind}" +
+                    UsenetLog.i("Streaming from ${providers[0].name} · ${providers[0].connections} connections · pipeline ${providers[0].pipelineDepth} · ${opened.kind}" +
                         if (providers.size > 1) " · ${providers.size - 1} backup" else "")
                     UsenetSessions.Session(key, chain, opened.source)
                 } catch (error: Exception) { chain.close(); throw error }
@@ -263,7 +263,13 @@ internal object UsenetPlayback {
         val indexer = indexers.forLink(UsenetLinks.nzbAddress(address))
         if (indexer != null && indexers.grabsExhausted(indexer)) throw IOException(
             L10n.tr(R.string.t_x_used_today_s_grabs, "%1\$s has used today's grabs. Pick a link from another indexer.", indexer.name))
-        val text = Newznab.fetch(UsenetLinks.nzbAddress(address), UsenetHeaders.grab({ store.get(it) }), 24 * 1024 * 1024)
+        fun grab() = Newznab.fetch(UsenetLinks.nzbAddress(address), UsenetHeaders.grab({ store.get(it) }), 24 * 1024 * 1024)
+        val text = try { grab() } catch (error: dev.pov.tv.data.ApiException) {
+            if (error.code != 0 && error.code < 500) throw error
+            UsenetLog.i("indexer didn't answer (${error.code}): asking once more")
+            Thread.sleep(1_500)
+            grab()
+        }
         if ("<segment" !in text) throw IOException(
             if ("<error" in text.take(600)) L10n.tr(R.string.t_the_indexer_refused_this_download, "The indexer refused this download. Its daily grab limit may be used up.")
             else L10n.tr(R.string.t_the_indexer_didn_t_send_an_article_list, "The indexer didn't send an article list for this link."))
@@ -311,19 +317,19 @@ internal object EasynewsNntp {
             try {
                 PlaybackStatus.stage(L10n.tr(R.string.t_status_connecting_x, "Connecting to %1\$s", "Easynews"))
                 val nzb = EasynewsNzb.fetch(token, Easynews.auth(user, password))?.let(Nzb::parse)
-                if (nzb == null || nzb.files.isEmpty()) { notify("NNTP: Easynews has no article list for this link · using web"); null }
+                if (nzb == null || nzb.files.isEmpty()) { UsenetLog.i("NNTP: Easynews has no article list for this link · using web"); null }
                 else {
                     val count = connections(store); val depth = pipeline(store)
                     val made = NntpPool(server(user, password), count, depth, log = { UsenetLog.i(it) })
                     pool = made
                     val opened = UsenetMedia.open(made, nzb, cache) { UsenetLog.i(it) }
-                    notify("Streaming over NNTP · $count connections · pipeline $depth · ${opened.kind}")
+                    UsenetLog.i("Streaming over NNTP · $count connections · pipeline $depth · ${opened.kind}")
                     UsenetSessions.Session(key, made, opened.source)
                 }
             } catch (error: Exception) {
                 pool?.close()
                 UsenetLog.w("NNTP stream couldn't start", error)
-                notify(if (error is UnsupportedSetException) "NNTP: ${error.message} · using web" else "NNTP didn't start (${error.message?.take(70)}) · using web")
+                UsenetLog.i(if (error is UnsupportedSetException) "NNTP: ${error.message} · using web" else "NNTP didn't start (${error.message?.take(70)}) · using web")
                 null
             }
         }
