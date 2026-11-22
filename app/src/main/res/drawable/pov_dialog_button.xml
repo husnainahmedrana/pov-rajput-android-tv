@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Dialog actions: translucent pills that turn solid white when the remote focuses them. -->
+<!-- Dialog actions: translucent pills that turn solid white when the remote focuses them. The 3dp inset above and below
+     keeps stacked buttons (a narrow phone) apart without a layout margin, which the dialog's button bar would crop. -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:state_focused="true"><shape android:shape="rectangle"><solid android:color="#FFFFFFFF" /><corners android:radius="10dp" /></shape></item>
-    <item android:state_pressed="true"><shape android:shape="rectangle"><solid android:color="#DDFFFFFF" /><corners android:radius="10dp" /></shape></item>
-    <item><shape android:shape="rectangle"><solid android:color="#24FFFFFF" /><corners android:radius="10dp" /></shape></item>
+    <item android:state_focused="true"><inset android:insetTop="3dp" android:insetBottom="3dp"><shape android:shape="rectangle"><solid android:color="#FFFFFFFF" /><corners android:radius="10dp" /></shape></inset></item>
+    <item android:state_pressed="true"><inset android:insetTop="3dp" android:insetBottom="3dp"><shape android:shape="rectangle"><solid android:color="#DDFFFFFF" /><corners android:radius="10dp" /></shape></inset></item>
+    <item><inset android:insetTop="3dp" android:insetBottom="3dp"><shape android:shape="rectangle"><solid android:color="#24FFFFFF" /><corners android:radius="10dp" /></shape></inset></item>
 </selector>

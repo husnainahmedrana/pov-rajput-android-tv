@@ -73,3 +73,26 @@ internal class LayoutBoundaryFrame(context: Context) : FrameLayout(context) {
         }
     }
 }
+
+/**
+ * A dialog's scrolling list that never grows past [maxHeight], so on a phone the dialog's title and buttons (Reset,
+ * Done) stay on screen and the list scrolls between them instead of pushing them off the bottom.
+ */
+internal class MaxHeightScrollView(context: Context, private val maxHeight: Int) : ScrollView(context) {
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val size = MeasureSpec.getSize(heightMeasureSpec)
+        val limit = if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED) maxHeight else minOf(size, maxHeight)
+        super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(limit, MeasureSpec.AT_MOST))
+    }
+
+    companion object {
+        /**
+         * Room for a dialog list: a share of the screen, so the system bars, the title and the button row (which Android
+         * squeezes and crops when the dialog runs out of height) always get their full space.
+         */
+        fun dialogListHeight(context: Context): Int {
+            val metrics = context.resources.displayMetrics
+            return (metrics.heightPixels * 0.58f).toInt().coerceAtLeast((160 * metrics.density).toInt())
+        }
+    }
+}

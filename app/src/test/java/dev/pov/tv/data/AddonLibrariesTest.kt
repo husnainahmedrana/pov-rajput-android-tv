@@ -78,9 +78,9 @@ class AddonLibrariesTest {
     }
 
     @Test fun `library is a movable sort row, on top by default and for orders saved before it existed`() {
-        assertEquals(listOf("library", "language", "quality", "preferred", "age", "size"), SourceSortOrder.priority(null))
-        assertEquals(listOf("library", "quality", "language", "preferred", "age", "size"), SourceSortOrder.priority("quality,language,size"))
-        assertEquals(listOf("quality", "library", "language", "preferred", "age", "size"), SourceSortOrder.priority("quality,library,language,size"))
+        assertEquals(listOf("library", "language", "quality", "source", "preferred", "age", "size"), SourceSortOrder.priority(null))
+        assertEquals(listOf("library", "quality", "source", "language", "preferred", "age", "size"), SourceSortOrder.priority("quality,language,size"))
+        assertEquals(listOf("quality", "source", "library", "language", "preferred", "age", "size"), SourceSortOrder.priority("quality,library,language,size"))
         val small = SourceItem("Small.720p", "p", qualityHeight = 720)
         val kept = SourceItem("Kept.1080p", "p", qualityHeight = 1080, inLibrary = true)
         val best = SourceItem("Best.2160p", "p", qualityHeight = 2160)

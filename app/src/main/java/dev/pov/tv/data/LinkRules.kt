@@ -130,6 +130,11 @@ object LinkRules {
 
     const val MAX_PATTERN = 200
     const val MAX_WORDS = 30
+    /**
+     * The Prefer switches' default rank, best first: picture and sound before source and codec (the order the tiles
+     * show). The viewer can reorder them (Prefer order); a link matching more of the top switches ranks higher.
+     */
+    val DEFAULT_PREFER_ORDER = listOf("dv", "hdr", "atmos", "lossless", "remux", "webdl", "hevc", "tenbit", "proper")
 
     /** The saved rules, read and written as one JSON object. */
     data class Rules(
@@ -150,7 +155,16 @@ object LinkRules {
         val hiddenQualities: Set<String> = emptySet(),
         /** Switches the viewer changed (preset ids), so a later default change leaves their choice alone. */
         val touched: Set<String> = emptySet(),
+        /** The Prefer switches in the viewer's rank, best first; empty for [DEFAULT_PREFER_ORDER]. */
+        val presetOrder: List<String> = emptyList(),
     ) {
+        /** Every Prefer switch, best first: the viewer's order, repaired (unknown ids dropped, missing ones after). */
+        val preferOrder: List<String> by lazy {
+            val known = PREFER.map { it.id }
+            val saved = presetOrder.filter { it in known }.distinct()
+            (saved + DEFAULT_PREFER_ORDER.filter { it in known && it !in saved }).let { order -> order + known.filter { it !in order } }
+        }
+        private val orderedPresets by lazy { preferOrder.mapNotNull { id -> PREFER.firstOrNull { it.id == id } } }
         /** How many Hide rules are on, for the Link rules summary ([badCopies]: the app's "Hide bad copies" switch). */
         fun hideCount(badCopies: Boolean) = (if (badCopies) 1 else 0) + hidePresets.size + hideWords.size +
             (if (hidePattern.isNotBlank()) 1 else 0) + (if (hideOtherYears) 1 else 0)
@@ -178,16 +192,21 @@ object LinkRules {
 
         /**
          * How strongly a link is preferred: lower is better, [Int.MAX_VALUE] when nothing matches. The viewer's own
-         * words come first (in their order), then the switches (trusted groups ranked by their place in the list),
-         * then the custom pattern.
+         * words come first (in their order), then the switches, then trusted groups (ranked by their place in the list),
+         * then the custom pattern. Switches count together, the top one weighing most: with HDR, Atmos, HEVC in that
+         * order, HDR + Atmos beats HDR + HEVC beats HDR alone beats Atmos + HEVC, and all three beat everything.
          */
         fun rank(name: String): Int {
             preferMatchers.forEachIndexed { index, matcher -> if (matcher.containsMatchIn(name)) return index }
             var base = MAX_WORDS
-            for (preset in PREFER) {
-                if (preset.id in preferPresets && preset.id !in unsupportedPrefer && preset.pattern.containsMatchIn(name)) return base
-                base++
+            val count = orderedPresets.size
+            var matched = 0
+            orderedPresets.forEachIndexed { index, preset ->
+                if (preset.id in preferPresets && preset.id !in unsupportedPrefer && preset.pattern.containsMatchIn(name))
+                    matched = matched or (1 shl (count - 1 - index))
             }
+            if (matched != 0) return base + ((1 shl count) - 1 - matched)
+            base += 1 shl count
             if (trusted.isNotEmpty()) releaseGroup(name)?.lowercase(Locale.ROOT)?.let { group ->
                 trusted.indexOf(group).takeIf { it >= 0 }?.let { return base + it }
             }
@@ -211,7 +230,7 @@ object LinkRules {
             .put("hideGroupSets", JSONArray(hideGroupSets.toList())).put("hideOtherYears", hideOtherYears)
             .put("disabledGroups", JSONObject().apply { disabledGroups.forEach { (id, names) -> put(id, JSONArray(names.toList())) } })
             .put("hiddenQualities", JSONArray(hiddenQualities.toList()))
-            .put("touched", JSONArray(touched.toList())).put("v", VERSION).toString()
+            .put("touched", JSONArray(touched.toList())).put("presetOrder", JSONArray(presetOrder)).put("v", VERSION).toString()
 
         companion object {
             /** 2: separate Dolby Vision / HDR and Atmos / lossless switches; samples and trailers hidden by default. */
@@ -231,6 +250,7 @@ object LinkRules {
                         preferPresets = savedPrefer + (if (old && "hdr" in savedPrefer) setOf("dv") else emptySet()) +
                             (if (old && "lossless" in savedPrefer) setOf("atmos") else emptySet()),
                         touched = touched,
+                        presetOrder = list("presetOrder").orEmpty(),
                         groupSets = list("groupSets")?.toSet() ?: Rules().groupSets,
                         customGroups = json.optJSONObject("customGroups")?.let { custom ->
                             custom.keys().asSequence().associateWith { id -> custom.optJSONArray(id)?.let { array -> (0 until array.length()).map { array.optString(it).trim() }.filter(String::isNotBlank) }.orEmpty() }

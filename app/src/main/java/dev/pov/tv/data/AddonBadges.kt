@@ -55,7 +55,11 @@ object AddonBadges {
         "althub" to "altHUB", "abnzb" to "abNZB", "tabularasa" to "Tabula Rasa", "omgwtfnzbs" to "omgwtfnzbs", "digitalcarnage" to "Digital Carnage")
     /** An indexer's logo id from its name ("NZBgeek", "NzbNest", "Usenet-Crawler"…), when we have one. */
     /** The news provider (for its logo) that a provider's name or server address belongs to: "My Newshosting", "news.tweaknews.eu". */
-    fun newsProvider(text: String): String? = text.lowercase(Locale.ROOT).filter { it.isLetterOrDigit() }.let { plain -> NEWS_PROVIDER_IDS.firstOrNull { it in plain } }
+    /** The one mentioned first wins: "Tweaknews (Newshosting deal)" is Tweaknews. */
+    fun newsProvider(text: String): String? = text.lowercase(Locale.ROOT).filter { it.isLetterOrDigit() }.let { plain ->
+        NEWS_PROVIDER_IDS.mapNotNull { id -> plain.indexOf(id).takeIf { it >= 0 }?.let { id to it } }.minByOrNull { it.second }?.first }
+    /** A provider's logo: its name decides first (Tweaknews on a newshosting.com server is Tweaknews), then its server. */
+    fun newsProvider(name: String, host: String): String? = newsProvider(name) ?: newsProvider(host)
 
     fun indexer(name: String): String? = name.lowercase(Locale.ROOT).let { lower -> INDEXERS.firstOrNull { it.first in lower }?.second }
 

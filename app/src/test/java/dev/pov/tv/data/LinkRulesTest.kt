@@ -148,4 +148,33 @@ class LinkRulesTest {
         // Preferred above Quality: PSA wins whatever the quality.
         assertEquals("Movie.1080p-PSA", SourceSortOrder(priority = listOf("preferred", "quality", "size"), preferredRank = rank).sorted(links).first().title)
     }
+
+    @Test fun `Prefer switches count together, the top one weighing most`() {
+        val rules = LinkRules.Rules(preferPresets = setOf("hdr", "atmos", "hevc"), presetOrder = listOf("hdr", "atmos", "hevc"))
+        val all = rules.rank("Movie.2024.2160p.HDR.Atmos.x265-ABC.mkv")
+        val hdrAtmos = rules.rank("Movie.2024.2160p.HDR.Atmos.x264-ABC.mkv")
+        val hdrHevc = rules.rank("Movie.2024.2160p.HDR.DDP5.1.x265-ABC.mkv")
+        val hdr = rules.rank("Movie.2024.2160p.HDR.DDP5.1.x264-ABC.mkv")
+        val atmosHevc = rules.rank("Movie.2024.1080p.Atmos.x265-ABC.mkv")
+        val hevc = rules.rank("Movie.2024.1080p.DDP5.1.x265-ABC.mkv")
+        assertTrue(all < hdrAtmos && hdrAtmos < hdrHevc && hdrHevc < hdr && hdr < atmosHevc && atmosHevc < hevc)
+        assertTrue(hevc < Int.MAX_VALUE)
+    }
+
+    @Test fun `the default Prefer order puts picture and sound before codec, and a saved order is repaired`() {
+        val rules = LinkRules.Rules(preferPresets = setOf("hdr", "atmos", "hevc"))
+        // The reported case: HEVC alone no longer beats HDR + Atmos.
+        assertTrue(rules.rank("Movie.2160p.HDR.Atmos.x264-ABC") < rules.rank("Movie.1080p.DDP5.1.x265-ABC"))
+        assertEquals(LinkRules.DEFAULT_PREFER_ORDER, LinkRules.Rules().preferOrder.take(LinkRules.DEFAULT_PREFER_ORDER.size))
+        val repaired = LinkRules.Rules(presetOrder = listOf("hevc", "bogus", "hevc", "atmos")).preferOrder
+        assertEquals(listOf("hevc", "atmos"), repaired.take(2))
+        assertEquals(LinkRules.PREFER.map { it.id }.toSet(), repaired.toSet())
+        assertEquals(LinkRules.PREFER.size, repaired.size)
+    }
+
+    @Test fun `the Prefer order is saved with the rules`() {
+        val rules = LinkRules.Rules(preferPresets = setOf("hevc", "hdr"), presetOrder = listOf("hevc", "hdr"))
+        assertEquals(listOf("hevc", "hdr"), LinkRules.Rules.fromJson(rules.toJson()).presetOrder)
+        assertEquals(emptyList<String>(), LinkRules.Rules.fromJson(LinkRules.Rules().toJson()).presetOrder)
+    }
 }

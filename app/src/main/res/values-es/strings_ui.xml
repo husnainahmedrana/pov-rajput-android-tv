@@ -1924,4 +1924,13 @@
     <string name="t_sort_by">Ordenar por</string>
     <string name="t_sort_by_x">Ordenar por: %1$s</string>
     <string name="t_genre_x">Género: %1$s</string>
+    <string name="t_other_add_ons">Otros complementos</string>
+    <string name="t_source">Fuente</string>
+    <string name="t_source_first">Fuente primero</string>
+    <string name="t_source_order">Orden de fuentes</string>
+    <string name="t_source_order_hint">Los enlaces de las fuentes más altas de esta lista van primero. Los torrents sin caché van al final.</string>
+    <string name="t_prefer_order">Orden de Preferir</string>
+    <string name="t_no_prefer_switches_on">Ningún interruptor de Preferir activado</string>
+    <string name="t_prefer_order_row">Ordena los interruptores de Preferir, p. ej. HDR y Atmos antes que HEVC</string>
+    <string name="t_prefer_order_hint">Los interruptores de Preferir activados, el mejor primero. Un enlace que cumple más de los de arriba sube más.</string>
 </resources>

@@ -63,7 +63,7 @@ object UsenetSearch {
         val agent = UsenetHeaders.query({ store.get(it) })
         val client = Newznab()
         // The main provider's logo id, when it is one the app has a logo for.
-        val provider = AddonBadges.newsProvider("${providers[0].name} ${providers[0].host}").orEmpty()
+        val provider = AddonBadges.newsProvider(providers[0].name, providers[0].host).orEmpty()
         fun search(indexer: NewznabIndexer, identity: PlaybackIdentity): List<SourceItem> {
             // Out of today's searches (its own limit or the one the indexer reports): skipped like an indexer that is down.
             if (config.exhausted(indexer)) throw IllegalStateException(L10n.tr(R.string.t_x_used_today_s_searches, "%1\$s has used today's searches", indexer.name))

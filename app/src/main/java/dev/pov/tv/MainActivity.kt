@@ -7503,6 +7503,22 @@ class MainActivity : Activity() {
         settingsRow(more, getString(R.string.t_link_sorting), sort.label, getString(R.string.t_where_preferred_sits_among_library_language)) {
             SourceSortPreferences.show(this, { refreshSettings() })
         }
+        // The switches that are on, best first; a link matching more of the top ones ranks higher.
+        fun preferName(id: String) = preferLabels[id] ?: id
+        fun onInOrder(value: LinkRules.Rules) = value.preferOrder.filter { it in value.preferPresets && (it in preferLabels) }
+        val onOrder = onInOrder(rules)
+        settingsRow(more, getString(R.string.t_prefer_order),
+            if (onOrder.isEmpty()) getString(R.string.t_no_prefer_switches_on) else onOrder.take(3).joinToString(" → ", transform = ::preferName) + if (onOrder.size > 3) "…" else "",
+            getString(R.string.t_prefer_order_row)) {
+            SourceSortPreferences.showOrder(this, getString(R.string.t_prefer_order), getString(R.string.t_prefer_order_hint),
+                { onInOrder(sort.rules) }, ::preferName, { moved ->
+                    // Only the switches that are on move; the ones that are off keep their places.
+                    change { value ->
+                        val queue = ArrayDeque(moved)
+                        value.copy(presetOrder = value.preferOrder.map { id -> if (id in moved) queue.removeFirst() else id })
+                    }
+                }) { changed -> if (changed) refreshSettings() }
+        }
         settingsRow(more, getString(R.string.t_your_words_to_prefer), rules.preferWords.take(3).joinToString(", ").ifEmpty { getString(R.string.t_none) } + if (rules.preferWords.size > 3) "…" else "",
             getString(R.string.t_your_own_keywords_ranked_first_in)) { navigate { playbackPage("words:prefer") } }
         settingsToggle(more, getString(R.string.t_your_words_beat_cached_links), getString(R.string.t_a_link_with_one_of_your),

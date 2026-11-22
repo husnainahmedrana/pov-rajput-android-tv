@@ -59,10 +59,12 @@
         <item name="android:textAllCaps">false</item>
         <item name="android:textSize">15sp</item>
         <item name="android:fontFamily">sans-serif-medium</item>
-        <item name="android:minWidth">112dp</item>
-        <item name="android:minHeight">44dp</item>
-        <item name="android:paddingStart">22dp</item>
-        <item name="android:paddingEnd">22dp</item>
+        <item name="android:minWidth">96dp</item>
+        <!-- 50dp tall, of which the background leaves 3dp clear above and below (see pov_dialog_button): a 44dp pill,
+             and stacked buttons on a narrow phone keep a gap. A layout margin here would crop the button tops instead. -->
+        <item name="android:minHeight">50dp</item>
+        <item name="android:paddingStart">18dp</item>
+        <item name="android:paddingEnd">18dp</item>
         <item name="android:layout_marginStart">10dp</item>
         <item name="android:stateListAnimator">@null</item>
     </style>

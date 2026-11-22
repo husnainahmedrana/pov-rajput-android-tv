@@ -28,6 +28,6 @@ class AgeSortTest {
     }
 
     @Test fun `a saved order from before gets Age just before file size`() {
-        assertEquals(listOf("library", "language", "quality", "preferred", "age", "size"), SourceSortOrder.priority("library,language,quality,preferred,size"))
+        assertEquals(listOf("library", "language", "quality", "source", "preferred", "age", "size"), SourceSortOrder.priority("library,language,quality,preferred,size"))
     }
 }

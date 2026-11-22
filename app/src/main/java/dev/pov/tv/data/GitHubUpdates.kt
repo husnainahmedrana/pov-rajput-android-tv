@@ -59,7 +59,11 @@ class GitHubUpdates(private val context: Context) {
             while (true) { val count = input.read(buffer); if (count < 0) break; digest.update(buffer, 0, count) }
         }
         check(hex(digest.digest()) == release.sha256) { L10n.tr(R.string.t_update_checksum_did_not_match_download, "Update checksum did not match. Download it again.") }
-        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+        // Ask for both: on Android 9-12 (e.g. Fire OS 7 on Fire TV Cube 3) getPackageArchiveInfo only reads the
+        // APK's certificates when GET_SIGNATURES is set, so GET_SIGNING_CERTIFICATES alone left signingInfo null
+        // and every update failed the signer check below.
+        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
+            else PackageManager.GET_SIGNATURES
         val installed = context.packageManager.getPackageInfo(context.packageName, flags)
         val archive = context.packageManager.getPackageArchiveInfo(file.absolutePath, flags)
             ?: error(L10n.tr(R.string.t_the_downloaded_apk_is_invalid, "The downloaded APK is invalid."))
@@ -76,7 +80,8 @@ class GitHubUpdates(private val context: Context) {
 
     @Suppress("DEPRECATION")
     private fun signers(info: PackageInfo): Set<String> =
-        (if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners else info.signatures)
+        ((if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners else null)?.takeIf { it.isNotEmpty() }
+            ?: info.signatures)
             ?.map { hex(MessageDigest.getInstance("SHA-256").digest(it.toByteArray())) }?.toSet().orEmpty()
     @Suppress("DEPRECATION")
     fun installedCode(): Long = code(context.packageManager.getPackageInfo(context.packageName, 0))

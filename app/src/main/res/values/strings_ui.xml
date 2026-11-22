@@ -1924,4 +1924,13 @@
     <string name="t_sort_by">Sort by</string>
     <string name="t_sort_by_x">Sort by: %1$s</string>
     <string name="t_genre_x">Genre: %1$s</string>
+    <string name="t_other_add_ons">Other add-ons</string>
+    <string name="t_source">Source</string>
+    <string name="t_source_first">Source first</string>
+    <string name="t_source_order">Source order</string>
+    <string name="t_source_order_hint">Links from sources higher in this list come first. Torrents not cached anywhere come last.</string>
+    <string name="t_prefer_order">Prefer order</string>
+    <string name="t_no_prefer_switches_on">No Prefer switches on</string>
+    <string name="t_prefer_order_row">Rank the Prefer switches, e.g. HDR and Atmos above HEVC</string>
+    <string name="t_prefer_order_hint">The Prefer switches that are on, best first. A link matching more of the top ones ranks higher.</string>
 </resources>

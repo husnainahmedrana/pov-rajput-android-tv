@@ -1924,4 +1924,13 @@
     <string name="t_sort_by">Sorteren op</string>
     <string name="t_sort_by_x">Sorteren op: %1$s</string>
     <string name="t_genre_x">Genre: %1$s</string>
+    <string name="t_other_add_ons">Andere add-ons</string>
+    <string name="t_source">Bron</string>
+    <string name="t_source_first">Bron eerst</string>
+    <string name="t_source_order">Volgorde van bronnen</string>
+    <string name="t_source_order_hint">Links van bronnen hoger in deze lijst komen eerst. Torrents die nergens in de cache staan komen als laatste.</string>
+    <string name="t_prefer_order">Volgorde van Voorkeur</string>
+    <string name="t_no_prefer_switches_on">Geen Voorkeur-schakelaars aan</string>
+    <string name="t_prefer_order_row">Zet de Voorkeur-schakelaars op volgorde, bijv. HDR en Atmos boven HEVC</string>
+    <string name="t_prefer_order_hint">De Voorkeur-schakelaars die aan staan, de beste eerst. Een link die aan meer van de bovenste voldoet, staat hoger.</string>
 </resources>
