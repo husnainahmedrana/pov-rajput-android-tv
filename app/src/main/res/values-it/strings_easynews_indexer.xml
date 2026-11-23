@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Easynews as a search-only Usenet indexer (Settings → Sources → Usenet → Indexers). -->
+<resources>
+    <string name="eni_preset">Easynews (solo ricerca)</string>
+    <string name="eni_row_detail">Ricerca Easynews · scaricano i tuoi provider news</string>
+    <string name="eni_hint">Cerca link su Easynews; il video lo scaricano i tuoi provider news, non Easynews. Usa un proprio accesso Easynews, separato dalla sezione Easynews.</string>
+    <string name="eni_signed_in">Easynews ha accettato questo accesso</string>
+    <string name="eni_enter_login">Inserisci nome utente e password di Easynews.</string>
+    <string name="eni_no_login">Aggiungi Easynews in Impostazioni → Fonti → Usenet per riprodurre questo link.</string>
+    <string name="eni_no_nzb">Easynews non ha l\'elenco degli articoli per questo file. Scegli un altro link.</string>
+</resources>

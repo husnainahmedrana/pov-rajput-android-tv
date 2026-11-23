@@ -40,7 +40,12 @@ internal object ArtworkClient {
         val http = checkNotNull(client) { L10n.tr(R.string.t_artwork_client_is_not_ready, "Artwork client is not ready.") }
         require(address.startsWith("https://")) { "Artwork must use HTTPS." }
         val started = System.nanoTime()
-        http.newCall(Request.Builder().url(address).build()).execute().use { response ->
+        // Wikimedia's image servers refuse a library's default User-Agent (403 "Please set a user-agent"): cast photos
+        // from Wikimedia Commons name the app, as its robot policy asks. Other image hosts get the usual request.
+        val request = Request.Builder().url(address).apply {
+            if (Regex("^https://[a-z0-9.-]*wikimedia\\.org/").containsMatchIn(address)) header("User-Agent", dev.pov.tv.data.FreeCast.USER_AGENT)
+        }.build()
+        http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException(L10n.tr(R.string.t_artwork_request_failed_x, "Artwork request failed (%1\$s).", response.code))
             val bytes = response.body?.bytes() ?: throw IOException(L10n.tr(R.string.t_artwork_response_was_empty, "Artwork response was empty."))
             if (logTimings) Log.d("PovArtwork", "${(System.nanoTime() - started) / 1_000_000}ms " +

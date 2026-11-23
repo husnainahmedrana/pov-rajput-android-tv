@@ -37,13 +37,32 @@ enum class ThemeSpec(
     );
 
     /** The phone app draws Flix on a ~400-unit portrait canvas with a bottom navigation bar. */
-    val layout: ThemeLayout get() = if (DeviceLayout.phone) tvLayout.copy(
+    val layout: ThemeLayout get() = wideLayout.let { base ->
+        // Settings → Home → Card shape · Posters: tall 2:3 cards, so poster services show on every row.
+        if (posterSize.isEmpty()) base else {
+            val width = posterWidth(posterSize, DeviceLayout.phone)
+            base.copy(cards = CardFormat.POSTER, cardWidthDp = width, cardHeightDp = width * 3 / 2)
+        }
+    }
+
+    /** The usual wide-card layout, whatever the card shape: Continue Watching always keeps these wide cards. */
+    val wideLayout: ThemeLayout get() = (if (DeviceLayout.phone) tvLayout.copy(
         navigation = NavigationPlacement.BOTTOM_BAR, contentInsetDp = 14, headerHeightDp = 0,
         heroHeightDp = 380, cardWidthDp = 150, cardHeightDp = 84, cardGapDp = 8,
         titleSizeSp = 30, sectionTitleSizeSp = 15, focusScale = 1f,
-    ) else tvLayout
+    ) else tvLayout)
 
     companion object {
+        /** Card shape (Settings → Home): "" wide backdrops, else poster cards "small", "medium" or "large"; read at start-up. */
+        @Volatile var posterSize = ""
+        val POSTER_SIZES = listOf("small", "medium", "large")
+        /** Poster card widths (height is 1.5×): phone about 3.8 / 3.2 / 2.7 across, TV about 7.8 / 6.5 / 5.6 across. */
+        fun posterWidth(size: String, phone: Boolean): Int = when (size) {
+            "small" -> if (phone) 92 else 106
+            "large" -> if (phone) 132 else 150
+            else -> if (phone) 112 else 128
+        }
+
         /** Unknown, retired or older preferences (including "streaming") fall back to Flix. */
         fun fromId(id: String?): ThemeSpec = entries.firstOrNull { it.id == id } ?: FLIX
     }
@@ -99,5 +118,10 @@ class ThemePreferences(context: Context) {
         preferences.edit().putString(KEY, theme.id).apply()
     }
 
-    private companion object { const val KEY = "theme" }
+    /** Card shape: "" for the usual wide backdrops, or a poster size ("small", "medium", "large"). */
+    var posterSize: String
+        get() = preferences.getString(CARDS_KEY, null)?.takeIf { it in ThemeSpec.POSTER_SIZES }.orEmpty()
+        set(value) { preferences.edit().apply { if (value in ThemeSpec.POSTER_SIZES) putString(CARDS_KEY, value) else remove(CARDS_KEY) }.apply() }
+
+    private companion object { const val KEY = "theme"; const val CARDS_KEY = "cards.posters" }
 }

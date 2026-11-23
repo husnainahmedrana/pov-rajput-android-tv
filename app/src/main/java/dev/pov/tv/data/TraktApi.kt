@@ -265,7 +265,8 @@ class TraktApi internal constructor(
         if (expectedScrobbleRevision != scrobbleRevision()) return false
         require(percent.isFinite() && percent in 0.0..100.0 && action in setOf("pause", "stop"))
         require(java.time.Instant.parse(timestamp).toEpochMilli() <= now() + 60_000) { "Invalid saved Trakt playback time." }
-        val watched = action == "stop" && percent >= 95
+        // The same 80% the player uses for a finish (Trakt counts a stop from 80% as watched).
+        val watched = action == "stop" && percent >= 80
         if (!watched && percent < 1) return true
         if (watched) addHistory(identity, timestamp) else scrobble(identity, percent.coerceIn(1.0, 99.99), "pause")
         true

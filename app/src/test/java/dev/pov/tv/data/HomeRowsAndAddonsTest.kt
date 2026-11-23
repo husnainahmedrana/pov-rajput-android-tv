@@ -59,13 +59,15 @@ class HomeRowsAndAddonsTest {
 
     @Test fun `add-on catalogs page by skip and drop titles without IMDb ids`() {
         val asked = mutableListOf<String>()
-        val addons = CatalogAddons({ "" }, { _, _ -> }) { url ->
+        val addons = CatalogAddons({ "" }, { _, _ -> }, fetch = { url ->
             asked += url
-            JSONObject("""{"metas":[{"id":"tt1234567","name":"One"},{"id":"tmdb:55","name":"No IMDb"},{"id":"tmdb:66","imdb_id":"tt7654321","name":"Two"}]}""")
-        }
+            // The add-on's own details for tmdb:55 name no IMDb id either, so that title stays out.
+            if ("/meta/" in url) JSONObject("""{"meta":{"id":"tmdb:55"}}""")
+            else JSONObject("""{"metas":[{"id":"tt1234567","name":"One"},{"id":"tmdb:55","name":"No IMDb"},{"id":"tmdb:66","imdb_id":"tt7654321","name":"Two"}]}""")
+        })
         val addon = CatalogAddon("x", "AIO", "https://aio.example/abc", listOf(AddonCatalog("movie", "tmdb.top", "Top")))
         assertEquals(listOf("tt1234567", "tt7654321"), addons.items(addon, addon.catalogs[0], skip = 40).map { it.imdbId })
-        assertEquals("https://aio.example/abc/catalog/movie/tmdb.top/skip=40.json", asked.single())
+        assertEquals("https://aio.example/abc/catalog/movie/tmdb.top/skip=40.json", asked.first())
     }
 
     @Test fun `OpenSubtitles results match the language and episode, best release first`() {

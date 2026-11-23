@@ -86,9 +86,15 @@ internal class TvFocusController(
         // A page opens on its first target, skipping helpers above the main action (a synopsis' More sits above Play).
         val target = snapshot?.key?.let(::find) ?: if (snapshot?.key == null) leaves().let { all -> all.firstOrNull { (it.tag as? String)?.startsWith(SKIP_FIRST) != true } ?: all.firstOrNull { (it.tag as? String)?.startsWith(SKIP_SOURCE) != true } ?: all.firstOrNull() } else null
         if (target == null) return false
-        target.requestFocus(); lastKey = key(target)
+        // Touch screens (the phone) take no focus: the page only returns to where it was scrolled. Revealing the
+        // fallback first target there scrolled Home back to its top after Back from a title.
+        val focused = target.requestFocus()
+        if (focused) lastKey = key(target)
         if (snapshot != null) scroll.scrollTo(0, snapshot.scrollY)
-        reveal(target)
+        if (focused) reveal(target)
+        // Touch: the rows below may still be loading, so the old position can't be reached yet; report not done so
+        // the caller tries again after the next load (it settles for the closest position once loading ends).
+        if (!focused && snapshot != null && scroll.scrollY < snapshot.scrollY) return false
         return true
     }
 

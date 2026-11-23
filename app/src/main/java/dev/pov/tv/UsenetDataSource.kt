@@ -263,7 +263,11 @@ internal object UsenetPlayback {
         val indexer = indexers.forLink(UsenetLinks.nzbAddress(address))
         if (indexer != null && indexers.grabsExhausted(indexer)) throw IOException(
             L10n.tr(R.string.t_x_used_today_s_grabs, "%1\$s has used today's grabs. Pick a link from another indexer.", indexer.name))
-        fun grab() = Newznab.fetch(UsenetLinks.nzbAddress(address), UsenetHeaders.grab({ store.get(it) }), 24 * 1024 * 1024)
+        fun grab() = UsenetLinks.nzbAddress(address).let { link ->
+            // Easynews as an indexer: its article list comes from Easynews with that entry's login, not a plain GET.
+            if (dev.pov.tv.data.EasynewsIndexer.isLink(link)) dev.pov.tv.data.EasynewsIndexer.nzb(link, indexer)
+            else Newznab.fetch(link, UsenetHeaders.grab({ store.get(it) }), 24 * 1024 * 1024)
+        }
         val text = try { grab() } catch (error: dev.pov.tv.data.ApiException) {
             if (error.code != 0 && error.code < 500) throw error
             UsenetLog.i("indexer didn't answer (${error.code}): asking once more")

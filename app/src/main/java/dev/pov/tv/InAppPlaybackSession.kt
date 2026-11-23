@@ -110,6 +110,8 @@ object InAppPlaybackSession {
     private var releasing = false
     private var lastSyncAction = ""
     private var lastSyncAt = 0L
+    /** Titles finished (watched) in the player since Home last looked: Home marks them ✓ and re-reads the tracker. */
+    val finished = java.util.concurrent.ConcurrentLinkedQueue<dev.pov.tv.data.PlaybackIdentity>()
     private var resumeAfterBackground = false
     private var backgroundPause = false
     private val listeners = linkedSetOf<() -> Unit>()
@@ -980,6 +982,9 @@ object InAppPlaybackSession {
         val exo = player ?: return
         if (exo.duration <= 0) return
         if (history.isHidden(identity = media)) return
+        // A finish the trackers count as watched (80% and up): the app's own ✓ marks show it on return, without
+        // waiting for the next history download.
+        if (action == "stop" && exo.currentPosition.toDouble() / exo.duration >= 0.80) { if (finished.size < 50) finished.add(media) }
         // The main tracker and every other signed-in tracker that also keeps watch history, each with its own queue.
         val targets = dev.pov.tv.data.Trackers.historyTargets(secureStore).mapNotNull { id ->
             try { trackerApi(id).takeIf { it.connected() && it.scrobblingEnabled() }?.let { Triple(it, it.accountRevision(), id) } } catch (_: Exception) { null }

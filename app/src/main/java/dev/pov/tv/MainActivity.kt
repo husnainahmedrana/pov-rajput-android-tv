@@ -55,6 +55,8 @@ class MainActivity : Activity() {
     private fun trackerId() = trackerChoice
     /** The account's watched history behind the ✓ badges on cards and episodes. */
     private var watched = WatchedState.EMPTY
+    /** Watched marks made on this device that the service's history may not show yet (main thread only). */
+    private val localWatched = mutableListOf<PlaybackIdentity>()
     private val watchedCache by lazy { WatchedCache(java.io.File(filesDir, "watched.json")) }
     @Volatile private var watchedLoading = false
     /** Re-reads the Continue Watching row on Home in place; set while that row exists. */
@@ -214,6 +216,7 @@ class MainActivity : Activity() {
         if (DeviceLayout.tv) window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         else { window.statusBarColor = 0xFF141414.toInt(); window.navigationBarColor = PHONE_BAR_COLOR }
         store = SecureStore(this)
+        runCatching { PosterServices.reload(store) }; runCatching { loadPosterQuality() }
         // Debrid API calls of the services ticked under MediaFlow Proxy go through the viewer's server.
         MediaFlowProxy.install(store)
         // Saved accounts the device can no longer decrypt (its Keystore key was lost) would crash every read below.
@@ -230,7 +233,7 @@ class MainActivity : Activity() {
         }
         applyMetadataLanguage()
         PlayerShowInfo.tmdb = { if (publicPreview) null else store.get(TMDB_KEY).takeIf { it.isNotBlank() }?.let { TmdbCatalog(this, it, tmdbRegion()) } }
-        themePreferences = ThemePreferences(this); theme = themePreferences.selected()
+        themePreferences = ThemePreferences(this); ThemeSpec.posterSize = themePreferences.posterSize; theme = themePreferences.selected()
         // Retire the old tracker locally; never replay its queued updates after this upgrade.
         if (store.get("tracking.wetrakr_only") != "true") {
             listOf("trakt.client_id", "trakt.redirect_uri", "trakt.access_token", "trakt.refresh_token", "trakt.expires_at", "trakt.account_revision", "trakt.refresh_pending").forEach(store::remove)
@@ -306,6 +309,15 @@ class MainActivity : Activity() {
         super.onResume(); resumed = true; launchingPlayer = false
         ExternalPlayer.appVisible = true
         TorBoxUsenetPlayback.refresh(store, DebridServices.connected(store))
+        // Episodes and films finished in the player: ✓ at once, then the tracker's history is read again (twice, as
+        // Trakt and the others can take a few seconds to record a finish) so season marks and the rest catch up.
+        if (!publicPreview && ::store.isInitialized) {
+            val done = generateSequence { InAppPlaybackSession.finished.poll() }.toList()
+            if (done.isNotEmpty()) {
+                if (wetrakr.connected()) { localWatched += done; watched = done.fold(watched) { state, identity -> state.with(identity) }; refreshBadges() }
+                listOf(6_000L, 20_000L).forEach { delay -> window.decorView.postDelayed({ if (!isDestroyed) refreshWatched() }, delay) }
+            }
+        }
         // A video that ended in another app (Kodi, Dune…): Continue Watching and watched marks catch up.
         if (ExternalPlayer.endedUnseen && !publicPreview) {
             ExternalPlayer.endedUnseen = false
@@ -870,7 +882,7 @@ class MainActivity : Activity() {
 
     private fun Int?.orZero() = this ?: 0
     private fun pageRevision() = java.security.MessageDigest.getInstance("SHA-256").digest(
-        listOf(theme.id, wetrakr.accountRevision(), wetrakr.connected().toString(), store.get("offcloud.key"), store.get("torbox.token"), store.get("wetrakr.home_liked_opt_in"), store.get("sources.endpoint"), store.get(SourceProviders.KEY), store.get(TMDB_KEY), store.get(TMDB_REGION), TmdbCatalog.language, store.get(TVDB_KEY), store.get(TVDB_SHOWS), store.get(RESUME_CARDS), store.get(CatalogAddons.KEY), homeRows.revision,
+        listOf(theme.id, wetrakr.accountRevision(), wetrakr.connected().toString(), store.get("offcloud.key"), store.get("torbox.token"), store.get("wetrakr.home_liked_opt_in"), store.get("sources.endpoint"), store.get(SourceProviders.KEY), store.get(TMDB_KEY), store.get(TMDB_REGION), TmdbCatalog.language, store.get(TVDB_KEY), store.get(TVDB_SHOWS), store.get(RESUME_CARDS), store.get(CatalogAddons.KEY), homeRows.revision, PosterServices.active.let { "${it.service}|${it.key}|${it.custom}|${it.profile}|${it.base}" }, posterQuality,
             // Without a tracker, Home and title pages show local progress, so a kept copy is stale once something was watched.
             if (publicPreview || wetrakr.connected()) "" else history.continueRevision()).joinToString("\u0000").toByteArray()
     ).joinToString("") { "%02x".format(it.toInt() and 255) }
@@ -879,7 +891,12 @@ class MainActivity : Activity() {
             if (id != generation || isDestroyed) return@post
             val restore = pendingFocus
             if (restore != null) {
-                if (focusController.restore(restore) || focusController.restore(null)) { pendingFocus = null; wantsContentFocus = false }
+                // Back to a page rebuilt from scratch (Home not kept): its rows arrive one load at a time, so the card
+                // the viewer left from may not exist yet. Keep waiting while loads are pending instead of falling back
+                // to the first card, which scrolled Home to its top; only a card that never comes falls back.
+                if (focusController.restore(restore)) { pendingFocus = null; wantsContentFocus = false }
+                else if (pendingLoads[id].orZero() > 0) Unit
+                else if (focusController.restore(null)) { pendingFocus = null; wantsContentFocus = false }
             } else if (wantsContentFocus && !focusController.hasVisibleLeafFocus()) {
                 if (focusController.restore(null)) wantsContentFocus = false
             }
@@ -1084,7 +1101,7 @@ class MainActivity : Activity() {
             id.startsWith("addon:") -> {
                 val parts = id.split(":", limit = 4)
                 val addon = catalogAddons.load().firstOrNull { it.id == parts.getOrNull(1) } ?: throw IllegalStateException(getString(R.string.t_this_catalog_add_on_was_removed))
-                val chosen = addon.catalogs.firstOrNull { it.type == parts.getOrNull(2) && it.id == parts.getOrNull(3) } ?: throw IllegalStateException(getString(R.string.t_this_catalog_was_removed))
+                val chosen = addon.catalogs.firstOrNull { CatalogAddons.rowId(addon, it) == id } ?: throw IllegalStateException(getString(R.string.t_this_catalog_was_removed))
                 catalogAddons.items(addon, chosen, skip)
             }
             else -> emptyList()
@@ -1165,27 +1182,58 @@ class MainActivity : Activity() {
 
     private fun pickAddonCatalogs(existing: CatalogAddon?, address: String, name: String, catalogs: List<AddonCatalog>) {
         val picked = BooleanArray(catalogs.size) { index ->
-            existing?.catalogs?.any { it.type == catalogs[index].type && it.id == catalogs[index].id } ?: (index < 4)
+            existing?.catalogs?.any { it.type == catalogs[index].type && it.id == catalogs[index].id } ?: (index < 4 && catalogs[index].filter == null)
         }
+        // A catalog that needs a filter value says so; after Save, the viewer picks its values (each value a row).
+        val labels = catalogs.map { catalog -> catalog.filter?.let { getString(R.string.hr_choose_filter, catalog.name, filterLabel(it.name)) } ?: catalog.name }
         AlertDialog.Builder(this).setTitle(getString(R.string.t_x_rows_for_home, name))
-            .setMultiChoiceItems(catalogs.map { it.name }.toTypedArray(), picked) { _, index, checked -> picked[index] = checked }
+            .setMultiChoiceItems(labels.toTypedArray(), picked) { _, index, checked -> picked[index] = checked }
             .setPositiveButton(getString(R.string.t_save)) { _, _ ->
                 val chosen = catalogs.filterIndexed { index, _ -> picked[index] }
                 if (chosen.isEmpty()) { toast(getString(R.string.t_pick_at_least_one_catalog)); return@setPositiveButton }
-                try {
-                    val all = catalogAddons.load()
-                    if (existing == null) {
-                        require(all.none { it.address == SourceProviders.endpoint(address) }) { getString(R.string.t_this_add_on_is_already_added) }
-                        catalogAddons.save(all + catalogAddons.create(address, name, chosen))
-                    } else {
-                        catalogAddons.save(all.map { if (it.id == existing.id) it.copy(catalogs = chosen) else it })
-                        existing.catalogs.filterNot { old -> chosen.any { it.type == old.type && it.id == old.id } }
-                            .forEach { homeRows.forget(CatalogAddons.rowId(existing, it)) }
-                    }
-                    toast(getString(R.string.t_x_x_from_x_added_to, chosen.size, if (chosen.size == 1) "row" else "rows", name))
-                    homeRowsPage()
-                } catch (error: Exception) { toast(uiErrorMessage(error)) }
+                pickFilterValues(existing, chosen.filter { it.filter == null }, chosen.filter { it.filter != null }) { rows ->
+                    if (rows.isEmpty()) { toast(getString(R.string.t_pick_at_least_one_catalog)); return@pickFilterValues }
+                    saveAddonCatalogs(existing, address, name, rows)
+                }
             }.setNegativeButton(getString(R.string.t_cancel), null).show()
+    }
+
+    /** One question per filtered catalog: which values (genres, years…) become rows. Values already shown stay ticked. */
+    private fun pickFilterValues(existing: CatalogAddon?, done: List<AddonCatalog>, waiting: List<AddonCatalog>, finish: (List<AddonCatalog>) -> Unit) {
+        val catalog = waiting.firstOrNull() ?: return finish(done)
+        val filter = catalog.filter ?: return pickFilterValues(existing, done + catalog, waiting.drop(1), finish)
+        val shown = existing?.catalogs.orEmpty().filter { it.type == catalog.type && it.id == catalog.id }.map { it.extra.substringAfter('=', "") }.toSet()
+        val ticked = BooleanArray(filter.options.size) { index -> if (shown.isEmpty()) index == 0 else filter.options[index] in shown }
+        AlertDialog.Builder(this).setTitle(getString(R.string.hr_pick_values, catalog.name, filterLabel(filter.name)))
+            .setMultiChoiceItems(filter.options.toTypedArray(), ticked) { _, index, checked -> ticked[index] = checked }
+            .setPositiveButton(getString(R.string.t_save)) { _, _ ->
+                val rows = filter.options.filterIndexed { index, _ -> ticked[index] }.map { catalog.withValue(it) }
+                pickFilterValues(existing, done + rows, waiting.drop(1), finish)
+            }
+            .setNegativeButton(getString(R.string.t_cancel)) { _, _ -> pickFilterValues(existing, done, waiting.drop(1), finish) }
+            .show()
+    }
+
+    private fun filterLabel(name: String) = when (name.lowercase()) {
+        "genre" -> getString(R.string.hr_filter_genre)
+        "year" -> getString(R.string.hr_filter_year)
+        else -> name
+    }
+
+    private fun saveAddonCatalogs(existing: CatalogAddon?, address: String, name: String, chosen: List<AddonCatalog>) {
+        try {
+            val all = catalogAddons.load()
+            if (existing == null) {
+                require(all.none { it.address == SourceProviders.endpoint(address) }) { getString(R.string.t_this_add_on_is_already_added) }
+                catalogAddons.save(all + catalogAddons.create(address, name, chosen))
+            } else {
+                catalogAddons.save(all.map { if (it.id == existing.id) it.copy(catalogs = chosen) else it })
+                val kept = chosen.map { CatalogAddons.rowId(existing, it) }.toSet()
+                existing.catalogs.map { CatalogAddons.rowId(existing, it) }.filterNot { gone -> kept.any { it.startsWith(gone) } }.forEach { homeRows.forget(it) }
+            }
+            toast(getString(R.string.t_x_x_from_x_added_to, chosen.size, if (chosen.size == 1) "row" else "rows", name))
+            homeRowsPage()
+        } catch (error: Exception) { toast(uiErrorMessage(error)) }
     }
 
     private fun catalogAddonActions(addon: CatalogAddon) {
@@ -1208,6 +1256,8 @@ class MainActivity : Activity() {
         // Rows after Top 10 follow the viewer's order from Settings → Home rows, without the ones they switched off.
         val others = homeRows.visible(rows.filterNotNull()) { it.id }.mapNotNull { row ->
             if (row.unavailable) return@mapNotNull row
+            // An add-on row that came back with nothing playable stays, saying so, instead of silently vanishing.
+            if (row.items.isEmpty() && row.id.startsWith("addon:")) return@mapNotNull row
             row.copy(items = row.items.filter { it.imdbId !in ranked[row.type].orEmpty() }).takeIf { it.items.isNotEmpty() }
         }
         return listOf(CatalogApi.HomeShelf(TOP10_MOVIES, "movie", movies), CatalogApi.HomeShelf(TOP10_SHOWS, "series", shows)) + others
@@ -1234,7 +1284,7 @@ class MainActivity : Activity() {
                 val caption = listOf(if (identity.type == "series") "S${identity.season} E${identity.episode}" else "", "${percent.toInt()}%").filter { it.isNotBlank() }.joinToString(" · ")
                 val item = MediaItemData(identity.imdbId, identity.type, identity.title)
                 val open: () -> Unit = { continuePlayback(identity) }
-                row.addView((if (resumeCards()) resumeCard(item, percent / 100, episodeLine(identity), getString(R.string.t_x_watched, percent.toInt()), open) else tile(item, percent / 100, caption, open))
+                row.addView((if (resumeCards()) resumeCard(item, percent / 100, episodeLine(identity), getString(R.string.t_x_watched, percent.toInt()), open) else tile(item, wide = true, progress = percent / 100, caption = caption, action = open))
                     .apply { continueOptions(this, "", identity, identity.title) }, continueSlot())
             }
         }
@@ -1961,11 +2011,20 @@ class MainActivity : Activity() {
         else -> title
     }
 
+    /** Top 10 poster width: the chosen poster size with poster cards, else the usual (84 phone, 96 TV). */
+    private fun topTenPosterWidth() = if (ThemeSpec.posterSize.isEmpty()) (if (DeviceLayout.phone) 84 else 96)
+        else ThemeSpec.posterWidth(ThemeSpec.posterSize, DeviceLayout.phone)
+
     private fun rankedRow(title: String, items: List<MediaItemData>) {
         if (items.isEmpty()) return
         body.addView(text(title, theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 14, bottom = 6))
         val row = horizontalRow()
-        val (wide, narrow, tall) = if (DeviceLayout.phone) Triple(150, 128, 108) else Triple(200, 170, 144)
+        // The poster follows Card shape: with poster cards it is as wide as the other rows' posters; the rank number
+        // keeps its room beside it (two digits need a little more for 10).
+        val poster = topTenPosterWidth()
+        val tall = poster * 3 / 2
+        val narrow = poster + if (DeviceLayout.phone) 62 else 74
+        val wide = narrow + if (DeviceLayout.phone) 24 else 30
         items.take(10).forEachIndexed { index, item -> row.addView(rankTile(item, index + 1), margin(if (index == 9) wide else narrow, tall, right = 4)) }
     }
 
@@ -1974,12 +2033,12 @@ class MainActivity : Activity() {
             isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true; clipChildren = false
             tag = "top10:${item.type}:${item.imdbId}"; contentDescription = getString(R.string.t_number_x_x, rank, item.title)
         }
-        val posterWidth = dp(if (DeviceLayout.phone) 72 else 96)
+        val posterWidth = dp(topTenPosterWidth())
         frame.addView(RankNumberView(this, rank.toString(), bg, 0xFF8C8C8C.toInt()).apply { posterInset = posterWidth - dp(16).toFloat() }, FrameLayout.LayoutParams(-1, -1))
         val poster = FrameLayout(this).apply { background = rounded(panel, 4); clipToOutline = true }
         val art = FixedSizeImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
         poster.addView(art, FrameLayout.LayoutParams(-1, -1))
-        image(art, thumbnail(item.poster.ifBlank { if (item.imdbId.matches(Regex("tt\\d+"))) "https://images.metahub.space/poster/medium/${item.imdbId}/img" else "" }, wide = false))
+        posterImage(art, item.imdbId, item.type, thumbnail(item.poster.ifBlank { if (item.imdbId.matches(Regex("tt\\d+"))) "https://images.metahub.space/poster/medium/${item.imdbId}/img" else "" }, wide = false))
         frame.addView(poster, FrameLayout.LayoutParams(posterWidth, -1, Gravity.END))
         watchedBadge(if (item.type == "movie") "movie" else "series", item.imdbId)?.let {
             poster.addView(it, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.TOP or Gravity.END).apply { topMargin = dp(5); rightMargin = dp(5) })
@@ -2130,7 +2189,7 @@ class MainActivity : Activity() {
             }
             val progress = saved.position.toDouble() / saved.duration.coerceAtLeast(1)
             val timeLeft = getString(R.string.t_x_m_left, ((saved.duration - saved.position).coerceAtLeast(0) / 60000))
-            row.addView((if (resumeCards()) resumeCard(item, progress, identity?.let(::episodeLine) ?: getString(R.string.t_cloud_video), timeLeft, action) else tile(item, progress, remaining, action))
+            row.addView((if (resumeCards()) resumeCard(item, progress, identity?.let(::episodeLine) ?: getString(R.string.t_cloud_video), timeLeft, action) else tile(item, wide = true, progress = progress, caption = remaining, action = action))
                 .apply { tag = "resume:${saved.key}"; continueOptions(this, saved.key, saved.identity, saved.title) }, continueSlot())
         }
     }
@@ -2281,10 +2340,11 @@ class MainActivity : Activity() {
         read(id, { if (query.isBlank()) anime.popular(type, skip) else anime.search(query, type, skip) }) { result ->
             if (result.items.isEmpty()) body.addView(text(getString(R.string.t_no_anime_found_try_a_different), 14, muted), margin(-1, -2, top = 20))
             val width = DeviceLayout.canvasWidth - theme.layout.railWidthDp - theme.layout.contentInsetDp * 2
-            val count = if (DeviceLayout.phone) DeviceLayout.phoneColumns(width) else (width / (cardWidth() + theme.layout.cardGapDp)).coerceAtLeast(1)
+            val posters = theme.layout.cards == CardFormat.POSTER
+            val count = if (posters) posterColumns(width) else if (DeviceLayout.phone) DeviceLayout.phoneColumns(width) else (width / (cardWidth() + theme.layout.cardGapDp)).coerceAtLeast(1)
             // Flix columns stretch to the full content width, as the Movies and Shows grids do.
             val tileWidth = if (flix) (width - 6 - (count - 1) * theme.layout.cardGapDp) / count else cardWidth()
-            val tileHeight = if (flix) tileWidth * 9 / 16 else theme.layout.cardHeightDp
+            val tileHeight = if (flix) (if (posters) tileWidth * 3 / 2 else tileWidth * 9 / 16) else theme.layout.cardHeightDp
             result.items.chunked(count).forEach { group ->
                 val row = LinearLayout(this).apply { tag = "media-grid-row" }; body.addView(row, margin(-1, -2, top = 14))
                 group.forEach { title ->
@@ -2568,6 +2628,65 @@ class MainActivity : Activity() {
             margin(if (DeviceLayout.phone) 110 else 170, 40, right = if (DeviceLayout.phone) 8 else 12))
         actions.addView(button(getString(R.string.t_cancel)) { dialog.dismiss() }.apply { gravity = Gravity.CENTER }, margin(if (DeviceLayout.phone) 90 else 110, 40))
         card.addView(actions, margin(-2, -2, top = 22))
+        // Recent searches (tap to run again, hold to forget one, Clear all) and, while typing, suggestions: past
+        // searches that match and titles from the catalog.
+        val history = SearchHistory(this)
+        val recentBox = column()
+        card.addView(recentBox, margin(-1, -2, top = 16))
+        val titleBox = column()
+        card.addView(titleBox, margin(-1, -2))
+        fun chipRow(host: LinearLayout, heading: String, chips: List<View>) {
+            if (chips.isEmpty()) return
+            host.addView(text(heading, 12, muted, true), margin(-2, -2, top = 8, bottom = 4))
+            val strip = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; clipChildren = false; setPadding(dp(2), dp(2), dp(2), dp(2)) }
+            chips.forEach { strip.addView(it, LinearLayout.LayoutParams(-2, dp(36)).apply { rightMargin = dp(8) }) }
+            host.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; addView(strip) }, margin(-1, -2))
+        }
+        fun chip(label: String, action: () -> Unit) = button(label.take(40)) { action() }.apply { gravity = Gravity.CENTER; setPadding(dp(14), 0, dp(14), 0); maxLines = 1 }
+        fun runPast(query: String) { input.setText(query); submit() }
+        fun renderRecent() {
+            recentBox.removeAllViews()
+            val typed = input.text.toString()
+            val past = history.matching(typed, if (typed.isBlank()) 12 else 5)
+            val chips = past.map { query -> chip(query) { runPast(query) }.apply {
+                contentDescription = getString(R.string.sh_run_or_remove, query)
+                setOnLongClickListener { history.remove(query); renderRecent(); true }
+            } }
+            val heading = if (typed.isBlank()) getString(R.string.sh_recent) else getString(R.string.sh_past_matches)
+            chipRow(recentBox, heading, if (chips.isEmpty() || typed.isNotBlank()) chips
+                else chips + chip(getString(R.string.sh_clear_all)) { confirm(getString(R.string.sh_clear_all_confirm)) { history.clear(); renderRecent() } })
+            if (typed.isBlank() && chips.isNotEmpty()) recentBox.addView(text(getString(R.string.sh_hold_to_remove), 11, muted), margin(-2, -2, top = 4))
+        }
+        var suggestFor = ""
+        val suggest = Runnable {
+            val typed = input.text.toString().trim()
+            if (typed.length < 2) { titleBox.removeAllViews(); return@Runnable }
+            suggestFor = typed
+            worker.execute {
+                val found = runCatching { catalog.searchAll(typed).items.take(8) }.getOrDefault(emptyList())
+                runOnUiThread {
+                    if (!dialog.isShowing || suggestFor != typed || input.text.toString().trim() != typed) return@runOnUiThread
+                    titleBox.removeAllViews()
+                    chipRow(titleBox, getString(R.string.sh_suggestions), found.map { item ->
+                        val kind = if (item.type == "movie") getString(R.string.t_movie) else getString(R.string.t_tv_show)
+                        chip(listOf(item.title, item.year.take(4)).filter { it.isNotBlank() }.joinToString(" · ") + " · " + kind) {
+                            history.add(item.title)
+                            hideKeyboard(input); dialog.dismiss(); navigate { details(item) }
+                        }
+                    })
+                }
+            }
+        }
+        input.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: android.text.Editable?) {
+                renderRecent()
+                input.removeCallbacks(suggest); input.postDelayed(suggest, 450)
+            }
+        })
+        renderRecent()
+        if (initialQuery.isNotBlank()) input.postDelayed(suggest, 450)
         if (DeviceLayout.tv) card.addView(text(getString(R.string.t_press_ok_to_type_the_keyboard), 11, muted), margin(-2, -2, top = 18))
         // The phone keeps the field near the top, clear of the on-screen keyboard.
         if (DeviceLayout.phone) root.addView(card, FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply { topMargin = dp(70); leftMargin = dp(16); rightMargin = dp(16) })
@@ -2712,7 +2831,7 @@ class MainActivity : Activity() {
     }
     private companion object {
         private const val QR_DP = 110; const val WARM_BACKDROPS = 6; const val HIDE_UNCACHED = "sources.hide_uncached"; const val BACKDROP_FADE_MS = 220; const val VOICE_REQUEST = 701; const val PLAYBACK_REQUEST = 702; const val MIC_REQUEST = 703; const val FLIX_ROW_LINE = 236; const val FEATURE_INTERVAL_MS = 5_000L; const val AUTOPLAY_FIRST = "sources.autoplay_first"; const val AUTOPLAY_MAX_GB = "sources.autoplay_max_gb"; const val AUTOPLAY_MAX_GB_EPISODE = "sources.autoplay_max_gb_episode"; const val AUTOPLAY_MAX_MBPS = "sources.autoplay_max_mbps"; const val AUTOPLAY_LIMIT_ON = "sources.autoplay_limit_on"; const val BACKDROP_WIDTH = 1280; const val CONTINUE_CACHE = "wetrakr.continue_cache"
-        const val TMDB_KEY = "tmdb.key"; const val TMDB_REGION = "tmdb.region"
+        const val TMDB_KEY = "tmdb.key"; const val POSTER_QUALITY = "settings.poster_quality"; const val TMDB_REGION = "tmdb.region"
         const val TVDB_KEY = "tvdb.key"; const val TVDB_SHOWS = "tvdb.shows"
         /** "false" keeps the search-and-details add-on saved but switched off. */
         const val METADATA_ON = "metadata.source.on"
@@ -2768,6 +2887,7 @@ class MainActivity : Activity() {
     private fun searchResults(query: String, filter: String = "all", cached: CatalogApi.SearchResults? = null) {
         current = { searchResults(query, filter, cached) }
         destination = "search"; refreshNavigation()
+        if (cached == null && !publicPreview) runCatching { SearchHistory(this).add(query) }
         val id = page(getString(R.string.t_results_for_x, query), getString(R.string.t_movies_and_tv_shows_in_one))
         val actions = horizontalRow()
         for ((value, label) in listOf("all" to getString(R.string.t_all), "movie" to getString(R.string.t_movies), "series" to getString(R.string.t_tv_shows))) {
@@ -2857,6 +2977,114 @@ class MainActivity : Activity() {
     }
 
     /** Settings → Metadata language: TMDB titles, descriptions and lists in another language (Arabic and others). */
+    private fun posterServiceLabel(): String {
+        val config = PosterServices.active
+        val name = PosterServices.ALL.firstOrNull { it.id == config.service }?.name ?: "None"
+        return when {
+            config.service == PosterServices.NONE -> getString(R.string.ps_none)
+            config.service == PosterServices.RPDB && config.key.isBlank() -> getString(R.string.ps_rpdb_free_label)
+            else -> name
+        }
+    }
+
+    /** Settings → Home → Poster service: where every poster in the app comes from (AIOStreams' list, plus BetterPosters). */
+    private fun choosePosterService() {
+        val services = PosterServices.ALL
+        val labels = services.map { service -> when (service.id) {
+            PosterServices.NONE -> getString(R.string.ps_none)
+            PosterServices.RPDB -> getString(R.string.ps_rpdb_choice)
+            PosterServices.BETTERPOSTERS -> getString(R.string.ps_betterposters_choice)
+            PosterServices.CUSTOM -> getString(R.string.ps_custom_choice)
+            else -> service.name
+        } }
+        AlertDialog.Builder(this).setTitle(getString(R.string.ps_title))
+            .setSingleChoiceItems(labels.toTypedArray(), services.indexOfFirst { it.id == PosterServices.active.service }.coerceAtLeast(0)) { dialog, index ->
+                dialog.dismiss()
+                val chosen = services[index]
+                when (chosen.id) {
+                    PosterServices.NONE, PosterServices.BETTERPOSTERS -> savePosterService(chosen.id)
+                    else -> editPosterService(chosen)
+                }
+            }.setNegativeButton(getString(R.string.t_cancel), null).show()
+    }
+
+    private fun savePosterService(id: String, values: Map<String, String> = emptyMap()) {
+        store.putAll(values + (PosterServices.SERVICE to id))
+        PosterServices.reload(store); retainedHome = null
+        toast(getString(R.string.ps_saved, PosterServices.ALL.first { it.id == id }.name))
+        refreshSettings()
+        // Wide cards show backdrops, which the services don't make: offer poster cards so their posters show on every row.
+        if (id != PosterServices.NONE && ThemeSpec.posterSize.isEmpty()) AlertDialog.Builder(this).setTitle(getString(R.string.cs_switch_title))
+            .setMessage(getString(R.string.cs_switch_message))
+            .setPositiveButton(getString(R.string.cs_switch_yes)) { _, _ -> applyCardShape("medium") }
+            .setNegativeButton(getString(R.string.cs_switch_no), null).show()
+    }
+
+    private fun cardShapeLabel(size: String = ThemeSpec.posterSize) = when (size) {
+        "small" -> getString(R.string.cs_posters_small); "medium" -> getString(R.string.cs_posters_medium)
+        "large" -> getString(R.string.cs_posters_large); else -> getString(R.string.cs_wide)
+    }
+
+    /** Settings → Home → Card shape: wide backdrops, or poster cards in three sizes (rows, grids, search, library…). */
+    private fun chooseCardShape() {
+        val choices = listOf("") + ThemeSpec.POSTER_SIZES
+        AlertDialog.Builder(this).setTitle(getString(R.string.cs_title))
+            .setSingleChoiceItems(choices.map { cardShapeLabel(it) }.toTypedArray(), choices.indexOf(ThemeSpec.posterSize).coerceAtLeast(0)) { dialog, index ->
+                dialog.dismiss(); applyCardShape(choices[index])
+            }.setNegativeButton(getString(R.string.t_cancel), null).show()
+    }
+
+    /** Saved, then every screen is rebuilt with the new cards (as a language change does). */
+    private fun applyCardShape(size: String) {
+        if (size == ThemeSpec.posterSize) return
+        themePreferences.posterSize = size; ThemeSpec.posterSize = size
+        retainedHome = null; recreate()
+    }
+
+    /** The key (and the few extras some services take) for a poster service; RPDB can use its free key instead. */
+    private fun editPosterService(service: PosterServices.Service) {
+        val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
+        val plain = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        val custom = service.id == PosterServices.CUSTOM
+        val main = if (custom) usenetField(getString(R.string.ps_custom_hint), store.get(PosterServices.CUSTOM_URL), InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
+            else usenetField(if (service.id == PosterServices.RPDB) getString(R.string.ps_key_optional) else getString(R.string.t_api_key), store.get(PosterServices.KEY_PREFIX + service.id), plain)
+        content.addView(captioned(main), margin(-1, -2))
+        val profile = if (service.id == PosterServices.AIORATINGS) usenetField(getString(R.string.ps_aioratings_profile), store.get(PosterServices.AIORATINGS_PROFILE).ifBlank { "default" }, plain)
+            .also { content.addView(captioned(it), margin(-1, -2, top = 4)) } else null
+        val server = if (service.id == PosterServices.OPENPOSTERDB) usenetField(getString(R.string.ps_openposterdb_server), store.get(PosterServices.OPENPOSTERDB_URL).ifBlank { PosterServices.DEFAULT_OPENPOSTERDB }, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
+            .also { content.addView(captioned(it), margin(-1, -2, top = 4)) } else null
+        val status = text(when (service.id) {
+            PosterServices.RPDB -> getString(R.string.ps_rpdb_hint, PosterServices.RPDB_FREE_KEY)
+            PosterServices.CUSTOM -> getString(R.string.ps_custom_help)
+            else -> getString(R.string.ps_key_hint, service.keyHint)
+        }, 13, muted)
+        val builder = AlertDialog.Builder(this).setTitle(service.name).setView(formWithStatus(content, status))
+            .setPositiveButton(getString(R.string.t_save), null).setNegativeButton(getString(R.string.t_cancel), null)
+        if (service.id == PosterServices.RPDB) builder.setNeutralButton(getString(R.string.ps_use_free_key), null)
+        val dialog = builder.create().apply { window?.setSoftInputMode(formInputMode()) }
+        dialog.show()
+        main.requestFocus()
+        if (service.id == PosterServices.RPDB) dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
+            dialog.dismiss(); savePosterService(service.id, mapOf(PosterServices.KEY_PREFIX + service.id to ""))
+        }
+        dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+            val typed = main.text.toString().trim()
+            val problem = when {
+                custom -> PosterServices.customProblem(typed)
+                service.needsKey && typed.isBlank() -> getString(R.string.ps_enter_key)
+                typed.any { it.isWhitespace() || it == '/' } -> getString(R.string.ps_key_invalid)
+                server != null && !PosterServices.validBase(server.text.toString()) -> getString(R.string.ps_server_invalid)
+                else -> null
+            }
+            if (problem != null) { status.text = problem; return@setOnClickListener }
+            val values = mutableMapOf<String, String>()
+            if (custom) values[PosterServices.CUSTOM_URL] = typed else values[PosterServices.KEY_PREFIX + service.id] = typed
+            profile?.let { values[PosterServices.AIORATINGS_PROFILE] = it.text.toString().trim().ifBlank { "default" } }
+            server?.let { values[PosterServices.OPENPOSTERDB_URL] = it.text.toString().trim().trimEnd('/') }
+            dialog.dismiss(); savePosterService(service.id, values)
+        }
+    }
+
     private fun chooseMetadataLanguage() {
         val saved = store.get(dev.pov.tv.data.MetadataLanguage.KEY)
         val choices = listOf("" to getString(R.string.t_same_as_app_language)) + dev.pov.tv.data.MetadataLanguage.CHOICES.map { it.tag to it.name }
@@ -3037,7 +3265,8 @@ class MainActivity : Activity() {
      */
     private fun castRow(id: Int, result: MediaItemData, then: () -> Unit = {}) {
         val key = if (publicPreview) "" else store.get(TMDB_KEY)
-        if (key.isBlank() || !result.imdbId.startsWith("tt")) { then(); return }
+        // Without a TMDB key the row still fills, from TVmaze (shows) and Wikidata (films), with photos where they have them.
+        if (publicPreview || !result.imdbId.matches(Regex("tt\\d+")) || result.type !in setOf("movie", "series")) { then(); return }
         val round = roundCast()
         val slot = column().apply { minimumHeight = dp(when {
             round -> if (DeviceLayout.phone) ROUND_CAST_ROW_PHONE else ROUND_CAST_ROW
@@ -3058,7 +3287,7 @@ class MainActivity : Activity() {
         castCache.get(cacheKey)?.let { show(it); then(); return }
         val region = tmdbRegion()
         worker.execute {
-            val cast = runCatching { TmdbCatalog(this, key, region).cast(result.imdbId, result.type) }.getOrNull()
+            val cast = runCatching { if (key.isBlank()) FreeCast().cast(result.imdbId, result.type) else TmdbCatalog(this, key, region).cast(result.imdbId, result.type) }.getOrNull()
             runOnUiThread { if (isFinishing || isDestroyed) return@runOnUiThread; if (cast != null) castCache.put(cacheKey, cast); show(cast.orEmpty()); then() }
         }
     }
@@ -3110,7 +3339,8 @@ class MainActivity : Activity() {
             val grow = if (round) 1.06f else 1.04f
             ring.animate().scaleX(if (focused) grow else 1f).scaleY(if (focused) grow else 1f).setDuration(120).start()
         }
-        card.setOnClickListener { navigate { personPage(member) } }
+        // Free-source people (negative ids) have no TMDB page: their name is searched instead.
+        card.setOnClickListener { if (member.personId < 0) navigate { searchResults(member.name) } else navigate { personPage(member) } }
         return card
     }
 
@@ -3614,7 +3844,7 @@ class MainActivity : Activity() {
             else confirm(getString(R.string.t_mark_x_x_of_x_x, pending.size, if (pending.size == 1) "episode" else "episodes", show.title, label, tracker.name)) {
                 val identity = PlaybackIdentity(show.imdbId, "series", show.title)
                 load(generation, { tracker.markSeasonWatched(identity, season, pending.map { it.episode }); mirrorHistory { it.markSeasonWatched(identity, season, pending.map { it.episode }) } }) {
-                    watched = pending.fold(watched) { state, episode -> state.with(episode) }
+                    localWatched += pending; watched = pending.fold(watched) { state, episode -> state.with(episode) }
                     val markers = pending.map(::identityKey).toSet()
                     fun hide(root: View) {
                         if (root.getTag(R.id.pov_continue_identity) in markers) root.visibility = View.GONE
@@ -4376,7 +4606,7 @@ class MainActivity : Activity() {
         sourcesLayers()
         if (DeviceLayout.phone) {
             val poster = item.poster.ifBlank { if (identity.imdbId.matches(Regex("tt\\d+"))) "https://images.metahub.space/poster/medium/${identity.imdbId}/img" else "" }
-            if (poster.isNotBlank()) image(sourcesArt, thumbnail(poster, wide = false), feature = true)
+            posterImage(sourcesArt, identity.imdbId, identity.type, thumbnail(poster, wide = false), feature = true)
         // TV: the plain backdrop over the details version (which is shaded nearly black on the left, under the list).
         } else image(sourcesArt, backdropFor(item), feature = true)
     }
@@ -5372,6 +5602,7 @@ class MainActivity : Activity() {
             mediaRow(getString(R.string.t_movie_watchlist), movies); mediaRow(getString(R.string.t_tv_watchlist), series)
             likedLists(id, false)
             if (tracker.supportsLists) body.addView(button(getString(R.string.t_personal_lists)) { navigate { weTrakrLists() } }, margin(180, 42, top = 18))
+            body.addView(button(getString(R.string.cal_open)) { navigate { calendarPage() } }, margin(180, 42, top = 10))
             weTrakrProgress(id)
         }
     }
@@ -5382,7 +5613,7 @@ class MainActivity : Activity() {
      */
     private fun flixWeTrakrPage(id: Int) {
         fun slot() = column().also { body.addView(it, margin(-1, -2)) }
-        val progressSlot = slot(); val nextSlot = slot(); val movieSlot = slot(); val showSlot = slot(); val personalSlot = slot()
+        val progressSlot = slot(); val nextSlot = slot(); val calendarSlot = slot(); val movieSlot = slot(); val showSlot = slot(); val personalSlot = slot()
         val likedAnchor = slot()
         fun heading(host: LinearLayout, title: String) = host.addView(text(title, theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 14, bottom = 6))
         read(id, { wetrakr.continueWatching() }) { progress ->
@@ -5394,7 +5625,7 @@ class MainActivity : Activity() {
                 val caption = listOf(if (identity.type == "series") "S${identity.season} E${identity.episode}" else "", "${percent.toInt()}%").filter { it.isNotBlank() }.joinToString(" · ")
                 val item = MediaItemData(identity.imdbId, identity.type, identity.title)
                 val open: () -> Unit = { navigate { showSources(identity) } }
-                row.addView((if (resumeCards()) resumeCard(item, percent / 100, episodeLine(identity), getString(R.string.t_x_watched, percent.toInt()), open) else tile(item, percent / 100, caption, open))
+                row.addView((if (resumeCards()) resumeCard(item, percent / 100, episodeLine(identity), getString(R.string.t_x_watched, percent.toInt()), open) else tile(item, wide = true, progress = percent / 100, caption = caption, action = open))
                     .apply { continueOptions(this, "", identity, identity.title) }, continueSlot())
             }
         }
@@ -5407,6 +5638,7 @@ class MainActivity : Activity() {
                     margin(cardWidth(), theme.layout.cardHeightDp, right = theme.layout.cardGapDp))
             }
         }
+        airingSoon(id, calendarSlot)
         read(id, { wetrakr.watchlist("movie") }) { mediaRow(getString(R.string.t_movie_watchlist), it, movieSlot) }
         read(id, { wetrakr.watchlist("series") }) { mediaRow(getString(R.string.t_tv_watchlist), it, showSlot) }
         if (wetrakr.supportsLists) read(id, { wetrakr.lists() }) { lists ->
@@ -5442,6 +5674,66 @@ class MainActivity : Activity() {
                     navigate { showSources(identity) }
                 }, margin(-1, 44, bottom = 7)) }
             }
+        }
+    }
+
+    /** The shows the calendar follows: Continue Watching and Up Next first, then the series watchlist, then watched shows. */
+    private fun calendarShows(tracker: Tracker, seen: WatchedState): List<MediaItemData> {
+        val ids = linkedSetOf<String>()
+        runCatching { tracker.continueWatching() }.getOrDefault(emptyList()).filter { it.first.type == "series" }.forEach { ids += it.first.imdbId }
+        runCatching { tracker.nextEpisodes() }.getOrDefault(emptyList()).forEach { ids += it.imdbId }
+        runCatching { tracker.watchlist("series") }.getOrDefault(emptyList()).forEach { ids += it.imdbId }
+        seen.episodes.forEach { ids += it.substringBefore(':') }
+        return ids.map { MediaItemData(it, "series", "") }
+    }
+
+    private fun calendar() = EpisodeCalendar({ item -> catalog.details(item) })
+
+    private fun calendarDay(day: java.time.LocalDate): String {
+        val today = java.time.LocalDate.now()
+        return when (day) {
+            today -> getString(R.string.cal_today)
+            today.plusDays(1) -> getString(R.string.cal_tomorrow)
+            today.minusDays(1) -> getString(R.string.cal_yesterday)
+            else -> day.format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM", java.util.Locale.getDefault()))
+        }
+    }
+
+    private fun calendarTile(entry: EpisodeCalendar.Entry, withDay: Boolean): View {
+        val day = calendarDay(EpisodeCalendar.day(entry.airs))
+        val caption = listOfNotNull(if (withDay) day else null, "S${entry.episode.season} E${entry.episode.episode}").joinToString(" · ")
+        return tile(entry.show, caption = caption) { navigate { detailsFor(entry.show, entry.identity) } }
+    }
+
+    /** "Airing soon" on the tracker page: the next week's episodes, with a way into the whole calendar. */
+    private fun airingSoon(id: Int, host: LinearLayout) {
+        val tracker = wetrakr; val seen = watched
+        read(id, { calendar().upcoming(calendarShows(tracker, seen), days = 7, pastDays = 0) }) { entries ->
+            host.addView(text(getString(R.string.cal_airing_soon), theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 14, bottom = 6))
+            if (entries.isEmpty()) host.addView(text(getString(R.string.cal_nothing_this_week), 13, muted), margin(-1, -2, bottom = 6))
+            else {
+                val row = horizontalRow(host)
+                entries.take(30).forEach { row.addView(calendarTile(it, true), margin(cardWidth(), theme.layout.cardHeightDp, right = theme.layout.cardGapDp)) }
+            }
+            host.addView(button(getString(R.string.cal_open)) { navigate { calendarPage() } }, margin(200, 40, top = 6))
+        }
+    }
+
+    /** The calendar: new episodes of the viewer's shows for the next 30 days, by day. */
+    private fun calendarPage() {
+        current = { calendarPage() }
+        val tracker = weTrakrClient()
+        val id = page(getString(R.string.cal_title), getString(R.string.cal_subtitle))
+        if (!tracker.connected()) { body.addView(button(getString(R.string.t_connect_x, tracker.name)) { startWeTrakr() }, margin(210, 44)); return }
+        val seen = watched
+        read(id, { calendar().upcoming(calendarShows(tracker, seen), days = 30, pastDays = 1) }) { entries ->
+            if (entries.isEmpty()) { body.addView(text(getString(R.string.cal_empty), 15, muted)); return@read }
+            entries.groupBy { EpisodeCalendar.day(it.airs) }.forEach { (day, items) ->
+                body.addView(text(calendarDay(day), theme.layout.sectionTitleSizeSp, ink, true), margin(-1, -2, top = 14, bottom = 6))
+                val row = horizontalRow(body)
+                items.forEach { row.addView(calendarTile(it, false), margin(cardWidth(), theme.layout.cardHeightDp, right = theme.layout.cardGapDp)) }
+            }
+            body.addView(View(this), margin(-1, 24))
         }
     }
 
@@ -5689,7 +5981,7 @@ class MainActivity : Activity() {
             val card = settingsGroup(title, "library")
             if (index == 0) { holdHint(card, getString(R.string.t_an_indexer)); indexerCard = card }
             group.map { indexer ->
-                val host = runCatching { java.net.URI(indexer.url).host }.getOrNull().orEmpty()
+                val host = if (EasynewsIndexer.isEasynews(indexer)) getString(R.string.eni_row_detail) else runCatching { java.net.URI(indexer.url).host }.getOrNull().orEmpty()
                 val today = indexerConfig.searchesToday(indexer.id)
                 val limit = if (indexer.dailyLimit > 0) L10n.tr(R.string.t_x_of_x_searches_today, "%1\$s of %2\$s searches today", today, indexer.dailyLimit) else ""
                 val grabs = if (indexer.dailyGrabLimit > 0) L10n.tr(R.string.t_x_of_x_grabs_today, "%1\$s of %2\$s grabs today", indexerConfig.grabsToday(indexer.id), indexer.dailyGrabLimit) else ""
@@ -6027,11 +6319,11 @@ class MainActivity : Activity() {
         val all = runCatching { NewznabIndexers(store).load() }.getOrDefault(emptyList())
         val focus = "setting:${indexer.name}"
         val actions = listOf<Pair<String, () -> Unit>>(
-            getString(R.string.t_edit) to { editIndexer(indexer, null) },
+            getString(R.string.t_edit) to { if (EasynewsIndexer.isEasynews(indexer)) editEasynewsIndexer(indexer) else editIndexer(indexer, null) },
             getString(R.string.t_test) to {
                 toast(getString(R.string.t_asking_x, indexer.name))
                 worker.execute {
-                    val result = try { "${indexer.name}: " + Newznab().test(indexer, UsenetHeaders.query { store.get(it) }) } catch (error: Exception) { "${indexer.name}: ${error.message ?: L10n.tr(R.string.t_no_answer_lower, "no answer")}" }
+                    val result = try { "${indexer.name}: " + if (EasynewsIndexer.isEasynews(indexer)) EasynewsIndexer.test(indexer) else Newznab().test(indexer, UsenetHeaders.query { store.get(it) }) } catch (error: Exception) { "${indexer.name}: ${error.message ?: L10n.tr(R.string.t_no_answer_lower, "no answer")}" }
                     runOnUiThread { if (!isFinishing && !isDestroyed) toast(result) }
                 }
             },
@@ -6085,10 +6377,53 @@ class MainActivity : Activity() {
 
     private fun chooseIndexerPreset() {
         val presets = NewznabIndexers.PRESETS
-        val labels = (listOf(getString(R.string.t_generic_newznab_any_address)) + presets.map { it.name }).toTypedArray()
+        val labels = (listOf(getString(R.string.t_generic_newznab_any_address), getString(R.string.eni_preset)) + presets.map { it.name }).toTypedArray()
         AlertDialog.Builder(this).setTitle(getString(R.string.t_add_indexer)).setItems(labels) { _, picked ->
-            editIndexer(null, presets.getOrNull(picked - 1))
+            if (picked == 1) editEasynewsIndexer(null) else editIndexer(null, presets.getOrNull(picked - 2))
         }.setNegativeButton(getString(R.string.t_cancel), null).show()
+    }
+
+    /**
+     * Add or edit Easynews as an indexer: its own login (the Easynews section's is offered when adding), searched like
+     * any indexer, with the videos downloaded by the news providers.
+     */
+    private fun editEasynewsIndexer(indexer: NewznabIndexer?) {
+        val content = column().apply { setPadding(dp(18), dp(8), dp(18), dp(8)) }
+        val plain = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        val saved = indexer?.let(EasynewsIndexer::credentials) ?: Easynews.credentials(store)
+        val name = usenetField(getString(R.string.t_name), indexer?.name ?: "Easynews", plain)
+        val user = usenetField(getString(R.string.t_username), saved?.first.orEmpty(), plain)
+        val password = usenetField(getString(R.string.t_password), saved?.second.orEmpty(), InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        val status = text(getString(R.string.eni_hint), 13, muted)
+        content.addView(captioned(name), margin(-1, -2)); content.addView(captioned(user), margin(-1, -2, top = 4)); content.addView(captioned(password), margin(-1, -2, top = 4))
+        val dialog = AlertDialog.Builder(this).setTitle(if (indexer == null) getString(R.string.eni_preset) else getString(R.string.t_edit_x, indexer.name))
+            .setView(formWithStatus(content, status))
+            .setPositiveButton(getString(R.string.t_save), null).setNegativeButton(getString(R.string.t_cancel), null).setNeutralButton(getString(R.string.t_test), null).create()
+            .apply { window?.setSoftInputMode(formInputMode()) }
+        dialog.show()
+        (if (user.text.isNullOrBlank()) user else name).requestFocus()
+        fun typed(): NewznabIndexer {
+            val made = EasynewsIndexer.create(name.text.toString(), user.text.toString(), password.text.toString())
+            return if (indexer == null) made else indexer.copy(name = made.name, apiKey = made.apiKey)
+        }
+        dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener {
+            val candidate = try { typed() } catch (error: Exception) { status.text = uiErrorMessage(error); return@setOnClickListener }
+            status.text = getString(R.string.t_asking_x, "Easynews")
+            worker.execute {
+                val result = try { EasynewsIndexer.test(candidate) + getString(R.string.t_save_to_keep_it) } catch (error: Exception) { error.message ?: getString(R.string.t_no_answer) }
+                runOnUiThread { if (dialog.isShowing) status.text = result }
+            }
+        }
+        dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+            try {
+                val made = typed()
+                val config = NewznabIndexers(store)
+                val existing = config.load()
+                require(existing.none { EasynewsIndexer.isEasynews(it) && it.apiKey == made.apiKey && it.id != made.id }) { getString(R.string.t_this_indexer_is_already_saved) }
+                config.save(if (indexer == null) existing + made else existing.map { if (it.id == indexer.id) made else it })
+                dialog.dismiss(); usenetPage("setting:${made.name}")
+            } catch (error: Exception) { status.text = uiErrorMessage(error) }
+        }
     }
 
     /** Add or edit an indexer: a known one with its API key, or any Newznab address. */
@@ -6522,6 +6857,9 @@ class MainActivity : Activity() {
             if (tmdbKey.isNotBlank()) settingsRow(home, getString(R.string.t_metadata_language),
                 dev.pov.tv.data.MetadataLanguage.name(store.get(dev.pov.tv.data.MetadataLanguage.KEY)) ?: getString(R.string.t_same_as_app_language),
                 getString(R.string.t_titles_and_descriptions_from_tmdb_in)) { chooseMetadataLanguage() }
+            settingsRow(home, getString(R.string.ps_title), posterServiceLabel(), getString(R.string.ps_row_detail)) { choosePosterService() }
+            settingsRow(home, getString(R.string.pq_title), posterQualityLabel(), getString(R.string.pq_row_detail)) { choosePosterQuality() }
+            settingsRow(home, getString(R.string.cs_title), cardShapeLabel(), getString(R.string.cs_row_detail)) { chooseCardShape() }
             settingsRow(home, getString(R.string.t_cinema_country), countryName(tmdbRegion()), getString(R.string.t_used_for_now_playing_in_cinemas)) {
                 val countries = java.util.Locale.getISOCountries().map { it to countryName(it) }.sortedBy { it.second }
                 AlertDialog.Builder(this).setTitle(getString(R.string.t_now_playing_in_cinemas_country))
@@ -6743,6 +7081,15 @@ class MainActivity : Activity() {
                 Triple(R.drawable.pov_about_subdl, getString(R.string.t_subdl), getString(R.string.t_subtitles_found_online)),
                 Triple(R.drawable.pov_about_wyzie, getString(R.string.t_wyzie_subs), getString(R.string.t_subtitles_with_your_key)),
                 Triple(R.drawable.pov_about_seekr, getString(R.string.t_seekr), getString(R.string.t_seek_previews_with_your_key)),
+                // Cast without a TMDB key (FreeCast): TVmaze's data is CC BY-SA; Wikidata is CC0, its photos come from Wikimedia Commons.
+                Triple(R.drawable.pov_about_tvmaze, "TVmaze", getString(R.string.ab_tvmaze_line)),
+                Triple(R.drawable.pov_about_wikidata, "Wikidata", getString(R.string.ab_wikidata_line)),
+                // Poster services (Settings → Home → Poster service).
+                Triple(R.drawable.pov_about_rpdb, "RPDB", getString(R.string.ab_posters_line)),
+                Triple(R.drawable.pov_about_topposters, "TOP Posters", getString(R.string.ab_posters_line)),
+                Triple(0, "AIOratings", getString(R.string.ab_posters_line)),
+                Triple(R.drawable.pov_about_openposterdb, "OpenPosterDB", getString(R.string.ab_posters_line)),
+                Triple(R.drawable.pov_about_betterposters, "BetterPosters", getString(R.string.ab_posters_line)),
             )
             val powered = settingsGroup(getString(R.string.t_powered_by), null)
             gridRows(powered, services.map { (logo, name, line) ->
@@ -8258,7 +8605,8 @@ class MainActivity : Activity() {
 
 
     private fun resumeCards() = flix && store.get(RESUME_CARDS) != "false"  // on unless the viewer turns it off
-    private fun continueSlot() = margin(if (resumeCards()) (if (DeviceLayout.phone) 260 else RESUME_CARD_WIDTH) else cardWidth(), theme.layout.cardHeightDp, right = theme.layout.cardGapDp)
+    /** Continue Watching stays on wide cards (resume cards or wide tiles) even when other rows show posters. */
+    private fun continueSlot() = margin(if (resumeCards()) (if (DeviceLayout.phone) 260 else RESUME_CARD_WIDTH) else theme.wideLayout.cardWidthDp, theme.wideLayout.cardHeightDp, right = theme.layout.cardGapDp)
     private fun episodeLine(identity: PlaybackIdentity) = if (identity.type == "series") "S${identity.season} E${identity.episode}" else getString(R.string.t_movie)
 
     /** Same height as every shelf, wider: artwork on the left, then title, episode, time left with a play mark, and progress. */
@@ -8314,10 +8662,12 @@ class MainActivity : Activity() {
     private fun refreshWatched(force: Boolean = false) {
         watchedCheckedAt = android.os.SystemClock.elapsedRealtime()
         val tracker = wetrakr; val service = trackerId()
-        if (!tracker.connected()) { if (watched != WatchedState.EMPTY) { watched = WatchedState.EMPTY; refreshBadges() }; return }
+        if (!tracker.connected()) { localWatched.clear(); if (watched != WatchedState.EMPTY) { watched = WatchedState.EMPTY; refreshBadges() }; return }
         val revision = tracker.accountRevision()
         val saved = watchedCache.load(service, revision)
-        if (saved != null && saved.state != watched) { watched = saved.state; refreshBadges() }
+        // Marks made here (a finish, Mark watched) stay shown until the service's own history includes them.
+        fun withLocal(state: WatchedState) = localWatched.fold(state) { all, identity -> all.with(identity) }
+        if (saved != null && withLocal(saved.state) != watched) { watched = withLocal(saved.state); refreshBadges() }
         if (watchedLoading) return
         watchedLoading = true
         worker.execute {
@@ -8326,7 +8676,10 @@ class MainActivity : Activity() {
                 if (!force && saved != null && saved.stamp == stamp) return@execute
                 val state = tracker.watched()
                 watchedCache.save(WatchedCache.Entry(service, revision, stamp, state))
-                runOnUiThread { if (!isDestroyed && trackerId() == service && wetrakr.accountRevision() == revision) { watched = state; refreshBadges() } }
+                runOnUiThread { if (!isDestroyed && trackerId() == service && wetrakr.accountRevision() == revision) {
+                    localWatched.removeAll { state.with(it) == state }
+                    watched = withLocal(state); refreshBadges()
+                } }
             } catch (_: Exception) { /* Badges are a convenience; the next check retries. */ } finally { watchedLoading = false }
         }
     }
@@ -8354,7 +8707,7 @@ class MainActivity : Activity() {
     }
 
     /** A manual mark shows its badge straight away; the next service check confirms it. */
-    private fun markedWatched(identity: PlaybackIdentity) { watched = watched.with(identity); refreshBadges() }
+    private fun markedWatched(identity: PlaybackIdentity) { localWatched += identity; watched = watched.with(identity); refreshBadges() }
 
     private fun watchedKey(key: String): Boolean {
         val parts = key.split(':')
@@ -8388,6 +8741,9 @@ class MainActivity : Activity() {
         }
         retainedRoots().forEach(::visit)
     }
+
+    /** Poster grids: as many columns as fit at about the row poster width (three on a phone, six or seven on a TV). */
+    private fun posterColumns(width: Int): Int = ((width + theme.layout.cardGapDp) / (theme.layout.cardWidthDp + theme.layout.cardGapDp)).coerceIn(3, 8)
 
     private fun cardWidth(): Int {
         if (flix) return theme.layout.cardWidthDp
@@ -8447,10 +8803,11 @@ class MainActivity : Activity() {
     private fun mediaGrid(items: List<MediaItemData>, showType: Boolean = false, host: LinearLayout = body) {
         if (items.isEmpty()) { host.addView(text(getString(R.string.t_no_titles_found_try_a_different), 14, muted)); return }
         val width = DeviceLayout.canvasWidth - theme.layout.railWidthDp - theme.layout.contentInsetDp * 2
-        val count = if (flix) (if (DeviceLayout.phone) DeviceLayout.phoneColumns(width) else 4) else (width / (cardWidth() + theme.layout.cardGapDp)).coerceAtLeast(1)
+        val posters = theme.layout.cards == CardFormat.POSTER
+        val count = if (flix) (if (posters) posterColumns(width) else if (DeviceLayout.phone) DeviceLayout.phoneColumns(width) else 4) else (width / (cardWidth() + theme.layout.cardGapDp)).coerceAtLeast(1)
         // Streaming grids stretch their columns to the full content width.
         val gridWidth = if (flix) (width - 6 - (count - 1) * theme.layout.cardGapDp) / count else cardWidth()
-        val gridHeight = if (flix) gridWidth * 9 / 16 else theme.layout.cardHeightDp
+        val gridHeight = if (flix) (if (posters) gridWidth * 3 / 2 else gridWidth * 9 / 16) else theme.layout.cardHeightDp
         items.chunked(count).forEach { chunk ->
             val row = LinearLayout(this).apply { tag = "media-grid-row" }; host.addView(row, margin(-1, -2, top = 14))
             chunk.forEach { item ->
@@ -8467,8 +8824,8 @@ class MainActivity : Activity() {
             android.content.res.ColorStateList.valueOf(0x40FFFFFF), null, rounded(Color.WHITE, radius))
     }
 
-    private fun tile(item: MediaItemData, progress: Double? = null, caption: String = "", action: () -> Unit): View {
-        val shape = theme.layout.cards
+    private fun tile(item: MediaItemData, progress: Double? = null, caption: String = "", wide: Boolean = false, action: () -> Unit): View {
+        val shape = if (wide) CardFormat.LANDSCAPE else theme.layout.cards
         val frame = FrameLayout(this).apply {
             background = rounded(panel, theme.layout.cornerRadiusDp); isFocusable = true; isFocusableInTouchMode = DeviceLayout.tv; isClickable = true
             contentDescription = listOf(item.title, item.year, caption).filter(String::isNotBlank).joinToString(", ")
@@ -8479,12 +8836,18 @@ class MainActivity : Activity() {
         artFrame.addView(art, FrameLayout.LayoutParams(-1, -1))
         val fallback = if (item.imdbId.matches(Regex("tt\\d+"))) "https://images.metahub.space/${if (shape == CardFormat.POSTER) "poster" else "background"}/medium/${item.imdbId}/img" else ""
         val wideArt = shape != CardFormat.POSTER && item.background.isNotBlank()
-        image(art, thumbnail((if (shape == CardFormat.POSTER) item.poster else item.background).ifBlank { fallback.ifBlank { item.poster } }, wide = wideArt || (shape != CardFormat.POSTER && fallback.isNotBlank())))
-        artFrame.addView(View(this).apply { background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
-            intArrayOf(0xE8000000.toInt(), 0x08000000, Color.TRANSPARENT)) }, FrameLayout.LayoutParams(-1, -1))
+        val usualArt = thumbnail((if (shape == CardFormat.POSTER) item.poster else item.background).ifBlank { fallback.ifBlank { item.poster } }, wide = wideArt || (shape != CardFormat.POSTER && fallback.isNotBlank()))
+        if (shape == CardFormat.POSTER) posterImage(art, item.imdbId, item.type, usualArt) else image(art, usualArt)
+        // With a poster service, its posters carry the title and a ratings bar along the bottom, so only a caption or
+        // progress is drawn over them, on a short shade. Without one (or with no service poster for this title) poster
+        // cards keep the title and shade like wide cards: some posters (e.g. in another metadata language) have no text.
+        val bare = flix && shape == CardFormat.POSTER && !publicPreview && PosterServices.url(item.imdbId, item.type) != null
+        if (!bare || caption.isNotBlank() || progress != null) artFrame.addView(View(this).apply { background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
+            intArrayOf(0xE8000000.toInt(), 0x08000000, Color.TRANSPARENT)) }, if (bare) FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM) else FrameLayout.LayoutParams(-1, -1))
         val labels = column().apply { setPadding(dp(10), dp(5), dp(9), dp(if (progress != null) 17 else 9)) }
         val name = text(item.title, 12, Color.WHITE, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
-        if (flix && logoFor(item).isNotBlank()) {
+        if (bare) Unit
+        else if (flix && logoFor(item).isNotBlank()) {
             // Title artwork replaces the plain caption once it loads; both share one slot so the swap never re-lays out the row.
             val slot = FrameLayout(this).apply { minimumHeight = dp(30) }
             val logo = FixedSizeImageView(this).apply { scaleType = ImageView.ScaleType.FIT_START; visibility = View.INVISIBLE }
@@ -8495,7 +8858,8 @@ class MainActivity : Activity() {
             image(logo, logoFor(item).replace("/logo/medium/", "/logo/small/")) { loaded -> if (loaded) { logo.visibility = View.VISIBLE; name.visibility = View.INVISIBLE } }
         } else labels.addView(name)
         val secondary = caption.ifBlank { item.year }
-        if (secondary.isNotBlank() && (caption.isNotBlank() || shape == CardFormat.LANDSCAPE)) labels.addView(text(secondary, 10, 0xFFCFD8E4.toInt()), margin(-1, -2, top = 2))
+        if (bare) { if (caption.isNotBlank()) labels.addView(text(caption, 11, Color.WHITE, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }) }
+        else if (secondary.isNotBlank() && (caption.isNotBlank() || shape == CardFormat.LANDSCAPE)) labels.addView(text(secondary, 10, 0xFFCFD8E4.toInt()), margin(-1, -2, top = 2))
         artFrame.addView(labels, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         frame.addView(artFrame, FrameLayout.LayoutParams(-1, -1))
         watchedBadge(if (item.type == "movie") "movie" else "series", item.imdbId)?.let {
@@ -8522,6 +8886,13 @@ class MainActivity : Activity() {
             if (focused) scheduleFeature(item)
         }
         frame.setOnClickListener { action() }
+        // Phone, poster cards: the details page's backdrop is not the picture on the card, so it starts downloading
+        // the moment a finger lands (a beat before the tap completes) and is ready as the page opens. Wide cards
+        // already show that picture; the TV fetches it when a card is focused.
+        if (DeviceLayout.phone && shape == CardFormat.POSTER && !publicPreview) frame.setOnTouchListener { _, event ->
+            if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) prefetch(backdropFor(item), backdrop = true)
+            false
+        }
         // Holding OK gives the same choices everywhere: play, pick a stream by hand, details, mark watched.
         frame.setOnLongClickListener { titleMenu(item, action); true }
         return frame.pressable(theme.layout.cornerRadiusDp)
@@ -8584,6 +8955,13 @@ class MainActivity : Activity() {
     }
 
     private fun holdMenu(title: String, options: List<Pair<String, () -> Unit>>) { HoldMenu.show(this, title, options) }
+
+    /** A poster from the chosen poster service (Settings → Home → Poster service), else (or when it has none) [usual]. */
+    private fun posterImage(view: ImageView, imdbId: String, type: String, usual: String, feature: Boolean = false) {
+        val service = if (publicPreview) null else PosterServices.url(imdbId, type)
+        if (service == null) { image(view, usual, feature = feature); return }
+        image(view, service, feature = feature) { ok -> if (!ok && view.tag == service && usual.startsWith("https://")) image(view, usual, feature = feature) }
+    }
 
     private fun image(view: ImageView, address: String, keep: Boolean = false, feature: Boolean = false, loaded: ((Boolean) -> Unit)? = null) {
         if (!address.startsWith("https://")) { loaded?.invoke(false); return }
@@ -8676,13 +9054,34 @@ class MainActivity : Activity() {
      * hosts with smaller versions are asked for those: TMDB (780 px wide cards, 500 px posters; never upsized),
      * Metahub's small size. Images from other hosts, e.g. rating posters, stay as they are.
      */
+    /** Settings → Home → Poster quality: "fast" (smaller pictures, quicker), "" standard, "sharp" (bigger). */
+    @Volatile private var posterQuality = ""
+    private fun loadPosterQuality() { posterQuality = store.get(POSTER_QUALITY).takeIf { it in setOf("fast", "sharp") }.orEmpty() }
+    private fun posterQualityLabel() = when (posterQuality) {
+        "fast" -> getString(R.string.pq_fast); "sharp" -> getString(R.string.pq_sharp); else -> getString(R.string.pq_standard)
+    }
+    private fun choosePosterQuality() {
+        val choices = listOf("fast" to getString(R.string.pq_fast_detail), "" to getString(R.string.pq_standard_detail), "sharp" to getString(R.string.pq_sharp_detail))
+        AlertDialog.Builder(this).setTitle(getString(R.string.pq_title))
+            .setSingleChoiceItems(choices.map { it.second }.toTypedArray(), choices.indexOfFirst { it.first == posterQuality }.coerceAtLeast(0)) { dialog, index ->
+                dialog.dismiss()
+                if (choices[index].first.isEmpty()) store.remove(POSTER_QUALITY) else store.put(POSTER_QUALITY, choices[index].first)
+                loadPosterQuality(); retainedHome = null; refreshSettings()
+            }.setNegativeButton(getString(R.string.t_cancel), null).show()
+    }
+
     private fun thumbnail(address: String, wide: Boolean = true): String = when {
-        address.startsWith("https://images.metahub.space/") -> address.replace(Regex("/(background|poster|logo)/(medium|large)/"), "/$1/small/")
+        address.startsWith("https://images.metahub.space/") ->
+            address.replace(Regex("/(background|poster|logo)/(small|medium|large)/"), "/$1/${if (posterQuality == "sharp") "medium" else "small"}/")
         address.startsWith("https://image.tmdb.org/t/p/") -> {
             val size = address.removePrefix("https://image.tmdb.org/t/p/").substringBefore('/')
             val width = if (size == "original") Int.MAX_VALUE else size.removePrefix("w").toIntOrNull()
-            val target = if (wide) 780 else 500
-            if (width != null && width > target) address.replaceFirst("/t/p/$size/", "/t/p/w$target/") else address
+            val target = when (posterQuality) {
+                "fast" -> if (wide) 300 else 185
+                "sharp" -> if (wide) 1280 else 780
+                else -> if (wide) 780 else 500
+            }
+            if (width != null && (width > target || (posterQuality == "sharp" && width < target))) address.replaceFirst("/t/p/$size/", "/t/p/w$target/") else address
         }
         else -> address
     }

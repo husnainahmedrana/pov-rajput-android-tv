@@ -1538,6 +1538,10 @@ class PlayerActivity : Activity() {
             seekPreview.active -> finishSeek(cancelled = true)
             // Still loading (no controls yet): Back leaves, as the card's hint says.
             stillLoading() && previewPrep == null -> { InAppPlaybackSession.stop(); finish() }
+            // Phone: the system Back gesture first puts away the controls that are showing (keeping the viewer in
+            // the video); with none showing, Back leaves as usual. A tap brings the controls back.
+            DeviceLayout.phone && view.isControllerFullyVisible -> view.hideController()
+            DeviceLayout.phone -> { if (!miniPlayer) InAppPlaybackSession.stop(); finish() }
             // Back first brings up the controls; a second Back (with them showing) leaves for the mini player, or stops the
             // video (saving its progress, like Stop) when the mini player is off.
             !view.isControllerFullyVisible -> {
