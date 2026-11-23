@@ -156,49 +156,52 @@ class NntpPool(
         var failures = 0
         try {
             while (!closed) {
+                // Sign in BEFORE taking an article. Taking first let a worker stuck in a slow sign-in (a bad route
+                // can take 10–15 s for one TLS handshake) hold the very first articles a video needs, while
+                // connections that were already signed in sat idle; now whichever connection is ready first gets them.
+                if (connection == null) {
+                    try {
+                        // A connection signed in ahead of time (see WarmConnections) skips the 1–3 s sign-in.
+                        val warm = WarmConnections.take(server)
+                        val fresh = warm ?: NntpConnection(server, open, count)
+                        fresh.received = count
+                        sockets += fresh
+                        if (warm == null) try { fresh.connect() } catch (error: IOException) { fresh.close(); sockets -= fresh; throw error }
+                        if (closed) { fresh.close(); sockets -= fresh; return }
+                        connection = fresh
+                        live.incrementAndGet(); failures = 0
+                    } catch (error: IOException) {
+                        if (closed) return
+                        if (error is NntpRefusedException) {
+                            // Wrong login or the account's connection limit: this worker steps aside for good. The
+                            // others carry on; when it was the last one, what is queued fails with the reason.
+                            refusal = error
+                            log("connection refused: ${error.message}")
+                            // Two workers refused at once both see workers > 1: a limit of 0 also means none is left.
+                            val last = synchronized(lock) {
+                                limit = maxOf(limit - 1, 0)
+                                // A wrong login stays refused; "too many connections" is tried again later.
+                                if (error.code != 481 && error.code != 482 && limit > 0) regrowAt = System.nanoTime() / 1_000_000 + REGROW_MS
+                                workers == 1 || limit == 0
+                            }
+                            if (last) failAll(error)
+                            return
+                        }
+                        if (++failures >= 4) {
+                            // No route to the server just now. With no connection working at all, the article at the
+                            // front fails (the player shows why); a later request tries again.
+                            log("connection failed: ${error.message}")
+                            if (live.get() == 0) synchronized(lock) { queue.pollFirst() }?.fail(error)
+                            return
+                        }
+                        try { Thread.sleep(500L * failures) } catch (_: InterruptedException) { return }
+                        continue
+                    }
+                }
                 // Top up the requests in flight; block for work only when nothing is in flight.
                 var wrote = false
                 while (flying.size < depth) {
                     val next = take(block = flying.isEmpty()) ?: break
-                    if (connection == null) {
-                        try {
-                            // A connection signed in ahead of time (see WarmConnections) skips the 1–3 s sign-in.
-                            val warm = WarmConnections.take(server)
-                            val fresh = warm ?: NntpConnection(server, open, count)
-                            fresh.received = count
-                            sockets += fresh
-                            if (warm == null) try { fresh.connect() } catch (error: IOException) { fresh.close(); sockets -= fresh; throw error }
-                            if (closed) { fresh.close(); sockets -= fresh; next.fail(IOException(L10n.tr(R.string.t_the_news_connection_is_closed, "The news connection is closed."))); return }
-                            connection = fresh
-                            live.incrementAndGet(); failures = 0
-                        } catch (error: IOException) {
-                            if (closed) { next.fail(error); return }
-                            if (error is NntpRefusedException) {
-                                // Wrong login or the account's connection limit: this worker steps aside for good. The
-                                // others carry on; when it was the last one, what is queued fails with the reason.
-                                refusal = error
-                                log("connection refused: ${error.message}")
-                                // Two workers refused at once both see workers > 1: a limit of 0 also means none is left.
-                                val last = synchronized(lock) {
-                                    limit = maxOf(limit - 1, 0)
-                                    // A wrong login stays refused; "too many connections" is tried again later.
-                                    if (error.code != 481 && error.code != 482 && limit > 0) regrowAt = System.nanoTime() / 1_000_000 + REGROW_MS
-                                    workers == 1 || limit == 0
-                                }
-                                if (last) { next.fail(error); failAll(error) } else enqueue(next, urgent = true)
-                                return
-                            }
-                            if (++failures >= 4) {
-                                // No route to the server just now: fail this article; a later one tries again.
-                                log("connection failed: ${error.message}")
-                                next.fail(error)
-                                return
-                            }
-                            enqueue(next, urgent = true)
-                            try { Thread.sleep(500L * failures) } catch (_: InterruptedException) { return }
-                            continue
-                        }
-                    }
                     checkNotNull(connection).send("BODY <${next.messageId}>")
                     flying.addLast(next); wrote = true
                 }

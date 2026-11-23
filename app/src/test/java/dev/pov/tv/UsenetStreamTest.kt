@@ -125,6 +125,26 @@ class UsenetStreamTest {
     private fun pool(server: FakeServer, connections: Int, depth: Int = 1, pass: String = server.password) =
         NntpPool(server.server(pass), connections, depth).also { pools += it }
 
+    @Test fun `a slow sign-in doesn't hold up the first articles when another connection is ready`() {
+        val server = server()
+        val file = Random(7).nextBytes(4000)
+        val nzb = server.post(file, listOf(2000, 2000), "slow.mkv")
+        // The first connection takes 3 s to open (a bad route's TLS handshake); the second opens at once.
+        val opened = AtomicInteger()
+        val pool = NntpPool(server.server(), 2, open = { target ->
+            if (opened.incrementAndGet() == 1) Thread.sleep(3_000)
+            dev.pov.tv.usenet.NntpConnection.openSocket(target)
+        }).also { pools += it }
+        val started = System.nanoTime()
+        val first = pool.fetch(nzb.segments[0].messageId)
+        val second = pool.fetch(nzb.segments[1].messageId)
+        while (!first.done && System.nanoTime() - started < 10_000_000_000L) Thread.sleep(10)
+        val firstMs = (System.nanoTime() - started) / 1_000_000
+        assertTrue("the first article waited for the slow sign-in (${firstMs} ms)", first.result != null && firstMs < 1_500)
+        while (!second.done && System.nanoTime() - started < 10_000_000_000L) Thread.sleep(10)
+        assertTrue(second.result != null)
+    }
+
     private fun even(total: Int, part: Int) = ArrayList<Int>().apply { var left = total; while (left > 0) { add(minOf(part, left)); left -= part } }
 
     private fun readAll(source: ByteSource, from: Long, count: Int): ByteArray {

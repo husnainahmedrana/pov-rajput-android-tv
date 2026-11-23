@@ -1,8 +1,16 @@
-# Nabrio 0.4.12
+# Nabrio 0.4.13
+
+**Usenet videos start faster when some news-server connections are slow, plus everything from 0.4.12.**
+
+## Fixed
+
+- **Faster Usenet starts:** when you play a Usenet link, the app opens several connections to your news provider and each one signs in first. Before, a connection could claim the first pieces of the video and then get stuck signing in (on a bad route one sign-in took 15 seconds), so the video waited on it while other connections sat ready. Now a connection only picks up work once it's signed in, so the first pieces go to whichever connection is ready first. This covers all news-server streaming: your providers with any indexer, the Easynews search-only indexer and Easynews NNTP streaming. On a fast connection nothing changes.
+
+## In 0.4.12
 
 **Poster services and poster cards, an episode calendar, search history, cast without a TMDB key, Easynews as a Usenet indexer, and Trakt watched marks that show up straight away.**
 
-## New
+### New
 
 - **Poster services:** Settings → Home → **Poster service** shows every poster from RPDB, TOP Posters, AIOratings, OpenPosterDB, BetterPosters or your own Custom URL (use `{imdb_id}` where the IMDb id goes). RPDB works without a key of your own (it uses RPDB's free key), and BetterPosters needs no key at all. If a service has no poster for a title, the usual one shows.
 - **Card shape:** Settings → Home → **Card shape** switches rows from wide backdrop cards to tall poster cards in three sizes: Small, Medium or Large. Poster services need poster cards to show on every row, so the app offers the switch when you pick one. Continue Watching keeps its wide cards, and Top 10 follows the poster size.
@@ -17,7 +25,7 @@
   - A row with nothing playable now says so instead of disappearing.
 - **About:** credits TVmaze, Wikidata and the poster services.
 
-## Fixed
+### Fixed
 
 - **Trakt watched marks:** episodes and films you finish in the player now get their ✓ as soon as you're back, and season marks catch up a few seconds later. Before, it could take up to 10 minutes, so it looked as if nothing had been marked.
 - **Back keeps your place:** going back from a title returns to the same row and poster on Home, on both TV and phone, instead of jumping to the top.
