@@ -1,33 +1,20 @@
-# Nabrio 0.4.13
+# Nabrio 0.4.14
 
-**Usenet videos start faster when some news-server connections are slow, plus everything from 0.4.12.**
+**A new Expanded focus look for Home, a new search page, all your ratings in one line, and Home uses far less memory, so playback no longer closes on 2 GB boxes.**
+
+## New
+
+- **Expanded focus (the new default card shape):** Home rows show posters, and the title you're on opens up into a wide card with its backdrop and logo. Moving along a row, the wide card stays on the left and the next posters slide into it. A single press widens the card smoothly; holding ◀/▶ keeps the row flowing. Top 10 rows do the same, with the rank number beside the wide card. You can still pick Wide backdrops or Small, Medium or Large posters in Settings → Home → Card shape.
+- **Endless rows:** at the end of a row (after See all) the row carries on from its first title, so you can keep scrolling without jumping back.
+- **One row at a time:** with poster cards, Home shows only the row you're on, placed near the bottom of the screen whatever the poster size, so the next row never peeks in.
+- **New search page (TV):** a mic button and a wide search field along the top, your recent searches as chips, a list of categories on the left (Popular Movies, Popular Shows and every genre) and a poster grid on the right. Moving through the list shows each category. Typing shows results straight away and suggests completions as chips; the keyboard's Search opens the full results page.
+- **Ratings on Home:** the title at the top of Home shows its IMDb rating (the live IMDb score). Add your own free MDBList key in Settings → Home → **MDBList** and it also shows TMDB, Trakt, Letterboxd and Rotten Tomatoes (critics 🍅 and audience 🍿) ratings, each with its own badge. Ratings are asked for once the screen settles on a title and kept for a few hours, well within MDBList's free daily limit.
 
 ## Fixed
 
-- **Faster Usenet starts:** when you play a Usenet link, the app opens several connections to your news provider and each one signs in first. Before, a connection could claim the first pieces of the video and then get stuck signing in (on a bad route one sign-in took 15 seconds), so the video waited on it while other connections sat ready. Now a connection only picks up work once it's signed in, so the first pieces go to whichever connection is ready first. This covers all news-server streaming: your providers with any indexer, the Easynews search-only indexer and Easynews NNTP streaming. On a fast connection nothing changes.
-
-## In 0.4.12
-
-**Poster services and poster cards, an episode calendar, search history, cast without a TMDB key, Easynews as a Usenet indexer, and Trakt watched marks that show up straight away.**
-
-### New
-
-- **Poster services:** Settings → Home → **Poster service** shows every poster from RPDB, TOP Posters, AIOratings, OpenPosterDB, BetterPosters or your own Custom URL (use `{imdb_id}` where the IMDb id goes). RPDB works without a key of your own (it uses RPDB's free key), and BetterPosters needs no key at all. If a service has no poster for a title, the usual one shows.
-- **Card shape:** Settings → Home → **Card shape** switches rows from wide backdrop cards to tall poster cards in three sizes: Small, Medium or Large. Poster services need poster cards to show on every row, so the app offers the switch when you pick one. Continue Watching keeps its wide cards, and Top 10 follows the poster size.
-- **Poster quality:** Settings → Home → **Poster quality**: Fast (smaller pictures, quickest on a slow connection), Standard or Sharp.
-- **Calendar:** your tracker page has an **Airing soon** row for the next 7 days and a **Calendar** with every new episode of your shows over the next 30 days, by day. It covers shows you're watching, follow, have on your watchlist or have watched, with WeTrakr, Trakt or Simkl.
-- **Search history:** the Search screen lists your recent searches. Tap one to search again, hold one to remove it, or use **Clear all**. While you type, it suggests your past searches and matching titles. Your history stays on this device only.
-- **Cast without a TMDB key:** shows get their full cast with photos and character names from TVmaze. Films get their cast from Wikidata, with photos from Wikimedia Commons and the leads first. Tap a person to search for their name. With a TMDB key, cast works as before.
-- **Easynews as a Usenet indexer:** Settings → Sources → Usenet → Add indexer → **Easynews (search only)**. Easynews finds the releases and your own news providers download them, like the Easynews-as-indexer bridges. It has its own Easynews login, separate from the Easynews section.
-- **Home rows from more catalog add-ons:**
-  - Catalogs that need a genre or year can now be Home rows: pick the values you want, and each one becomes its own row (for example "Top · Movies · Action").
-  - Add-ons that list titles by TMDB or Kitsu id now fill their rows.
-  - A row with nothing playable now says so instead of disappearing.
-- **About:** credits TVmaze, Wikidata and the poster services.
-
-### Fixed
-
-- **Trakt watched marks:** episodes and films you finish in the player now get their ✓ as soon as you're back, and season marks catch up a few seconds later. Before, it could take up to 10 minutes, so it looked as if nothing had been marked.
-- **Back keeps your place:** going back from a title returns to the same row and poster on Home, on both TV and phone, instead of jumping to the top.
-- **Phone player:** the Back gesture first hides the playback controls; a second Back leaves the player.
-- **Faster opening on phones:** with poster cards, a title's backdrop starts loading as soon as your finger touches its poster.
+- **Playback closing on its own:** on TV boxes with 2 GB of memory (like the onn 4K), a Usenet video could close back to Home after a minute or two with no error, because Home kept every poster of every row in memory (up to about 780 MB). Now only the posters on or near the screen are kept, each at the size of its card, and while a video plays only what was on screen stays. Home now uses about 50-70 MB. This may also stop external players from closing when their buffer fills.
+- **Scrolling stays quick:** posters you scroll back to come from memory or the app's image cache on the device (now 150 MB), not the internet, and posters ahead are loaded before they slide on screen.
+- **Smoother rows:** rows slide sideways with one short, even motion, and holding ◀/▶ glides instead of jerking.
+- **Focus outline:** the white outline around the focused card is no longer cut off at the top, bottom or left side of a row.
+- **Rows above the one you're on** now disappear at once when you move down, instead of sliding up over the artwork first.
+- **Wide backdrop cards** keep the Home layout they had before: the next rows stay in view below the one you're on.

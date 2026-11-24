@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
  * Account and catalog requests keep using [dev.pov.tv.data.Net]; nothing with credentials goes through here.
  */
 internal object ArtworkClient {
-    private const val CACHE_BYTES = 40L * 1024 * 1024
+    private const val CACHE_BYTES = 150L * 1024 * 1024
     @Volatile private var client: OkHttpClient? = null
     @Volatile private var logTimings = false
 

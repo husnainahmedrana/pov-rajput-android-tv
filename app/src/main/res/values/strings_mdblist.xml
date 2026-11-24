@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mdb_row_detail">Your own free MDBList key adds Rotten Tomatoes, Letterboxd, Trakt and TMDB ratings beside IMDb on Home. Get it at mdblist.com → Preferences.</string>
+    <string name="mdb_key_title">MDBList API key</string>
+    <string name="mdb_key_hint">API key (mdblist.com → Preferences)</string>
+    <string name="mdb_connected">MDBList connected: Home now shows all ratings.</string>
+    <string name="mdb_remove">Remove MDBList key</string>
+    <string name="mdb_remove_confirm">Remove your MDBList key? Home will show the IMDb rating only.</string>
+</resources>

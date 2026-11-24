@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mdb_row_detail">Tu propia clave gratuita de MDBList añade las notas de Rotten Tomatoes, Letterboxd, Trakt y TMDB junto a IMDb en Inicio. Consíguela en mdblist.com → Preferences.</string>
+    <string name="mdb_key_title">Clave API de MDBList</string>
+    <string name="mdb_key_hint">Clave API (mdblist.com → Preferences)</string>
+    <string name="mdb_connected">MDBList conectado: Inicio ya muestra todas las notas.</string>
+    <string name="mdb_remove">Quitar clave de MDBList</string>
+    <string name="mdb_remove_confirm">¿Quitar tu clave de MDBList? Inicio mostrará solo la nota de IMDb.</string>
+</resources>

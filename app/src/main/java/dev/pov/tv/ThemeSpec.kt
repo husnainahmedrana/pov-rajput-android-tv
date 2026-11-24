@@ -41,7 +41,9 @@ enum class ThemeSpec(
         // Settings → Home → Card shape · Posters: tall 2:3 cards, so poster services show on every row.
         if (posterSize.isEmpty()) base else {
             val width = posterWidth(posterSize, DeviceLayout.phone)
-            base.copy(cards = CardFormat.POSTER, cardWidthDp = width, cardHeightDp = width * 3 / 2)
+            // Expanded focus: the focused poster widens into a backdrop card instead of zooming.
+            base.copy(cards = CardFormat.POSTER, cardWidthDp = width, cardHeightDp = width * 3 / 2,
+                focusScale = if (expandedFocus) 1f else base.focusScale)
         }
     }
 
@@ -53,13 +55,19 @@ enum class ThemeSpec(
     ) else tvLayout)
 
     companion object {
-        /** Card shape (Settings → Home): "" wide backdrops, else poster cards "small", "medium" or "large"; read at start-up. */
+        /**
+         * Card shape (Settings → Home): "" wide backdrops, else poster cards "small", "medium", "large" or "expanded"
+         * (posters whose focused one widens into a 16:9 backdrop card, TV only); read at start-up.
+         */
         @Volatile var posterSize = ""
-        val POSTER_SIZES = listOf("small", "medium", "large")
+        val POSTER_SIZES = listOf("small", "medium", "large", "expanded")
+        /** Expanded focus is on (the TV only: a phone shows plain posters). */
+        val expandedFocus: Boolean get() = posterSize == "expanded" && !DeviceLayout.phone
         /** Poster card widths (height is 1.5×): phone about 3.8 / 3.2 / 2.7 across, TV about 7.8 / 6.5 / 5.6 across. */
         fun posterWidth(size: String, phone: Boolean): Int = when (size) {
             "small" -> if (phone) 92 else 106
             "large" -> if (phone) 132 else 150
+            "expanded" -> if (phone) 112 else 140
             else -> if (phone) 112 else 128
         }
 
@@ -118,10 +126,17 @@ class ThemePreferences(context: Context) {
         preferences.edit().putString(KEY, theme.id).apply()
     }
 
-    /** Card shape: "" for the usual wide backdrops, or a poster size ("small", "medium", "large"). */
+    /**
+     * Card shape: "" for the usual wide backdrops, or a poster size ("small", "medium", "large", "expanded").
+     * Nothing chosen yet means Expanded focus (the default since 0.4.14); wide cards are saved as "wide".
+     */
     var posterSize: String
-        get() = preferences.getString(CARDS_KEY, null)?.takeIf { it in ThemeSpec.POSTER_SIZES }.orEmpty()
-        set(value) { preferences.edit().apply { if (value in ThemeSpec.POSTER_SIZES) putString(CARDS_KEY, value) else remove(CARDS_KEY) }.apply() }
+        get() = when (val saved = preferences.getString(CARDS_KEY, null)) {
+            null -> "expanded"
+            WIDE -> ""
+            else -> saved.takeIf { it in ThemeSpec.POSTER_SIZES } ?: "expanded"
+        }
+        set(value) { preferences.edit().putString(CARDS_KEY, if (value in ThemeSpec.POSTER_SIZES) value else WIDE).apply() }
 
-    private companion object { const val KEY = "theme"; const val CARDS_KEY = "cards.posters" }
+    private companion object { const val KEY = "theme"; const val CARDS_KEY = "cards.posters"; const val WIDE = "wide" }
 }

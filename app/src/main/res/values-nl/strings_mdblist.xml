@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mdb_row_detail">Je eigen gratis MDBList-sleutel voegt naast IMDb ook Rotten Tomatoes, Letterboxd, Trakt en TMDB toe op Home. Haal hem op mdblist.com → Preferences.</string>
+    <string name="mdb_key_title">MDBList-API-sleutel</string>
+    <string name="mdb_key_hint">API-sleutel (mdblist.com → Preferences)</string>
+    <string name="mdb_connected">MDBList gekoppeld: Home toont nu alle beoordelingen.</string>
+    <string name="mdb_remove">MDBList-sleutel verwijderen</string>
+    <string name="mdb_remove_confirm">Je MDBList-sleutel verwijderen? Home toont dan alleen de IMDb-beoordeling.</string>
+</resources>

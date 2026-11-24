@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sp_hint">Zoek films en series</string>
+    <string name="sp_genre_movies">%1$s · Films</string>
+    <string name="sp_load_failed">Deze lijst kon niet worden geladen. Probeer het opnieuw.</string>
+</resources>

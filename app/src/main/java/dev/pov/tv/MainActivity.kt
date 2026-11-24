@@ -116,6 +116,7 @@ class MainActivity : Activity() {
     /** IMDb scores have their own thread: a slow IMDb answer never holds up the cast or other details work. */
     private val imdbWorker = Executors.newSingleThreadExecutor()
     private val cloudArtwork = mutableMapOf<String, MediaItemData?>()
+    private val artworkTrimmer by lazy { ArtworkTrimmer(window.decorView) }
     private val bitmapCache = object : LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 6).toInt().coerceIn(18 * 1024 * 1024, 64 * 1024 * 1024)) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
     }
@@ -375,10 +376,22 @@ class MainActivity : Activity() {
         resumed = false; miniFrame?.setTag(R.id.pov_mini_shown, false); ExternalPlayer.appVisible = false
         super.onPause()
     }
+    override fun onStart() {
+        super.onStart()
+        artworkTrimmer.stopped = false
+    }
     override fun onStop() {
         miniPlayer?.let(InAppPlaybackSession::detachPlayerView)
         backupInBackground()
+        // The player (or another app) is in front: keep only the pictures on screen, so playback has the memory.
+        artworkTrimmer.stopped = true
+        bitmapCache.evictAll()
         super.onStop()
+    }
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        @Suppress("DEPRECATION")
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) bitmapCache.trimToSize(bitmapCache.maxSize() / 2)
     }
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
@@ -557,6 +570,9 @@ class MainActivity : Activity() {
             if (now - lastRepeatAt < gap) return true
             lastRepeatAt = now
         }
+        // A held ◀/▶ makes the shelf flow at an even speed instead of easing to a stop between steps.
+        if (event.action == KeyEvent.ACTION_DOWN && (event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT || event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT))
+            sideHeld = event.repeatCount > 0
         if (event.keyCode == KeyEvent.KEYCODE_MENU && InAppPlaybackSession.hasActive()) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) playbackOptions()
             return true
@@ -607,9 +623,15 @@ class MainActivity : Activity() {
                     }
                 }
             }
-            // A shelf ends at its last card ("See all") rather than wrapping elsewhere, even when a card of the next
-            // row lies further right.
-            if (direction == View.FOCUS_RIGHT && body.hasFocus() && atRowEnd(currentFocus)) return true
+            // A shelf ends at its last card ("See all"); with poster cards Right there goes back to the shelf's first
+            // title (never to another row, even when a card of the next row lies further right).
+            if (direction == View.FOCUS_RIGHT && body.hasFocus() && atRowEnd(currentFocus)) {
+                if (flix && ThemeSpec.posterSize.isNotEmpty()) shelfOf(currentFocus)?.let { row ->
+                    row.setTag(R.id.pov_row_wrap, true)
+                    (0 until row.childCount).map(row::getChildAt).firstOrNull { it.isShown && (it.isFocusable || it.hasFocusable()) }?.requestFocus()
+                }
+                return true
+            }
             if (flix && direction == View.FOCUS_RIGHT && body.hasFocus() && focusController.next(direction) == null) return true
             if (body.hasFocus() && direction != null && focusController.next(direction) == null) {
                 val leaving = (theme.layout.navigation == NavigationPlacement.TOP_BAR && direction == View.FOCUS_UP) ||
@@ -1530,7 +1552,21 @@ class MainActivity : Activity() {
             tag = "feature-title"; typeface = Typeface.create(layout.titleTypeface, Typeface.BOLD); maxLines = 2; ellipsize = TextUtils.TruncateAt.END
             setShadowLayer(dp(8).toFloat(), 0f, dp(1).toFloat(), 0xB0000000.toInt())
         }, margin(-1, -2))
-        copy.addView(text("", 12, Color.WHITE, true).apply { tag = "feature-meta" }, margin(-1, -2, top = 10))
+        // Rating badges (IMDb, and with an MDBList key TMDB, Trakt, Letterboxd, Rotten Tomatoes, Metacritic), then year · genres · runtime.
+        // Badges on their own line (seven of them fill it); a badge that would not fit whole is left out, never squeezed.
+        val metaRow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; tag = "feature-meta-row" }
+        val ratingsLine = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; tag = "feature-ratings" }
+        ratingsLine.addOnLayoutChangeListener { line, _, _, _, _, _, _, _, _ ->
+            val group = line as ViewGroup
+            (0 until group.childCount).map(group::getChildAt).forEach { badge ->
+                val fits = badge.right <= group.width && badge.width >= badge.measuredWidth
+                if (!fits && badge.visibility == View.VISIBLE) group.post { badge.visibility = View.INVISIBLE }
+            }
+        }
+        // A fixed height, kept while empty, so badges arriving never push the synopsis down.
+        metaRow.addView(ratingsLine, LinearLayout.LayoutParams(-1, dp(20)).apply { bottomMargin = dp(6) })
+        metaRow.addView(text("", 12, Color.WHITE, true).apply { tag = "feature-meta" }, LinearLayout.LayoutParams(-2, -2))
+        copy.addView(metaRow, margin(-1, -2, top = 10))
         copy.addView(text("", 13, 0xFFE6E6E6.toInt()).apply {
             tag = "feature-description"; setLineSpacing(dp(2).toFloat(), 1f)
             if (showAction) { maxLines = if (compact && DeviceLayout.tv) 2 else 3; ellipsize = TextUtils.TruncateAt.END }
@@ -1578,7 +1614,7 @@ class MainActivity : Activity() {
         body.addView(frame, at, margin(-1, if (showAction && DeviceLayout.tv) height else -2).apply { if (!showAction || DeviceLayout.phone) bottomMargin = dp(14) })
         renderFeature(frame, item)
         if (!showAction) {
-            val meta = frame.findViewWithTag<TextView>("feature-meta")
+            val meta = frame.findViewWithTag<View>("feature-meta-row")
             meta.visibility = View.GONE
             copy.addView(metaChips(item), copy.indexOfChild(meta), margin(-1, -2, top = 12))
         }
@@ -1741,12 +1777,12 @@ class MainActivity : Activity() {
             if (loaded) { logo.visibility = View.VISIBLE; title.visibility = View.GONE } else useText()
         }
         if (logo.visibility != View.VISIBLE && title.visibility != View.VISIBLE) logo.postDelayed(fallback, 1_500)
-        val rating = item.rating.takeIf { it.isNotBlank() && it != "0" }?.let { "★ $it" }.orEmpty()
-        frame.findViewWithTag<TextView>("feature-meta").text = listOf(rating, item.year, item.genres.take(2).joinToString(" · "), item.runtime)
+        frame.findViewWithTag<LinearLayout>("feature-ratings")?.let { heroRatings(it, item) }
+        frame.findViewWithTag<TextView>("feature-meta").text = listOf(item.year, item.genres.take(2).joinToString(" · "), item.runtime)
             .filter(String::isNotBlank).joinToString("   ")
         frame.findViewWithTag<TextView>("feature-description").apply { text = item.description; visibility = if (item.description.isBlank()) View.GONE else View.VISIBLE }
         // A longer description may now reach the shelf above the focused one.
-        if (featurePage && flixScrollTarget > 0) frame.post { if (featurePage && flixScrollTarget > 0) fadeShelvesAbove(flixScrollTarget + featureCopyBottom()) }
+        if (featurePage && flixScrollTarget > 0) frame.post { if (featurePage && flixScrollTarget > 0) fadeShelvesAbove(maxOf(flixScrollTarget + featureCopyBottom(), flixShelfTop), flixShelfBottom) }
     }
 
     private var warmedUp = false
@@ -1873,6 +1909,7 @@ class MainActivity : Activity() {
         if (within(view, hero)) {
             actions?.animate()?.alpha(1f)?.setDuration(160)?.start()
             flixScrollTarget = -1
+            flixShelfBottom = Int.MAX_VALUE; flixShelfTop = Int.MIN_VALUE
             fadeShelvesAbove(Int.MIN_VALUE)
             scrollHomeTo(0)
             featureHandler.removeCallbacksAndMessages(null)
@@ -1885,7 +1922,7 @@ class MainActivity : Activity() {
             val gridRow = (view.parent as? View)?.takeIf { it.tag == "media-grid-row" } ?: return false
             actions?.animate()?.alpha(0f)?.setDuration(160)?.start()
             val target = (topInBody(gridRow) - dp(FLIX_ROW_LINE)).coerceIn(0, (body.height - scroller.height).coerceAtLeast(0))
-            flixScrollTarget = target
+            flixScrollTarget = target; flixShelfBottom = Int.MAX_VALUE; flixShelfTop = Int.MIN_VALUE
             fadeShelvesAbove(target + featureCopyBottom())
             scrollHomeTo(target)
             return true
@@ -1894,20 +1931,133 @@ class MainActivity : Activity() {
         var card = view
         while (card.parent !== row) card = card.parent as? View ?: return false
         // Rows read left to right from the focused title.
-        strip.smoothScrollTo((card.left - row.paddingLeft).coerceAtLeast(0), 0)
+        // Expanded focus: cards before the focused one end up as posters, so its final place is known from its index
+        // even while the previous card is still narrowing.
+        // In a shelf of expanding cards every place is known from its index (cards before it end up as posters), even
+        // for See all, whose own left edge is still stale while the card before it narrows.
+        val stepCard = if (card.getTag(R.id.pov_expands) == true) card
+            else (0 until row.childCount).map(row::getChildAt).firstOrNull { it.getTag(R.id.pov_expands) == true }
+        val step = stepCard?.let { source -> (source.layoutParams as? ViewGroup.MarginLayoutParams)?.let {
+            ((source.getTag(R.id.pov_expand_base) as? Int) ?: dp(theme.layout.cardWidthDp)) + it.leftMargin + it.rightMargin } }
+        if (step != null) {
+            var index = row.indexOfChild(card)
+            var previous = row.getTag(R.id.pov_row_index) as? Int
+            // Endless shelf: near the end, the titles long scrolled off the left move (unseen) to after See all, so
+            // the row carries on 1, 2, 3… instead of ending or jumping back to its start.
+            val ahead = row.childCount - 1 - index
+            val moved = if (ahead < SHELF_LOOP_AHEAD) minOf(SHELF_LOOP_AHEAD - ahead, index - 1).coerceAtLeast(0) else 0
+            if (moved > 0) {
+                val shift = (0 until moved).sumOf { shelfSlot(row.getChildAt(it)) }
+                repeat(moved) { val first = row.getChildAt(0); row.removeViewAt(0); row.addView(first) }
+                index -= moved; previous = previous?.minus(moved)
+                rowGlides.remove(strip)?.cancel()
+                strip.scrollTo((strip.scrollX - shift).coerceAtLeast(0), 0)
+            }
+            row.setTag(R.id.pov_row_index, index); row.setTag(R.id.pov_row_wrap, null)
+            // Each card's place comes from the resting widths before it (Top 10's last card is wider), so it is right
+            // even while the card before it still narrows.
+            val place = (0 until index).sumOf { shelfSlot(row.getChildAt(it)) }
+            // A single press widens the card gradually; a held ◀/▶ switches it at once and slides the posters, which
+            // keeps flowing (widening on every repeat looked jerky).
+            if (EXPAND_ANIMATED && !sideHeld) {
+                // Widening animation: the cards change width gradually, so the shelf glides to the new place instead.
+                slideShelf(row, index, 0); glideRow(strip, place)
+            } else {
+                rowGlides.remove(strip)?.cancel()
+                strip.scrollTo(place, 0)
+                val offset = when {
+                    previous == index - 1 -> shelfSlot(row.getChildAt(previous))
+                    previous == index + 1 -> -shelfSlot(card)
+                    else -> 0
+                }
+                slideShelf(row, index, offset)
+            }
+            // The next titles' backdrops are fetched ahead, so the wide card has its picture as it arrives.
+            for (next in listOf(index + 1, index + 2, index - 1)) (row.getChildAt(next)?.getTag(R.id.pov_tile_item) as? MediaItemData)?.let { neighbour ->
+                prefetch(thumbnail(backdropFor(neighbour), wide = true)); logoFor(neighbour).takeIf { it.isNotBlank() }?.let { prefetch(it) }
+            }
+        } else glideRow(strip, (card.left - row.paddingLeft).coerceAtLeast(0))
         val parent = strip.parent as ViewGroup
         val header = parent.getChildAt(parent.indexOfChild(strip) - 1)?.takeIf { it !is HorizontalScrollView }
         val top = topInBody(header ?: strip)
         actions?.animate()?.alpha(0f)?.setDuration(160)?.start()
         // The last shelves cannot rise all the way to the line, so hide only what would really sit under the feature copy.
-        val target = (top - dp(FLIX_ROW_LINE)).coerceIn(0, (body.height - scroller.height).coerceAtLeast(0))
+        // The shelf's cards end the same distance above the screen's foot whatever their size: smaller cards sit lower
+        // instead of leaving a tall empty band beneath them (big posters keep the line under the feature text).
+        val cardsBottom = topInBody(strip) + strip.height - row.paddingBottom
+        // Poster card shapes only: wide backdrop cards keep 0.4.13's Home (the usual line, the next shelves in view).
+        val posterHome = ThemeSpec.posterSize.isNotEmpty()
+        val line = if (posterHome) maxOf(dp(FLIX_ROW_LINE), scroller.height - dp(FLIX_SHELF_FOOT) - (cardsBottom - top)) else dp(FLIX_ROW_LINE)
+        val target = (top - line).coerceIn(0, (body.height - scroller.height).coerceAtLeast(0))
         flixScrollTarget = target
-        fadeShelvesAbove(target + featureCopyBottom())
+        // Only the focused shelf shows: the top of the next one peeking in at the screen's foot looked unfinished.
+        // A short shelf that can't come down that far (Continue Watching at the top of Home) would leave an empty band
+        // below it: there the next shelf shows again, running off the screen's foot.
+        val shortShelf = cardsBottom - target < scroller.height - dp(FLIX_SHELF_FOOT + 60)
+        flixShelfBottom = if (shortShelf || !posterHome) Int.MAX_VALUE else topInBody(strip) + strip.height
+        // Every shelf above the focused one hides at once. Measuring the feature text alone missed a shelf on the way
+        // down (the next title's longer text isn't laid out yet), so it slid up over the artwork and vanished late.
+        var first: View = header ?: strip
+        while (first.parent !== body) first = first.parent as? View ?: break
+        flixShelfTop = if (first.parent === body) first.top else Int.MIN_VALUE
+        fadeShelvesAbove(maxOf(target + featureCopyBottom(), flixShelfTop), flixShelfBottom)
         scrollHomeTo(target)
         return true
     }
 
     private var homeScroll: ValueAnimator? = null
+    private val rowGlides = java.util.WeakHashMap<HorizontalScrollView, ValueAnimator>()
+    private val shelfSlides = java.util.WeakHashMap<ViewGroup, ValueAnimator>()
+    /** ◀/▶ is being held (key repeats): shelves move at an even pace, each step flowing into the next. */
+    private var sideHeld = false
+    private fun shelfMotion(): Pair<Long, android.animation.TimeInterpolator> =
+        if (sideHeld) ROW_FLOW_MS to android.view.animation.LinearInterpolator()
+        else ROW_GLIDE_MS to android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f)
+
+    /** A shelf card's resting width with its margins: a poster (or Top 10 number + poster) even while it is wide. */
+    private fun shelfSlot(child: View?): Int {
+        child ?: return 0
+        val params = child.layoutParams as? ViewGroup.MarginLayoutParams ?: return child.width
+        val width = (child.getTag(R.id.pov_expand_base) as? Int)
+            ?: if (child.getTag(R.id.pov_expands) == true) dp(theme.layout.cardWidthDp) else params.width.takeIf { it > 0 } ?: child.width
+        return width + params.leftMargin + params.rightMargin
+    }
+
+    /**
+     * Expanded focus: the shelf jumped one poster so the focused title sits in the wide card; the posters after it
+     * start [offset] px back where they were and slide into place. Only translations change (no layout), and a held
+     * button adds each step to what is still sliding, so the row keeps moving smoothly.
+     */
+    private fun slideShelf(row: ViewGroup, focused: Int, offset: Int) {
+        val running = shelfSlides.remove(row)
+        val carried = (running?.animatedValue as? Float) ?: 0f
+        running?.cancel()
+        val start = (carried + offset).coerceIn(-2f * expandedWidth(), 2f * expandedWidth())
+        fun apply(value: Float) { for (index in 0 until row.childCount) row.getChildAt(index).translationX = if (index > focused) value else 0f }
+        if (start == 0f) { apply(0f); return }
+        apply(start)
+        shelfSlides[row] = ValueAnimator.ofFloat(start, 0f).apply {
+            val (time, curve) = shelfMotion(); duration = time; interpolator = curve
+            addUpdateListener { apply(it.animatedValue as Float); row.invalidate() }
+            start()
+        }
+    }
+
+    /**
+     * A shelf slides sideways with one short eased move per step, like Home's up/down. The platform's smooth scroll
+     * (about 250 ms, and an instant jump when presses come faster) made held ◀/▶ jerk; a new step now starts from
+     * wherever the last one had got to, so a held button glides.
+     */
+    private fun glideRow(strip: HorizontalScrollView, x: Int) {
+        rowGlides.remove(strip)?.cancel()
+        val from = strip.scrollX
+        if (from == x) return
+        rowGlides[strip] = ValueAnimator.ofInt(from, x).apply {
+            val (time, curve) = shelfMotion(); duration = time; interpolator = curve
+            addUpdateListener { strip.scrollTo(it.animatedValue as Int, 0) }
+            start()
+        }
+    }
 
     /**
      * Home's shelves move with one short eased scroll per step. The platform's smooth scroll (about 250 ms, and an
@@ -1925,6 +2075,10 @@ class MainActivity : Activity() {
     }
 
     private var flixScrollTarget = -1
+    /** Bottom of the focused shelf (body coordinates): shelves starting below it are hidden. */
+    private var flixShelfBottom = Int.MAX_VALUE
+    /** Top of the focused shelf (body coordinates): shelves starting above it are hidden. */
+    private var flixShelfTop = Int.MIN_VALUE
 
     /** Where the pinned feature text ends on screen: a short title leaves room for the shelf above the last one. */
     private fun featureCopyBottom(): Int {
@@ -1934,12 +2088,15 @@ class MainActivity : Activity() {
         return (here[1] - origin[1] + copy.height + dp(8)).coerceAtMost(dp(FLIX_ROW_LINE))
     }
 
-    /** Hides every shelf that starts above [cutoff] (body coordinates), i.e. that would overlap the pinned feature copy. */
-    private fun fadeShelvesAbove(cutoff: Int) {
+    /**
+     * Hides every shelf that starts above [cutoff] (body coordinates), i.e. that would overlap the pinned feature copy,
+     * and every shelf that starts at or below [below] (the focused shelf's bottom).
+     */
+    private fun fadeShelvesAbove(cutoff: Int, below: Int = Int.MAX_VALUE) {
         for (index in 0 until body.childCount) {
             val child = body.getChildAt(index)
             if (child.tag == "featured-hero") continue
-            val target = if (child.top < cutoff) 0f else 1f
+            val target = if (child.top < cutoff || child.top >= below) 0f else 1f
             // A shelf leaving upward hides at once: it already touches the feature artwork, so any fade showed it sliding over it.
             // A returning one fades in gently, in clear space.
             if (child.alpha == target) continue
@@ -2025,7 +2182,9 @@ class MainActivity : Activity() {
         val tall = poster * 3 / 2
         val narrow = poster + if (DeviceLayout.phone) 62 else 74
         val wide = narrow + if (DeviceLayout.phone) 24 else 30
-        items.take(10).forEachIndexed { index, item -> row.addView(rankTile(item, index + 1), margin(if (index == 9) wide else narrow, tall, right = 4)) }
+        items.take(10).forEachIndexed { index, item ->
+            row.addView(rankTile(item, index + 1).apply { setTag(R.id.pov_expand_base, dp(narrow)) }, margin(if (index == 9) wide else narrow, tall, right = 4))
+        }
     }
 
     private fun rankTile(item: MediaItemData, rank: Int): View {
@@ -2044,7 +2203,15 @@ class MainActivity : Activity() {
             poster.addView(it, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.TOP or Gravity.END).apply { topMargin = dp(5); rightMargin = dp(5) })
         }
         poster.tag = "rank-poster"
+        if (flix && ThemeSpec.expandedFocus) { frame.setTag(R.id.pov_expands, true); frame.setTag(R.id.pov_tile_item, item) }
         frame.setOnFocusChangeListener { view, focused ->
+            if (flix && ThemeSpec.expandedFocus && view.parent?.parent is HorizontalScrollView) {
+                // Expanded focus: the poster widens into the backdrop card; the rank number stays beside it.
+                expandTile(frame, item, focused, host = poster, base = (frame.getTag(R.id.pov_expand_base) as? Int) ?: frame.width)
+                FadeDrawable.foreground(poster, if (focused) FocusRingDrawable(Color.WHITE, dp(4).toFloat(), true, dp(1).toFloat()) else null)
+                if (focused) scheduleFeature(item)
+                return@setOnFocusChangeListener
+            }
             // One outline glides along the Top 10 row, around the poster only (not the rank number).
             val glide = if (flix) posterGlide(view, radius = 4, scale = 1.07f) { card -> card.findViewWithTag("rank-poster") } else null
             if (glide != null) glide.focusChanged(view, focused)
@@ -2119,7 +2286,7 @@ class MainActivity : Activity() {
             override fun onGlobalLayout() {
                 parent.viewTreeObserver.removeOnGlobalLayoutListener(this)
                 if (isDestroyed || !target.isAttachedToWindow) return
-                if (!placeFlixRow(target)) (parent.parent as? HorizontalScrollView)?.smoothScrollTo((target.left - parent.paddingLeft).coerceAtLeast(0), 0)
+                if (!placeFlixRow(target)) (parent.parent as? HorizontalScrollView)?.let { glideRow(it, (target.left - parent.paddingLeft).coerceAtLeast(0)) }
             }
         })
         parent?.requestLayout()
@@ -2591,7 +2758,230 @@ class MainActivity : Activity() {
         }
     }
 
+    /** TV search: the full search page. Phones keep the search overlay (the on-screen keyboard needs the room). */
     private fun search(initialQuery: String = "") {
+        if (DeviceLayout.tv) navigate { searchPage(initialQuery) } else searchOverlay(initialQuery)
+    }
+
+    /** What the search page's grid showed for each category this session, so moving through the list is instant. */
+    private val searchBrowseCache = HashMap<String, List<MediaItemData>>()
+
+    /**
+     * TV search page: a round mic and a wide field along the top, recent searches as chips beneath, a list of
+     * categories on the left (popular movies and shows, then each genre) and a poster grid on the right. Moving
+     * through the list shows that category; typing switches the grid to live results after a short pause, and the
+     * keyboard's Search opens the full results page.
+     */
+    private fun searchPage(initialQuery: String = "", initialCategory: Int = 0) {
+        current = { searchPage(initialQuery, initialCategory) }
+        destination = "search"; refreshNavigation()
+        val id = page("")
+        body.setPadding(0, systemTop + dp(22), 0, 0)
+        val history = SearchHistory(this)
+        data class Category(val key: String, val label: String, val load: () -> List<MediaItemData>)
+        val categories = listOf(
+            Category("popular:movie", getString(R.string.t_popular_movies)) { catalog.popular("movie") },
+            Category("popular:series", getString(R.string.t_popular_shows)) { catalog.popular("series") },
+        ) + CatalogApi.discoverGenres("movie").map { genre ->
+            Category("genre:movie:$genre", getString(R.string.sp_genre_movies, UiText.of(genre))) { catalog.discover("movie", genre, CatalogApi.SORT_POPULAR) }
+        }
+        var selected = initialCategory.coerceIn(0, categories.lastIndex)
+
+        // Top bar: mic, then the field across the rest of the width.
+        val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; clipChildren = false }
+        val mic = FrameLayout(this).apply {
+            isFocusable = true; isClickable = true; contentDescription = getString(R.string.t_voice_search)
+            background = rounded(withAlpha(Color.WHITE, 34), 28, withAlpha(Color.WHITE, 200))
+            setOnClickListener { voiceSearch() }
+            setOnFocusChangeListener { view, focused ->
+                view.background = rounded(if (focused) Color.WHITE else withAlpha(Color.WHITE, 34), 28, withAlpha(Color.WHITE, 200))
+                (view as FrameLayout).removeAllViews()
+                view.addView(NavigationIconView(this@MainActivity, "mic", if (focused) Color.BLACK else ink), FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER))
+            }
+            addView(NavigationIconView(this@MainActivity, "mic", ink), FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER))
+        }
+        top.addView(mic, margin(46, 46, right = 12))
+        val input = TvEditText(this).apply {
+            hint = getString(R.string.sp_hint); setText(initialQuery); setSelection(text.length); setSingleLine(); inputType = InputType.TYPE_CLASS_TEXT
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+            setTextSize(TypedValue.COMPLEX_UNIT_PX, dp(17).toFloat()); setTextColor(ink); setHintTextColor(muted)
+            setPadding(dp(16), 0, dp(16), 0); includeFontPadding = false; showSoftInputOnFocus = false
+            background = rounded(withAlpha(Color.WHITE, 14), 12, withAlpha(Color.WHITE, 60))
+        }
+        input.setOnFocusChangeListener { view, focused ->
+            view.background = rounded(withAlpha(Color.WHITE, if (focused) 30 else 14), 12, if (focused) Color.WHITE else withAlpha(Color.WHITE, 60))
+        }
+        top.addView(input, LinearLayout.LayoutParams(0, dp(46), 1f))
+        body.addView(top, margin(-1, -2))
+
+        // Recent searches: OK runs one again, hold forgets it, ✕ clears them all.
+        val chipsHost = FrameLayout(this)
+        body.addView(chipsHost, margin(-1, -2, top = 12))
+
+        // Categories on the left, the grid on the right, each scrolling on its own under the fixed top.
+        val split = LinearLayout(this).apply { clipChildren = false }
+        // Both columns clip to their own area: scrolled away, the list and grid slide under the top bar, never over it.
+        val listScroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; isFocusable = false }
+        val list = column().apply { setPadding(0, dp(4), dp(6), dp(40)) }
+        listScroll.addView(list)
+        split.addView(listScroll, margin(SEARCH_LIST_DP, -1, right = 16))
+        val gridScroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; isFocusable = false; setPadding(dp(10), dp(10), dp(10), dp(40)); clipToPadding = false }
+        val grid = column().apply { clipChildren = false }
+        gridScroll.addView(grid)
+        split.addView(gridScroll, LinearLayout.LayoutParams(0, -1, 1f))
+        val splitHeight = resources.displayMetrics.heightPixels - systemTop - dp(22 + 46 + 12 + 40 + 14)
+        body.addView(split, LinearLayout.LayoutParams(-1, splitHeight).apply { topMargin = dp(14) })
+
+        val gridWidth = DeviceLayout.canvasWidth - theme.layout.railWidthDp - theme.layout.contentInsetDp * 2 - SEARCH_LIST_DP - 16 - 4
+        val columns = 5
+        val cardWidth = (gridWidth - (columns - 1) * theme.layout.cardGapDp) / columns
+        fun showGrid(items: List<MediaItemData>, captions: Boolean, empty: String) {
+            grid.removeAllViews(); gridScroll.scrollTo(0, 0)
+            if (items.isEmpty()) { grid.addView(text(empty, 14, muted), margin(-1, -2, top = 8)); return }
+            items.chunked(columns).forEach { chunk ->
+                val row = LinearLayout(this).apply { clipChildren = false }
+                grid.addView(row, margin(-1, -2, bottom = 14))
+                chunk.forEach { item ->
+                    // Plain posters: a caption would sit on top of a poster service's own title and ratings bar.
+                    val view = card(item)
+                    row.addView(view, margin(cardWidth, cardWidth * 3 / 2, right = theme.layout.cardGapDp))
+                }
+            }
+        }
+        fun loading() { grid.removeAllViews(); grid.addView(text(getString(R.string.t_loading), 14, muted), margin(-1, -2, top = 8)) }
+
+        val rows = mutableListOf<TextView>()
+        var browseFor = ""
+        fun browse(index: Int) {
+            val category = categories[index]
+            browseFor = category.key
+            searchBrowseCache[category.key]?.let { showGrid(it, false, getString(R.string.t_no_titles_found_try_a_different)); return }
+            loading()
+            worker.execute {
+                val found = runCatching { category.load() }
+                runOnUiThread {
+                    if (id != generation || browseFor != category.key || input.text.toString().isNotBlank()) return@runOnUiThread
+                    found.onSuccess { searchBrowseCache[category.key] = it; showGrid(it, false, getString(R.string.t_no_titles_found_try_a_different)) }
+                        .onFailure { grid.removeAllViews(); grid.addView(text(getString(R.string.sp_load_failed), 14, muted), margin(-1, -2, top = 8)) }
+                }
+            }
+        }
+        fun paintRows() = rows.forEachIndexed { index, row ->
+            val focused = row.isFocused
+            row.background = when { focused -> rounded(Color.WHITE, 26); index == selected -> rounded(withAlpha(Color.BLACK, 120), 26); else -> null }
+            row.setTextColor(if (focused) Color.BLACK else if (index == selected) Color.WHITE else ink)
+        }
+        val pick = Runnable { browse(selected) }
+        categories.forEachIndexed { index, category ->
+            val row = text(category.label, 16, ink, false).apply {
+                isFocusable = true; isClickable = true; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), 0, dp(14), 0); maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+                setOnFocusChangeListener { _, focused ->
+                    if (focused && selected != index) {
+                        // Moving through the list shows each category after a short pause, so held ▼ doesn't load every one.
+                        selected = index
+                        current = { searchPage(input.text.toString(), index) }
+                        if (input.text.toString().isBlank()) { list.removeCallbacks(pick); list.postDelayed(pick, 260) }
+                    }
+                    paintRows()
+                }
+                setOnClickListener {
+                    if (input.text.toString().isNotBlank()) input.setText("")
+                    list.removeCallbacks(pick); browse(index)
+                    (grid.getChildAt(0) as? ViewGroup)?.getChildAt(0)?.takeIf { it.isFocusable }?.requestFocus()
+                }
+            }
+            rows += row
+            list.addView(row, margin(-1, 40, bottom = 4))
+        }
+        paintRows()
+
+        // While typing, the chips complete the search: matching past searches, then titles from the live results.
+        var completions: List<String> = emptyList()
+        fun renderChips() {
+            chipsHost.removeAllViews()
+            val typed = input.text.toString().trim()
+            val past = history.matching(typed, if (typed.isBlank()) 10 else 4)
+            val titles = if (typed.isBlank()) emptyList() else completions.filter { title -> past.none { it.equals(title, true) } }
+            if (past.isEmpty() && titles.isEmpty()) return
+            val strip = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; clipChildren = false; setPadding(dp(2), dp(2), dp(2), dp(2)) }
+            titles.forEach { title ->
+                strip.addView(button(title.take(40)) { input.setText(title); input.setSelection(input.text.length) }.apply {
+                    gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), 0); maxLines = 1
+                }, LinearLayout.LayoutParams(-2, dp(36)).apply { rightMargin = dp(8) })
+            }
+            past.forEach { query ->
+                strip.addView(button(query.take(40)) { input.setText(query); input.setSelection(query.length) }.apply {
+                    gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), 0); maxLines = 1
+                    contentDescription = getString(R.string.sh_run_or_remove, query)
+                    setOnLongClickListener { history.remove(query); renderChips(); true }
+                }, LinearLayout.LayoutParams(-2, dp(36)).apply { rightMargin = dp(8) })
+            }
+            if (typed.isBlank()) strip.addView(button("✕") { confirm(getString(R.string.sh_clear_all_confirm)) { history.clear(); renderChips() } }.apply {
+                gravity = Gravity.CENTER; contentDescription = getString(R.string.sh_clear_all)
+            }, LinearLayout.LayoutParams(dp(36), dp(36)))
+            chipsHost.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; isFocusable = false; addView(strip) })
+        }
+        renderChips()
+
+        // Typing: live results replace the category after a short pause; an empty field brings the category back.
+        var liveFor = ""
+        val live = Runnable {
+            val typed = input.text.toString().trim()
+            if (typed.length < 2) { liveFor = ""; completions = emptyList(); renderChips(); browse(selected); return@Runnable }
+            liveFor = typed
+            loading()
+            worker.execute {
+                val found = runCatching { catalog.searchAll(typed).items }
+                runOnUiThread {
+                    if (id != generation || liveFor != typed || input.text.toString().trim() != typed) return@runOnUiThread
+                    found.onSuccess { items ->
+                        completions = items.map { it.title }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }.take(6)
+                        renderChips(); showGrid(items.take(60), true, getString(R.string.t_no_titles_found_try_a_different))
+                    }
+                        .onFailure { grid.removeAllViews(); grid.addView(text(getString(R.string.sp_load_failed), 14, muted), margin(-1, -2, top = 8)) }
+                }
+            }
+        }
+        input.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: android.text.Editable?) {
+                current = { searchPage(input.text.toString(), selected) }
+                renderChips()
+                input.removeCallbacks(live); input.postDelayed(live, 450)
+            }
+        })
+        fun submit() {
+            val query = input.text.toString().trim().take(200)
+            if (query.isEmpty()) return
+            hideKeyboard(input); navigate { searchResults(query) }
+        }
+        input.onBack = { hideKeyboard(input) }
+        input.setOnEditorActionListener { _, action, event ->
+            if (action in setOf(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH, android.view.inputmethod.EditorInfo.IME_ACTION_DONE, android.view.inputmethod.EditorInfo.IME_ACTION_GO)) { submit(); true }
+            else if (event?.keyCode in setOf(KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)) { if (event?.action == KeyEvent.ACTION_UP) submit(); true }
+            else false
+        }
+        input.setOnKeyListener { _, key, event ->
+            // The field starts selected with the keyboard closed; OK opens it.
+            if (key == KeyEvent.KEYCODE_DPAD_CENTER) {
+                if (event.action == KeyEvent.ACTION_UP) (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).showSoftInput(input, 0)
+                return@setOnKeyListener true
+            }
+            false
+        }
+
+        if (initialQuery.trim().length >= 2) input.post(live) else browse(selected)
+        wantsContentFocus = false
+        body.post {
+            if (id != generation) return@post
+            val restore = pendingFocus
+            if (restore != null && focusController.restore(restore)) pendingFocus = null
+            else { pendingFocus = null; input.requestFocus() }
+        }
+    }
+
+    private fun searchOverlay(initialQuery: String = "") {
         // A full-screen search overlay: one large field, then Search, Voice search and Cancel.
         val dialog = android.app.Dialog(this, android.R.style.Theme_Translucent_NoTitleBar_Fullscreen)
         val input = TvEditText(this).apply {
@@ -2830,14 +3220,14 @@ class MainActivity : Activity() {
         }
     }
     private companion object {
-        private const val QR_DP = 110; const val WARM_BACKDROPS = 6; const val HIDE_UNCACHED = "sources.hide_uncached"; const val BACKDROP_FADE_MS = 220; const val VOICE_REQUEST = 701; const val PLAYBACK_REQUEST = 702; const val MIC_REQUEST = 703; const val FLIX_ROW_LINE = 236; const val FEATURE_INTERVAL_MS = 5_000L; const val AUTOPLAY_FIRST = "sources.autoplay_first"; const val AUTOPLAY_MAX_GB = "sources.autoplay_max_gb"; const val AUTOPLAY_MAX_GB_EPISODE = "sources.autoplay_max_gb_episode"; const val AUTOPLAY_MAX_MBPS = "sources.autoplay_max_mbps"; const val AUTOPLAY_LIMIT_ON = "sources.autoplay_limit_on"; const val BACKDROP_WIDTH = 1280; const val CONTINUE_CACHE = "wetrakr.continue_cache"
+        private const val QR_DP = 110; const val WARM_BACKDROPS = 6; const val HIDE_UNCACHED = "sources.hide_uncached"; const val BACKDROP_FADE_MS = 220; const val VOICE_REQUEST = 701; const val PLAYBACK_REQUEST = 702; const val MIC_REQUEST = 703; const val FLIX_ROW_LINE = 236; const val FLIX_SHELF_FOOT = 48; const val FEATURE_INTERVAL_MS = 5_000L; const val AUTOPLAY_FIRST = "sources.autoplay_first"; const val AUTOPLAY_MAX_GB = "sources.autoplay_max_gb"; const val AUTOPLAY_MAX_GB_EPISODE = "sources.autoplay_max_gb_episode"; const val AUTOPLAY_MAX_MBPS = "sources.autoplay_max_mbps"; const val AUTOPLAY_LIMIT_ON = "sources.autoplay_limit_on"; const val BACKDROP_WIDTH = 1280; const val CONTINUE_CACHE = "wetrakr.continue_cache"
         const val TMDB_KEY = "tmdb.key"; const val POSTER_QUALITY = "settings.poster_quality"; const val TMDB_REGION = "tmdb.region"
         const val TVDB_KEY = "tvdb.key"; const val TVDB_SHOWS = "tvdb.shows"
         /** "false" keeps the search-and-details add-on saved but switched off. */
         const val METADATA_ON = "metadata.source.on"
         const val IMDB_YELLOW = 0xFFF5C518.toInt()
         /** One Home shelf step up or down. */
-        const val HOME_ROW_SCROLL_MS = 200L
+        const val HOME_ROW_SCROLL_MS = 200L; const val ROW_GLIDE_MS = 320L; const val ROW_FLOW_MS = 170L; const val EXPAND_ANIMATED = true; const val SHELF_LOOP_AHEAD = 6; const val SEARCH_LIST_DP = 210
         const val CAST_CARD_WIDTH = 132; const val CAST_PHOTO = 112
         /** Room kept for the cast row while it loads, so the details don't move when it arrives. */
         const val CAST_ROW_HEIGHT = 250
@@ -3022,7 +3412,7 @@ class MainActivity : Activity() {
 
     private fun cardShapeLabel(size: String = ThemeSpec.posterSize) = when (size) {
         "small" -> getString(R.string.cs_posters_small); "medium" -> getString(R.string.cs_posters_medium)
-        "large" -> getString(R.string.cs_posters_large); else -> getString(R.string.cs_wide)
+        "large" -> getString(R.string.cs_posters_large); "expanded" -> getString(R.string.cs_posters_expanded); else -> getString(R.string.cs_wide)
     }
 
     /** Settings → Home → Card shape: wide backdrops, or poster cards in three sizes (rows, grids, search, library…). */
@@ -6850,6 +7240,15 @@ class MainActivity : Activity() {
                     load(generation, { TvdbApi(this, key).validate() }) { store.put(TVDB_KEY, key); forgetDetails(); toast(getString(R.string.t_tvdb_connected_show_pages_now_use)); refreshSettings() }
                 }
             }
+            val mdbKey = store.get(dev.pov.tv.data.MdbListRatings.KEY)
+            settingsRow(home, "MDBList", if (mdbKey.isBlank()) getString(R.string.t_not_set) else getString(R.string.t_connected),
+                getString(R.string.mdb_row_detail), status = mdbKey.isNotBlank()) {
+                inputSetting(getString(R.string.mdb_key_title), getString(R.string.mdb_key_hint), "", secret = true) { key ->
+                    load(generation, { dev.pov.tv.data.MdbListRatings().validate(key) }) {
+                        store.put(dev.pov.tv.data.MdbListRatings.KEY, key.trim()); mdbRatings.evictAll(); toast(getString(R.string.mdb_connected)); refreshSettings()
+                    }
+                }
+            }
             if (tvdbKey.isNotBlank()) settingsToggle(home, getString(R.string.t_use_tvdb_for_shows), getString(R.string.t_seasons_episode_titles_stills_and_synopses),
                 store.get(TVDB_SHOWS) != "false", contentLabel = getString(R.string.t_use_tvdb_for_shows)) { on -> store.put(TVDB_SHOWS, on.toString()); forgetDetails() }
             settingsRow(home, getString(R.string.t_search_and_details), metadataSource?.name ?: MetadataSource.fromJson(store.get(MetadataSource.KEY))?.let { getString(R.string.t_cinemeta_x_off, it.name) } ?: getString(R.string.t_cinemeta),
@@ -6872,6 +7271,9 @@ class MainActivity : Activity() {
                 store.get(RESUME_CARDS) != "false") { on -> store.put(RESUME_CARDS, on.toString()) }
             if (tmdbKey.isNotBlank()) settingsRow(home, getString(R.string.t_remove_tmdb_key), danger = true) {
                 confirm(getString(R.string.t_remove_your_tmdb_key_home_will)) { store.remove(TMDB_KEY); refreshSettings() }
+            }
+            if (mdbKey.isNotBlank()) settingsRow(home, getString(R.string.mdb_remove), danger = true) {
+                confirm(getString(R.string.mdb_remove_confirm)) { store.remove(dev.pov.tv.data.MdbListRatings.KEY); mdbRatings.evictAll(); refreshSettings() }
             }
             if (tvdbKey.isNotBlank()) settingsRow(home, getString(R.string.t_remove_tvdb_key), danger = true) {
                 confirm(getString(R.string.t_remove_your_tvdb_key_shows_will)) { store.remove(TVDB_KEY); forgetDetails(); refreshSettings() }
@@ -8876,7 +9278,15 @@ class MainActivity : Activity() {
             }
         }
         frame.foreground = if (flix) null else FocusRingDrawable(theme.palette.border, dp(theme.layout.cornerRadiusDp).toFloat(), false, dp(1).toFloat())
+        // Expanded focus: in a sideways row the focused poster widens into a backdrop card (no zoom, no trailer).
+        val expands = flix && ThemeSpec.expandedFocus && shape == CardFormat.POSTER && !wide
         frame.setOnFocusChangeListener { view, focused ->
+            if (expands && view.parent?.parent is HorizontalScrollView) {
+                expandTile(view as FrameLayout, item, focused)
+                FadeDrawable.foreground(view, if (focused) FocusRingDrawable(Color.WHITE, dp(theme.layout.cornerRadiusDp).toFloat(), true, dp(1).toFloat()) else null)
+                if (focused) scheduleFeature(item)
+                return@setOnFocusChangeListener
+            }
             // In a sideways row one white outline glides from poster to poster; elsewhere the outline cross-fades.
             val glide = if (flix) posterGlide(view) else null
             if (glide != null) glide.focusChanged(view, focused)
@@ -8885,6 +9295,7 @@ class MainActivity : Activity() {
             view.animate().scaleX(if (focused) theme.layout.focusScale else 1f).scaleY(if (focused) theme.layout.focusScale else 1f).setDuration(130).start()
             if (focused) scheduleFeature(item)
         }
+        if (expands) { frame.setTag(R.id.pov_expands, true); frame.setTag(R.id.pov_tile_item, item) }
         frame.setOnClickListener { action() }
         // Phone, poster cards: the details page's backdrop is not the picture on the card, so it starts downloading
         // the moment a finger lands (a beat before the tap completes) and is ready as the page opens. Wide cards
@@ -8896,6 +9307,167 @@ class MainActivity : Activity() {
         // Holding OK gives the same choices everywhere: play, pick a stream by hand, details, mark watched.
         frame.setOnLongClickListener { titleMenu(item, action); true }
         return frame.pressable(theme.layout.cornerRadiusDp)
+    }
+
+    /** Expanded focus: the wide card's width (16:9 of the poster's height). */
+    private fun expandedWidth() = dp(theme.layout.cardHeightDp) * 16 / 9
+
+    /**
+     * Expanded focus: [tile] widens from its poster to a 16:9 card while a backdrop with the title's logo fades in over
+     * it, and narrows back when it loses focus. The backdrop layer is built on first focus and keeps its full width, so
+     * the widening reveals it from the left. No trailer: the hero above already plays one.
+     */
+    private fun expandTile(tile: FrameLayout, item: MediaItemData, open: Boolean, host: FrameLayout = tile,
+                           base: Int = dp(theme.layout.cardWidthDp)) {
+        val poster = dp(theme.layout.cardWidthDp); val wide = expandedWidth()
+        var layer = host.findViewWithTag<FrameLayout>("expand-layer")
+        if (layer == null) {
+            if (!open) return
+            layer = FrameLayout(this).apply {
+                tag = "expand-layer"; alpha = 0f; background = rounded(panel, theme.layout.cornerRadiusDp); clipToOutline = true
+            }
+            val art = FixedSizeImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+            layer.addView(art, FrameLayout.LayoutParams(wide, -1))
+            layer.addView(View(this).apply { background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
+                intArrayOf(0xD8000000.toInt(), 0x30000000, Color.TRANSPARENT)) }, FrameLayout.LayoutParams(wide, -1))
+            val name = text(item.title, 15, Color.WHITE, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
+            val logo = FixedSizeImageView(this).apply { scaleType = ImageView.ScaleType.FIT_START; visibility = View.INVISIBLE }
+            val labels = FrameLayout(this).apply { setPadding(dp(12), 0, dp(12), dp(12)) }
+            labels.addView(logo, FrameLayout.LayoutParams(-1, dp(46), Gravity.BOTTOM))
+            labels.addView(name, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+            layer.addView(labels, FrameLayout.LayoutParams(wide * 3 / 5, -2, Gravity.BOTTOM or Gravity.START))
+            // Above the poster art, below the watched badge and progress bar.
+            host.addView(layer, 1, FrameLayout.LayoutParams(-1, -1))
+            image(art, thumbnail(backdropFor(item), wide = true))
+            if (logoFor(item).isNotBlank()) image(logo, logoFor(item)) { loaded -> if (loaded) { logo.visibility = View.VISIBLE; name.visibility = View.INVISIBLE } }
+        }
+        (tile.getTag(R.id.pov_expand_anim) as? ValueAnimator)?.cancel()
+        val params = tile.layoutParams ?: return
+        val from = params.width.takeIf { it > 0 } ?: poster
+        val to = if (open) wide else poster
+        val shown: View = layer
+        if (!EXPAND_ANIMATED || sideHeld) {
+            // The wide card stays put on the left: the focused title takes it at once and its picture fades in, while
+            // the posters slide along beside it ([slideShelf]). No widening, so no row re-layout every frame.
+            params.width = base + (if (open) wide - poster else 0); tile.layoutParams = params
+            if (host !== tile) {
+                host.layoutParams = host.layoutParams.apply { width = if (open) wide else poster }
+                // Top 10: the rank number is drawn up to the poster's left edge, so it moves out with the wide card.
+                (0 until tile.childCount).map(tile::getChildAt).filterIsInstance<RankNumberView>().forEach {
+                    it.posterInset = (if (open) wide else poster) - dp(16).toFloat(); it.invalidate()
+                }
+            }
+            shown.animate().cancel()
+            if (open && !sideHeld) shown.animate().alpha(1f).setDuration(140).start() else shown.alpha = if (open) 1f else 0f
+            return
+        }
+        // The part that widens: the whole card, or (Top 10) its poster, whose rank number moves out with it.
+        val widthFrom = if (host === tile) from else host.layoutParams.width.takeIf { it > 0 } ?: poster
+        val numbers = if (host === tile) emptyList() else (0 until tile.childCount).map(tile::getChildAt).filterIsInstance<RankNumberView>()
+        tile.setTag(R.id.pov_expand_anim, ValueAnimator.ofInt(widthFrom, to).apply {
+            duration = ROW_GLIDE_MS; interpolator = android.view.animation.DecelerateInterpolator(1.6f)
+            addUpdateListener {
+                val width = it.animatedValue as Int
+                params.width = if (host === tile) width else base + (width - poster); tile.layoutParams = params
+                if (host !== tile) {
+                    host.layoutParams = host.layoutParams.apply { this.width = width }
+                    numbers.forEach { number -> number.posterInset = width - dp(16).toFloat(); number.invalidate() }
+                }
+                shown.alpha = ((width - poster).toFloat() / (wide - poster)).coerceIn(0f, 1f)
+            }
+            start()
+        })
+    }
+
+    /** MDBList answers per title (kept 6 h like the IMDb scores): the free key allows about 1,000 requests a day. */
+    private val mdbRatings = LruCache<String, TimedDetails<List<dev.pov.tv.data.MdbListRatings.Rating>>>(150)
+
+    /**
+     * The Home feature's rating badges. With an MDBList key: IMDb, TMDB, Trakt, Letterboxd, Rotten Tomatoes (critics
+     * and audience) and Metacritic; without one, IMDb alone (the live IMDb score, the catalog's until it arrives).
+     * Nothing is asked until the feature has rested on the title for a moment, so scrolling past sends no requests.
+     */
+    private fun heroRatings(container: LinearLayout, item: MediaItemData) {
+        container.setTag(R.id.pov_tile_item, item.imdbId)
+        fun render(ratings: List<dev.pov.tv.data.MdbListRatings.Rating>) {
+            container.removeAllViews()
+            ratings.forEach { container.addView(ratingBadge(it), LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(10) }) }
+            container.visibility = if (ratings.isEmpty()) View.INVISIBLE else View.VISIBLE
+        }
+        fun imdbOnly() = ((imdbTitleScores.get(item.imdbId).fresh()?.rating) ?: item.rating.trim().toDoubleOrNull())
+            ?.takeIf { it > 0 }?.let { listOf(dev.pov.tv.data.MdbListRatings.Rating("imdb", it)) }.orEmpty()
+        fun still() = !isDestroyed && container.getTag(R.id.pov_tile_item) == item.imdbId && container.isAttachedToWindow
+        val known = item.imdbId.matches(imdbIdPattern) && !publicPreview
+        val key = if (publicPreview || !::store.isInitialized) "" else store.get(dev.pov.tv.data.MdbListRatings.KEY)
+        if (known && key.isNotBlank()) {
+            mdbRatings.get(item.imdbId).fresh()?.let { render(it.ifEmpty { imdbOnly() }); return }
+            render(imdbOnly())
+            container.postDelayed({
+                if (!still()) return@postDelayed
+                imdbWorker.execute {
+                    val found = runCatching { dev.pov.tv.data.MdbListRatings().title(key, item.type, item.imdbId) }.getOrNull()
+                    runOnUiThread {
+                        if (found == null || isDestroyed) return@runOnUiThread
+                        mdbRatings.put(item.imdbId, TimedDetails(found))
+                        if (still()) render(found.ifEmpty { imdbOnly() })
+                    }
+                }
+            }, 400)
+            return
+        }
+        render(imdbOnly())
+        if (known && imdbTitleScores.get(item.imdbId).fresh() == null) container.postDelayed({
+            if (!still()) return@postDelayed
+            imdbWorker.execute {
+                val score = ImdbRatings().title(item.imdbId)
+                runOnUiThread {
+                    if (score == null || isDestroyed) return@runOnUiThread
+                    imdbTitleScores.put(item.imdbId, TimedDetails(score))
+                    if (still()) render(imdbOnly())
+                }
+            }
+        }, 400)
+    }
+
+    /** One rating as its source's badge and the score: IMDb 8.1 · TMDB 78% · trakt 82% · ●●● 3.9 · 🍅 91% · 🍿 85% · MC 74. */
+    private fun ratingBadge(rating: dev.pov.tv.data.MdbListRatings.Rating): View {
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val value = rating.value
+        val one = String.format(java.util.Locale.ENGLISH, "%.1f", value)
+        val percent = "${value.roundToInt()}%"
+        fun label(text: String, fill: Int, ink: Int) = text(text, 10, ink, true).apply {
+            background = rounded(fill, 3); setPadding(dp(5), dp(2), dp(5), dp(2)); includeFontPadding = false
+        }
+        fun score(text: String) = row.addView(text(text, 12, Color.WHITE, true).apply { includeFontPadding = false }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(5) })
+        val name: String
+        when (rating.source) {
+            "imdb" -> { name = "IMDb"; row.addView(label("IMDb", 0xFFF5C518.toInt(), Color.BLACK)); score(one) }
+            "tmdb" -> { name = "TMDB"; row.addView(label("TMDB", 0xFF01B4E4.toInt(), 0xFF0D253F.toInt())); score(percent) }
+            "trakt" -> { name = "Trakt"; row.addView(label("trakt", 0xFFED1C24.toInt(), Color.WHITE)); score(percent) }
+            "letterboxd" -> {
+                name = "Letterboxd"
+                row.addView(object : View(this) {
+                    private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+                    override fun onDraw(canvas: android.graphics.Canvas) {
+                        val radius = height / 2f
+                        listOf(0xFFFF8000.toInt(), 0xFF00E054.toInt(), 0xFF40BCF4.toInt()).forEachIndexed { index, color ->
+                            paint.color = color; canvas.drawCircle(radius + index * radius * 1.55f, radius, radius, paint)
+                        }
+                    }
+                }, LinearLayout.LayoutParams(dp(19), dp(8)))
+                score(one)
+            }
+            "tomatoes" -> { name = "Rotten Tomatoes"; row.addView(text("🍅", 12, Color.WHITE).apply { includeFontPadding = false }); score(percent) }
+            "popcorn" -> { name = "Rotten Tomatoes audience"; row.addView(text("🍿", 12, Color.WHITE).apply { includeFontPadding = false }); score(percent) }
+            else -> {
+                name = "Metacritic"
+                val color = when { value >= 61 -> 0xFF66CC33.toInt(); value >= 40 -> 0xFFFFCC33.toInt(); else -> 0xFFFF3333.toInt() }
+                row.addView(label("MC", 0xFF2B2B2B.toInt(), Color.WHITE))
+                row.addView(label("${value.roundToInt()}", color, if (value >= 40 && value < 61) Color.BLACK else Color.WHITE), LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(3) })
+            }
+        }
+        row.contentDescription = "$name ${if (rating.source == "imdb" || rating.source == "letterboxd") one else percent}"
+        return row
     }
 
     private val listGlides = java.util.WeakHashMap<ViewGroup, SlidingFocusPill>()
@@ -8987,37 +9559,61 @@ class MainActivity : Activity() {
                 if (view.alpha < 1f) view.animate().alpha(1f).setDuration(300).setInterpolator(EASE_OUT).start() else view.alpha = 1f
             }
         }
-        bitmapCache.get(key)?.let { show(it); loaded?.invoke(true); return }
-        // Home's corner art has lighter shading than a details page needs; dim it until the right version is ready.
-        if (backdrop && !corner && (view.getTag(R.id.pov_backdrop_key) as? String)?.startsWith("backdrop-corner:") == true) view.alpha = 0.4f
-        // Decode only as large as the slot: cards ~200dp, feature art ~360dp, the backdrop at 1280px.
-        val target = when { backdrop -> BACKDROP_WIDTH; feature || view.width >= dp(350) -> dp(360); else -> dp(200) }
-        val load = Runnable {
-            try {
-                if (view.tag != address) return@Runnable
-                bitmapCache.get(key)?.let { cached -> runOnUiThread { if (!isDestroyed && view.tag == address) { show(cached); loaded?.invoke(true) } }; return@Runnable }
-                val bitmap = fetchBitmap(address, target)?.let { if (backdrop) shadedBackdrop(it, corner) else it }
-                if (bitmap != null) { bitmapCache.put(key, bitmap); runOnUiThread { if (!isDestroyed && view.tag == address) { show(bitmap); loaded?.invoke(true) } } }
-                else if (loaded != null) runOnUiThread { if (!isDestroyed && view.tag == address) loaded(false) }
-            } catch (_: Exception) {
-                /* The title remains usable when artwork is unavailable. */
-                if (loaded != null) runOnUiThread { if (!isDestroyed && view.tag == address) loaded(false) }
+        // Cards (not the backdrop or feature art) load only near the screen and are dropped far from it ([ArtworkTrimmer]).
+        val managed = !backdrop && !feature
+        fun start() {
+            // A card decodes at its own size (a large poster card is ~300 px, not the 500-800 px file), keyed by that size.
+            val slotWidth = view.width.takeIf { it > 0 } ?: view.layoutParams?.width?.takeIf { it > 0 }
+            val slotHeight = view.height.takeIf { it > 0 } ?: view.layoutParams?.height?.takeIf { it > 0 } ?: 0
+            val exact = managed && slotWidth != null && slotWidth < dp(350)
+            val cacheKey = if (exact) "$key|${slotWidth}x$slotHeight" else key
+            fun wanted() = !isDestroyed && view.tag == address && (!managed || artworkTrimmer.wanted(view))
+            bitmapCache.get(cacheKey)?.let { show(it); loaded?.invoke(true); return }
+            // Home's corner art has lighter shading than a details page needs; dim it until the right version is ready.
+            if (backdrop && !corner && (view.getTag(R.id.pov_backdrop_key) as? String)?.startsWith("backdrop-corner:") == true) view.alpha = 0.4f
+            // Decode only as large as the slot: cards at their size, feature art ~360dp, the backdrop at 1280px.
+            val target = when { backdrop -> BACKDROP_WIDTH; exact -> slotWidth!!; feature || view.width >= dp(350) -> dp(360); else -> dp(200) }
+            val load = Runnable {
+                try {
+                    if (view.tag != address) return@Runnable
+                    bitmapCache.get(cacheKey)?.let { cached -> runOnUiThread { if (wanted()) { show(cached); loaded?.invoke(true) } }; return@Runnable }
+                    val bitmap = fetchBitmap(address, target, if (exact) slotHeight else 0)?.let { if (backdrop) shadedBackdrop(it, corner) else it }
+                    if (bitmap != null) { bitmapCache.put(cacheKey, bitmap); runOnUiThread { if (wanted()) { show(bitmap); loaded?.invoke(true) } } }
+                    else if (loaded != null) runOnUiThread { if (wanted()) loaded(false) }
+                } catch (_: Exception) {
+                    /* The title remains usable when artwork is unavailable. */
+                    if (loaded != null) runOnUiThread { if (wanted()) loaded(false) }
+                }
             }
+            if (feature || backdrop) featureImages.execute(load) else images.execute(ImageTask(generation, imageOrder++, load))
         }
-        if (feature || backdrop) featureImages.execute(load) else images.execute(ImageTask(generation, imageOrder++, load))
+        if (managed) artworkTrimmer.track(view, Runnable { start() }) else start()
     }
 
-    private fun fetchBitmap(address: String, targetWidth: Int): Bitmap? {
+    /** [coverHeight] > 0: scale to exactly cover a [targetWidth] × [coverHeight] card (center-crop) instead of halving steps. */
+    private fun fetchBitmap(address: String, targetWidth: Int, coverHeight: Int = 0): Bitmap? {
         val bytes = ArtworkClient.bytes(address)
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         var sample = 1
-        while (bounds.outWidth / (sample * 2) >= targetWidth) sample *= 2
+        while (bounds.outWidth / (sample * 2) >= targetWidth && (coverHeight <= 0 || bounds.outHeight / (sample * 2) >= coverHeight)) sample *= 2
         // Opaque photos decode at 16 bits per pixel: half the memory and half the texture upload of a card.
         // (Hardware bitmaps would avoid the upload, but this TV's GPU cannot draw them inside rounded clips.)
-        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply {
+        var bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply {
             inSampleSize = sample; if (bounds.outMimeType == "image/jpeg") inPreferredConfig = Bitmap.Config.RGB_565
         })
+        if (bitmap != null && coverHeight > 0) {
+            // Halving steps leave a 500-800 px poster whole for a ~300 px card: scale to the card (3-6x less memory).
+            val scale = maxOf(targetWidth.toFloat() / bitmap.width, coverHeight.toFloat() / bitmap.height)
+            if (scale < 0.87f) {
+                val scaled = Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).roundToInt().coerceAtLeast(1), (bitmap.height * scale).roundToInt().coerceAtLeast(1), true)
+                if (scaled !== bitmap) { bitmap.recycle(); bitmap = scaled }
+            }
+        }
+        // PNG/WebP posters (poster services) without transparency: 16 bits per pixel too, half their memory.
+        if (bitmap != null && bitmap.config == Bitmap.Config.ARGB_8888 && !bitmap.hasAlpha()) {
+            bitmap.copy(Bitmap.Config.RGB_565, false)?.let { bitmap.recycle(); bitmap = it }
+        }
         // Starts the texture upload on a render worker so the first draw does not stall a scroll frame.
         bitmap?.prepareToDraw()
         return bitmap
@@ -9108,6 +9704,16 @@ class MainActivity : Activity() {
         return false
     }
 
+    /** The sideways shelf (row of cards) holding [view], or null outside one. */
+    private fun shelfOf(view: View?): ViewGroup? {
+        var parent = view?.parent
+        while (parent is View && parent !== body) {
+            if (parent is CullingLinearLayout && parent.orientation == LinearLayout.HORIZONTAL) return parent
+            parent = parent.parent
+        }
+        return null
+    }
+
     /** True when [view] is (inside) the last focusable item of a sideways row such as a Home shelf. */
     private fun atRowEnd(view: View?): Boolean {
         // Only within the page, and only a sideways shelf: walking past the page found the app's outer layout and
@@ -9128,8 +9734,17 @@ class MainActivity : Activity() {
         val row = CullingLinearLayout(this, resources.displayMetrics.widthPixels / 2).apply { setPadding(dp(3), dp(4), dp(10), dp(4)); clipChildren = false; clipToPadding = false }
         scroller.setOnScrollChangeListener { _, _, _, _, _ -> row.invalidate() }
         // Titles scrolled past slide out at the content edge instead of beneath the menu.
-        if (flix) { scroller.clipChildren = true; scroller.clipToPadding = true; row.setPadding(dp(9), dp(7), dp(10), dp(7)) }
-        scroller.addView(row); host.addView(scroller, margin(-1, -2).apply { if (flix) leftMargin = -dp(9) }); return row
+        // The focused card zooms by focusScale and its outline is drawn around that: the row leaves room for both on
+        // every side (a large poster grows ~10 dp each way), else the scroller's clip cut the outline's top and left.
+        // Negative margins give the room back, so rows sit exactly where they did.
+        val zoom = (theme.layout.focusScale - 1f).coerceAtLeast(0f) / 2f
+        val padX = if (flix) maxOf(dp(9), (dp(maxOf(theme.layout.cardWidthDp, RESUME_CARD_WIDTH)) * zoom).toInt() + dp(3)) else 0
+        val padY = if (flix) maxOf(dp(7), (dp(theme.layout.cardHeightDp) * zoom).toInt() + dp(3)) else 0
+        // Home shelves end in room as wide as the screen, so even the last title (and See all) scrolls to the left
+        // like every other instead of the focus drifting to the right edge.
+        val padEnd = if (flix && isHome && DeviceLayout.tv && ThemeSpec.posterSize.isNotEmpty()) resources.displayMetrics.widthPixels else dp(10)
+        if (flix) { scroller.clipChildren = true; scroller.clipToPadding = true; row.setPadding(padX, padY, padEnd, padY) }
+        scroller.addView(row); host.addView(scroller, margin(-1, -2).apply { if (flix) { leftMargin = -padX; topMargin = -(padY - dp(7)); bottomMargin = -(padY - dp(7)) } }); return row
     }
     private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
     /** Phone tab strip: equal-width buttons across the full width. */

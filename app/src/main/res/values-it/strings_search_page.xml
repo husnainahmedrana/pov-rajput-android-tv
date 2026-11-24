@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sp_hint">Cerca film e serie</string>
+    <string name="sp_genre_movies">Film · %1$s</string>
+    <string name="sp_load_failed">Impossibile caricare questo elenco. Riprova.</string>
+</resources>

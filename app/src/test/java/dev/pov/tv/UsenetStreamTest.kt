@@ -300,6 +300,10 @@ BODY evil</segment>
         val stream = UsenetStream(made, server.post(file, even(file.size, 40_000), "a.mkv").segments, windowBytes = 400_000)
         assertArrayEquals(file, readAll(stream, 0, file.size))
         assertTrue(made.connected <= 2)
+        // Connections sign in before taking articles, so the two allowed ones can carry the whole file before a
+        // refused one's answer is in: wait for it instead of checking the instant the read ends.
+        val deadline = System.currentTimeMillis() + 3_000
+        while (made.refusal == null && System.currentTimeMillis() < deadline) Thread.sleep(10)
         assertEquals(502, made.refusal?.code)
     }
 

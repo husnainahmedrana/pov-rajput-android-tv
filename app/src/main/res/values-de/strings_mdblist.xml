@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mdb_row_detail">Dein eigener kostenloser MDBList-Schlüssel zeigt auf der Startseite neben IMDb auch Rotten Tomatoes, Letterboxd, Trakt und TMDB. Erhältlich unter mdblist.com → Preferences.</string>
+    <string name="mdb_key_title">MDBList-API-Schlüssel</string>
+    <string name="mdb_key_hint">API-Schlüssel (mdblist.com → Preferences)</string>
+    <string name="mdb_connected">MDBList verbunden: Die Startseite zeigt jetzt alle Bewertungen.</string>
+    <string name="mdb_remove">MDBList-Schlüssel entfernen</string>
+    <string name="mdb_remove_confirm">MDBList-Schlüssel entfernen? Die Startseite zeigt dann nur die IMDb-Bewertung.</string>
+</resources>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sp_hint">Search movies &amp; TV</string>
+    <string name="sp_genre_movies">%1$s Movies</string>
+    <string name="sp_load_failed">Couldn\'t load this list. Try again.</string>
+</resources>

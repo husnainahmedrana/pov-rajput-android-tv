@@ -48,6 +48,11 @@ class NavigationIconView(context: Context, private val key: String, color: Int) 
             "anime" -> anime(canvas)
             "library" -> library(canvas)
             "search" -> search(canvas)
+            "mic" -> {
+                canvas.drawRoundRect(9f, 3f, 15f, 14f, 3f, 3f, ink)
+                canvas.drawArc(5.5f, 5f, 18.5f, 17f, 0f, 180f, false, ink)
+                canvas.drawLine(12f, 17f, 12f, 21f, ink)
+            }
             "settings" -> settings(canvas)
             "nowplaying" -> {
                 canvas.drawRoundRect(2f, 4f, 22f, 20f, 3f, 3f, ink)

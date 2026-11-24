@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mdb_row_detail">La tua chiave MDBList gratuita aggiunge i voti di Rotten Tomatoes, Letterboxd, Trakt e TMDB accanto a IMDb nella Home. Ottienila su mdblist.com → Preferences.</string>
+    <string name="mdb_key_title">Chiave API MDBList</string>
+    <string name="mdb_key_hint">Chiave API (mdblist.com → Preferences)</string>
+    <string name="mdb_connected">MDBList collegato: la Home ora mostra tutti i voti.</string>
+    <string name="mdb_remove">Rimuovi chiave MDBList</string>
+    <string name="mdb_remove_confirm">Rimuovere la chiave MDBList? La Home mostrerà solo il voto IMDb.</string>
+</resources>
