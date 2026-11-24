@@ -264,7 +264,8 @@ object InAppPlaybackSession {
         mediaName = intent.getStringExtra("media_name").orEmpty().take(4000)
         mediaSize = intent.getLongExtra("media_size", 0L).takeIf { it > 0 }
         identity = try { intent.getStringExtra("identity")?.let { PlaybackIdentity.fromJson(JSONObject(it)) } } catch (_: Exception) { null }
-        if (saved == null) { history.show(sourceKey, identity); identity?.let(wetrakr::allowPlayback) }
+        // A Usenet name-search link has no catalog title: no history, Continue Watching or trackers.
+        if (saved == null && !dev.pov.tv.data.UsenetSearch.isNameSearch(identity)) { history.show(sourceKey, identity); identity?.let(wetrakr::allowPlayback) }
         val position = (saved?.getLong("position") ?: intent.getLongExtra("resume", 0L)).coerceAtLeast(0)
         remotePercent = saved?.getDouble("remotePercent") ?: if (position == 0L) intent.getDoubleExtra("resume_percent", 0.0) else 0.0
         if (!remotePercent.isFinite() || remotePercent !in 0.0..100.0) remotePercent = 0.0
@@ -970,7 +971,7 @@ object InAppPlaybackSession {
     private fun saveLocal() {
         if (error is VideoCompatibilityException) return
         // Public-stream audits and other transient playback must not create history entries.
-        if (sourceKey.isBlank()) return
+        if (sourceKey.isBlank() || dev.pov.tv.data.UsenetSearch.isNameSearch(identity)) return
         val exo = player ?: return
         if (exo.duration <= 0) return
         try { history.save(sourceKey, title, identity, exo.currentPosition.coerceAtLeast(0), exo.duration) }
@@ -979,6 +980,7 @@ object InAppPlaybackSession {
     private fun sync(action: String) {
         if (error is VideoCompatibilityException) return
         val media = identity ?: return
+        if (dev.pov.tv.data.UsenetSearch.isNameSearch(media)) return
         val exo = player ?: return
         if (exo.duration <= 0) return
         if (history.isHidden(identity = media)) return

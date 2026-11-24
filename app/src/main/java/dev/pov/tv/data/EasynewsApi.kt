@@ -57,18 +57,33 @@ class EasynewsApi internal constructor(
         return query(identity.title, username, password).filter { matches(it.title, identity, year) }
     }
 
+    private val PAGE = 100
+
+    /** Videos whose names match [text], unfiltered: the free-text Usenet search. */
+    fun searchText(text: String): List<SourceItem> = searchTextPage(text, 1).first
+
+    /** Page [page] (from 1) of [searchText], and whether that page was full (so there may be another). */
+    fun searchTextPage(text: String, page: Int): Pair<List<SourceItem>, Boolean> {
+        val query = text.trim().take(200).takeIf { it.isNotEmpty() } ?: return emptyList<SourceItem>() to false
+        val (username, password) = credentials() ?: return emptyList<SourceItem>() to false
+        val json = queryJson(query, username, password, page.coerceAtLeast(1))
+        return parse(json) to ((json.optJSONArray("data")?.length() ?: 0) >= PAGE)
+    }
+
     /** Any videos matching [text], unfiltered: test material for the NNTP speed test. */
     internal fun sample(text: String): List<SourceItem> = credentials()?.let { (username, password) -> query(text, username, password) }.orEmpty()
 
-    private fun query(text: String, username: String, password: String): List<SourceItem> {
-        val params = listOf("gps" to text.take(300), "pby" to "100", "pno" to "1", "spamf" to "1", "u" to "1", "sb" to "1",
+    private fun query(text: String, username: String, password: String): List<SourceItem> = parse(queryJson(text, username, password, 1))
+
+    private fun queryJson(text: String, username: String, password: String, page: Int): JSONObject {
+        val params = listOf("gps" to text.take(300), "pby" to "$PAGE", "pno" to "$page", "spamf" to "1", "u" to "1", "sb" to "1",
             "gx" to "1", "st" to "adv", "sS" to "3", "s1" to "relevance", "s1d" to "-", "s2" to "dsize", "s2d" to "-",
             "fty[]" to "VIDEO", "safeO" to "1")
         val url = "$BASE/2.0/search/solr-search/advanced?" + params.joinToString("&") { Net.encode(it.first) + "=" + Net.encode(it.second) }
         val json = try { JSONObject(get(url, Easynews.auth(username, password))) }
             catch (error: ApiException) { throw error }
             catch (_: Exception) { throw ApiException(0, L10n.tr(R.string.t_easynews_returned_an_unreadable_search_response, "Easynews returned an unreadable search response.")) }
-        return parse(json)
+        return json
     }
 
     /**

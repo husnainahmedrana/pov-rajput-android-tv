@@ -2895,6 +2895,9 @@ class MainActivity : Activity() {
         if (DeviceLayout.tv) navigate { searchPage(initialQuery) } else searchOverlay(initialQuery)
     }
 
+    /** The search page's Usenet chip is on: the typed name goes to the indexers instead of the catalogs (this session). */
+    private var searchUsenet = false
+
     /** What the search page's grid showed for each category this session, so moving through the list is instant. */
     private val searchBrowseCache = HashMap<String, List<MediaItemData>>()
     /** Anime shown as features ("kitsu:<id>" → its Kitsu title): trailer, score and where Play / More info go. */
@@ -2946,6 +2949,29 @@ class MainActivity : Activity() {
             view.background = rounded(withAlpha(Color.WHITE, if (focused) 30 else 14), 12, if (focused) Color.WHITE else withAlpha(Color.WHITE, 60))
         }
         top.addView(input, LinearLayout.LayoutParams(0, dp(46), 1f))
+        // Two chips after the field: Titles (the catalogs, as before) or Usenet (the typed name straight to the indexers
+        // and Easynews, for things no catalog lists, like sports events). The choice stays for this session.
+        val usenetReady = UsenetSearch.canSearchByName(store)
+        if (!usenetReady) searchUsenet = false
+        var runUsenet: () -> Unit = {}
+        var refreshLive: () -> Unit = {}
+        if (usenetReady) {
+            val titlesChip = button("") {}; val usenetChip = button("") {}
+            fun paintModes() {
+                titlesChip.text = (if (searchUsenet) "" else "✓ ") + getString(R.string.uns_titles)
+                usenetChip.text = (if (searchUsenet) "✓ " else "") + getString(R.string.uns_button)
+            }
+            titlesChip.setOnClickListener { if (searchUsenet) { searchUsenet = false; paintModes(); refreshLive() } }
+            usenetChip.setOnClickListener {
+                if (!searchUsenet) { searchUsenet = true; paintModes(); refreshLive() }
+                runUsenet()
+            }
+            paintModes()
+            listOf(titlesChip, usenetChip).forEach { chip ->
+                chip.gravity = Gravity.CENTER; chip.setPadding(dp(18), 0, dp(18), 0); chip.maxLines = 1
+                top.addView(chip, LinearLayout.LayoutParams(-2, dp(46)).apply { leftMargin = dp(10) })
+            }
+        }
         body.addView(top, margin(-1, -2))
 
         // Recent searches: OK runs one again, hold forgets it, ✕ clears them all.
@@ -2961,14 +2987,17 @@ class MainActivity : Activity() {
         val list = column().apply { setPadding(0, dp(4), dp(6), dp(40)) }
         listScroll.addView(list)
         split.addView(listScroll, margin(SEARCH_LIST_DP, -1, right = 16))
-        val gridScroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; isFocusable = false; setPadding(dp(10), dp(10), dp(10), dp(40)); clipToPadding = false }
+        // TvScrollView scrolls until the whole focused card, its focus growth and a small gap are on screen: a plain
+        // ScrollView stopped with the last row touching the edge, so its outline was cut off.
+        val gridScroll = TvScrollView(this) { true }.apply { isVerticalScrollBarEnabled = false; isFocusable = false; setPadding(dp(10), dp(10), dp(10), dp(40)); clipToPadding = false }
         val grid = column().apply { clipChildren = false }
         gridScroll.addView(grid)
         split.addView(gridScroll, LinearLayout.LayoutParams(0, -1, 1f))
         val splitHeight = resources.displayMetrics.heightPixels - systemTop - dp(22 + 46 + 12 + 40 + 14)
         body.addView(split, LinearLayout.LayoutParams(-1, splitHeight).apply { topMargin = dp(14) })
 
-        val gridWidth = DeviceLayout.canvasWidth - theme.layout.railWidthDp - theme.layout.contentInsetDp * 2 - SEARCH_LIST_DP - 16 - 4
+        // The grid's own side padding (10 + 10) comes off too, or the fifth column ran past the right edge.
+        val gridWidth = DeviceLayout.canvasWidth - theme.layout.railWidthDp - theme.layout.contentInsetDp * 2 - SEARCH_LIST_DP - 16 - 20 - 4
         val columns = 5
         val cardWidth = (gridWidth - (columns - 1) * theme.layout.cardGapDp) / columns
         fun showGrid(items: List<MediaItemData>, captions: Boolean, empty: String) {
@@ -3063,7 +3092,7 @@ class MainActivity : Activity() {
         var liveFor = ""
         val live = Runnable {
             val typed = input.text.toString().trim()
-            if (typed.length < 2) { liveFor = ""; completions = emptyList(); renderChips(); browse(selected); return@Runnable }
+            if (typed.length < 2 || searchUsenet) { liveFor = ""; completions = emptyList(); renderChips(); browse(selected); return@Runnable }
             liveFor = typed
             loading()
             worker.execute {
@@ -3090,8 +3119,14 @@ class MainActivity : Activity() {
         fun submit() {
             val query = input.text.toString().trim().take(200)
             if (query.isEmpty()) return
-            hideKeyboard(input); navigate { searchResults(query) }
+            hideKeyboard(input)
+            if (searchUsenet) navigate { usenetNameSearch(query) } else navigate { searchResults(query) }
         }
+        runUsenet = {
+            val query = input.text.toString().trim().take(200)
+            if (query.isEmpty()) input.requestFocus() else { hideKeyboard(input); navigate { usenetNameSearch(query) } }
+        }
+        refreshLive = { input.removeCallbacks(live); input.post(live) }
         input.onBack = { hideKeyboard(input) }
         input.setOnEditorActionListener { _, action, event ->
             if (action in setOf(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH, android.view.inputmethod.EditorInfo.IME_ACTION_DONE, android.view.inputmethod.EditorInfo.IME_ACTION_GO)) { submit(); true }
@@ -3153,6 +3188,12 @@ class MainActivity : Activity() {
         actions.addView(button(if (DeviceLayout.phone) getString(R.string.t_voice) else getString(R.string.t_voice_search)) { dialog.dismiss(); voiceSearch() }.apply { gravity = Gravity.CENTER; tag = "search-voice" },
             margin(if (DeviceLayout.phone) 110 else 170, 40, right = if (DeviceLayout.phone) 8 else 12))
         actions.addView(button(getString(R.string.t_cancel)) { dialog.dismiss() }.apply { gravity = Gravity.CENTER }, margin(if (DeviceLayout.phone) 90 else 110, 40))
+        if (UsenetSearch.canSearchByName(store)) actions.addView(button(getString(R.string.uns_button)) {
+            val query = input.text.toString().trim().take(200)
+            if (query.isEmpty()) return@button
+            (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(input.windowToken, 0)
+            dialog.dismiss(); navigate { usenetNameSearch(query) }
+        }.apply { gravity = Gravity.CENTER }, margin(if (DeviceLayout.phone) 90 else 110, 40).apply { leftMargin = dp(if (DeviceLayout.phone) 8 else 12) })
         card.addView(actions, margin(-2, -2, top = 22))
         // Recent searches (tap to run again, hold to forget one, Clear all) and, while typing, suggestions: past
         // searches that match and titles from the catalog.
@@ -4841,13 +4882,99 @@ class MainActivity : Activity() {
 
     private fun sourceResults(identity: PlaybackIdentity, sources: List<SourceItem>) = sourceResults(identity, sources, emptyList())
 
+    /** Usenet name-search results this session, by category and name, so Back and the category chips are instant. */
+    private val usenetNameCache = HashMap<String, UsenetSearch.NameResults>()
+
+    /**
+     * Usenet search by name: the typed text goes to every enabled indexer (and Easynews) at once, for things no catalog
+     * lists, such as sports events. The results use the usual link list, badges and all; they play under a made-up id,
+     * so nothing reaches the trackers, history or Continue Watching.
+     */
+    private fun usenetNameSearch(query: String, category: UsenetSearch.NameCategory = UsenetSearch.NameCategory.ALL) {
+        val identity = UsenetSearch.nameIdentity(query)
+        val cacheKey = "${category.key}\u0000${identity.title.lowercase()}"
+        val reopen = { usenetNameSearch(query, category) }
+        fun categories() {
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; clipChildren = false; setPadding(dp(2), dp(2), dp(2), dp(2)) }
+            UsenetSearch.NameCategory.values().forEach { option ->
+                val label = getString(when (option) {
+                    UsenetSearch.NameCategory.ALL -> R.string.uns_cat_all; UsenetSearch.NameCategory.MOVIES -> R.string.uns_cat_movies
+                    UsenetSearch.NameCategory.TV -> R.string.uns_cat_tv; UsenetSearch.NameCategory.SPORTS -> R.string.uns_cat_sports
+                })
+                row.addView(button(if (option == category) "✓ $label" else label) { if (option != category) usenetNameSearch(query, option) }.apply {
+                    gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), 0); maxLines = 1
+                    tag = "${TvFocusController.SKIP_FIRST}:uns:${option.key}"
+                }, LinearLayout.LayoutParams(-2, dp(38)).apply { rightMargin = dp(8) })
+            }
+            body.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; isFocusable = false; addView(row) }, margin(-1, -2, bottom = 8))
+        }
+        fun show(results: UsenetSearch.NameResults) {
+            val searched = results.answers.joinToString(" · ") { answer -> answer.problem?.let { "${answer.name}: $it" } ?: "${answer.name} ${answer.count}" }
+            val extra = {
+                categories()
+                if (searched.isNotEmpty()) body.addView(text(getString(R.string.uns_found_on, searched), 12, muted), margin(-1, -2, bottom = 4))
+                body.addView(text(getString(R.string.uns_note), 12, muted), margin(-1, -2, bottom = 12))
+            }
+            if (results.items.isEmpty()) {
+                current = reopen
+                val id = page(getString(R.string.uns_title, identity.title))
+                extra()
+                body.addView(text(if (results.answers.isEmpty()) getString(R.string.uns_nothing_to_search) else getString(R.string.uns_no_results), 15, muted), margin(-1, -2, top = 8))
+                focusAfterRender(id)
+                return
+            }
+            // More results: the next page from each source whose page was full; the list grows in place on the first new link.
+            val bottom = if (results.more.isEmpty()) null else ({
+                var asking = false
+                body.addView(button(getString(R.string.uns_more)) {
+                    if (asking) return@button
+                    asking = true; toast(getString(R.string.uns_searching))
+                    val request = generation
+                    worker.execute {
+                        val grown = runCatching { UsenetSearch.more(store, query, category, results) }
+                        runOnUiThread {
+                            if (request != generation || isDestroyed) return@runOnUiThread
+                            asking = false
+                            grown.onSuccess { next ->
+                                usenetNameCache[cacheKey] = next
+                                next.items.drop(results.items.size).firstOrNull()?.let { pendingFocus = TvFocusSnapshot(TvChoiceKeys.source(it), scroller.scrollY) }
+                                    ?: toast(getString(R.string.uns_no_more))
+                                show(next)
+                            }.onFailure { error -> toast(error.message ?: getString(R.string.sp_load_failed)) }
+                        }
+                    }
+                }, margin(-1, 44, top = 10))
+                Unit
+            })
+            sourceResults(identity.copy(title = getString(R.string.uns_title, identity.title)), results.items, emptyList(), extraTop = extra, reopen = reopen,
+                allLinks = true, extraBottom = bottom)
+        }
+        usenetNameCache[cacheKey]?.let { show(it); return }
+        current = reopen
+        val id = page(getString(R.string.uns_title, identity.title))
+        categories()
+        body.addView(text(getString(R.string.uns_searching), 14, muted), margin(-1, -2, top = 8))
+        focusAfterRender(id)
+        worker.execute {
+            val found = runCatching { UsenetSearch.byName(store, query, category) }
+            runOnUiThread {
+                if (id != generation || isDestroyed) return@runOnUiThread
+                found.onSuccess { usenetNameCache[cacheKey] = it; show(it) }.onFailure { error -> showError(error as? Exception ?: Exception(error)); focusAfterRender(id) }
+            }
+        }
+    }
+
     /** Changes when providers, Easynews or the debrid services in use change, so a kept link list is searched again. */
     private fun sourceRevision() = listOf(store.get(SourceProviders.KEY), store.get("sources.endpoint"), DebridServices.connected(store).joinToString(","),
         Easynews.active(store).toString(), Easynews.server(store)).joinToString("\u0000")
 
-    private fun sourceResults(identity: PlaybackIdentity, sources: List<SourceItem>, unavailable: List<String>, animate: Boolean = false, search: LinkSearch? = null) {
+    private fun sourceResults(identity: PlaybackIdentity, sources: List<SourceItem>, unavailable: List<String>, animate: Boolean = false, search: LinkSearch? = null,
+                              /** Views a caller adds under the title (the Usenet name search's categories). */ extraTop: (() -> Unit)? = null,
+                              /** How to show this page again, when it isn't a title's link search. */ reopen: (() -> Unit)? = null,
+                              /** Every link, not the best few per quality (pages with no More links button of their own). */ allLinks: Boolean = false,
+                              /** Views a caller adds under the list (the Usenet name search's More results). */ extraBottom: (() -> Unit)? = null) {
         val providerRevision = sourceRevision()
-        current = {
+        current = reopen ?: {
             if (providerRevision != sourceRevision()) showSources(identity)
             else if (search != null) renderSearch(search)
             else sourceResults(identity, sources, unavailable)
@@ -4889,7 +5016,8 @@ class MainActivity : Activity() {
         if (ownLine) body.addView(counts, margin(-1, -2, bottom = 6))
         // Compact list: the service logos up top already say where links are cached, so the priority line goes.
         val compactList = LinkListPreferences.compact(this)
-        if (directOnly || !compactList) body.addView(text(if (directOnly) getString(R.string.t_direct_links_only_torrent_sources_need)
+        if (extraTop != null) extraTop()
+        else if (directOnly || !compactList) body.addView(text(if (directOnly) getString(R.string.t_direct_links_only_torrent_sources_need)
             else getString(R.string.t_cached_source_priority_x, connected.joinToString(" → ") { DebridServices.name(it) }), 12, muted), margin(-1, -2, bottom = 18))
         else body.addView(View(this), margin(-1, 6))
         sourcesBackdrop(identity, keep = artShown)
@@ -4943,7 +5071,7 @@ class MainActivity : Activity() {
             .let { all -> overLimit?.let { over -> all.filterNot(over) + all.filter(over) } ?: all }
             .let { all -> all.filterNot(::tooTall) + all.filter(::tooTall) }
         // Best per quality: the first few of each quality in this order; More links shows the rest.
-        val ordered = if (search?.showAll == true) fullOrder else SourceSortPreferences.bestPerQuality(fullOrder, sorting.bestPerQuality)
+        val ordered = if (allLinks || search?.showAll == true) fullOrder else SourceSortPreferences.bestPerQuality(fullOrder, sorting.bestPerQuality)
         val moreLinks = fullOrder.size - ordered.size
         search?.topKey = ordered.firstOrNull()?.let(TvChoiceKeys::source)
         // The player's Streams panel offers the same links in the same order.
@@ -5100,6 +5228,7 @@ class MainActivity : Activity() {
             else getString(R.string.t_show_x_rd_refused, refused)) {
             search.showRefused = !search.showRefused; renderSearch(search)
         }, margin(-1, 40, top = 8))
+        extraBottom?.invoke()
         focusAfterRender(id)
         if (animate && flix) sourcesRiseIn(choices)
         // Only a fresh search auto-plays; returning to this list leaves the choice to the viewer.

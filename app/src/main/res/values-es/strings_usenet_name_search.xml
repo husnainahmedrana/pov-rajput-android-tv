@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Usenet search by name (TV search page → Usenet). -->
+<resources>
+    <string name="uns_titles">Títulos</string>
+    <string name="uns_button">Usenet</string>
+    <string name="uns_title">Usenet · %1$s</string>
+    <string name="uns_cat_all">Todo</string>
+    <string name="uns_cat_movies">Películas</string>
+    <string name="uns_cat_tv">TV</string>
+    <string name="uns_cat_sports">Deportes</string>
+    <string name="uns_searching">Buscando por nombre en tus indexadores…</string>
+    <string name="uns_nothing_to_search">Para buscar por nombre, añade un indexador de Usenet y un proveedor de noticias (Ajustes → Fuentes → Usenet) o conecta Easynews.</string>
+    <string name="uns_no_results">No se encontró nada con este nombre en esta categoría. Prueba Todo.</string>
+    <string name="uns_note">No está vinculado a un título del catálogo: no se envía nada a tus trackers y no se guarda en Seguir viendo.</string>
+    <string name="uns_no_answer">sin respuesta a tiempo</string>
+    <string name="uns_found_on">Buscado: %1$s</string>
+    <string name="uns_more">Más resultados</string>
+    <string name="uns_no_more">No hay más resultados nuevos.</string>
+</resources>

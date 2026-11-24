@@ -41,10 +41,12 @@ internal class FrameStrip(context: Context, private val accent: Int) : LinearLay
     fun travel() {
         if (pulse != null) return
         lit = -1
-        pulse = ValueAnimator.ofInt(0, FRAMES - 1).apply {
+        // A float over 0..FRAMES, so the last frame gets its full share of the trip: counting 0..FRAMES-1 in whole
+        // numbers reached it only at the turn's last instant, so the pulse seemed to turn back one frame early.
+        pulse = ValueAnimator.ofFloat(0f, FRAMES.toFloat()).apply {
             duration = 1_400; repeatMode = ValueAnimator.REVERSE; repeatCount = ValueAnimator.INFINITE
             addUpdateListener { animator ->
-                val at = animator.animatedValue as Int
+                val at = frameAt(animator.animatedValue as Float)
                 frames.forEachIndexed { index, frame ->
                     val distance = kotlin.math.abs(index - at)
                     frame.background = tile(if (distance == 0) accent else DIM)
@@ -58,7 +60,7 @@ internal class FrameStrip(context: Context, private val accent: Int) : LinearLay
     /** [percent] done: the strip fills from the left. */
     fun fill(percent: Int) {
         pulse?.cancel(); pulse = null
-        val now = (percent * FRAMES / 100).coerceIn(0, FRAMES)
+        val now = filledFrames(percent)
         if (now == lit) return
         lit = now
         frames.forEachIndexed { index, frame -> frame.alpha = 1f; frame.background = tile(if (index < now) accent else DIM) }
@@ -70,8 +72,12 @@ internal class FrameStrip(context: Context, private val accent: Int) : LinearLay
 
     private fun tile(color: Int) = GradientDrawable().apply { cornerRadius = 2 * density; setColor(color) }
 
-    private companion object {
+    internal companion object {
         const val FRAMES = 24
+        /** The frame lit at [position] along 0..FRAMES. */
+        fun frameAt(position: Float): Int = position.toInt().coerceIn(0, FRAMES - 1)
+        /** Frames filled at [percent]: rounded up, so 99% (the most the loading card shows) lights the last frame too. */
+        fun filledFrames(percent: Int): Int = ((percent.coerceIn(0, 100) * FRAMES + 99) / 100).coerceIn(0, FRAMES)
         const val DIM = 0x26FFFFFF
     }
 }

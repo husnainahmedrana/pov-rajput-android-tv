@@ -468,7 +468,8 @@ class SourceResolver internal constructor(
     }
 
     private fun validateIdentity(identity: PlaybackIdentity) {
-        require(IMDB_ID.matches(identity.imdbId)) { "This title has no supported IMDb identifier." }
+        // Usenet name-search links have no catalog title: they play under their own "nzb:" id.
+        require(IMDB_ID.matches(identity.imdbId) || UsenetSearch.isNameSearch(identity)) { "This title has no supported IMDb identifier." }
         require(identity.type == "movie" || identity.type == "series") { "This media type is not supported." }
         require(identity.type != "series" || (identity.season >= 0 && identity.episode > 0)) {
             L10n.tr(R.string.t_choose_an_episode_before_searching_for, "Choose an episode before searching for sources.")

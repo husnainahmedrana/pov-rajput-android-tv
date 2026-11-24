@@ -44,6 +44,29 @@ class Newznab(
         }
         // An id search can still return a whole season: keep only this episode.
         if (series) releases = releases.filter { episodeOf(it.title)?.let { (season, episode) -> season == identity.season && episode == identity.episode } == true }
+        return links(indexer, releases, newsProvider)
+    }
+
+    /**
+     * A free-text search by release name, for titles no catalog has (sports events, concerts, specials). [category] is a
+     * Newznab category ("2000" movies, "5000" TV, "5060" sports) or null for every category the indexer allows,
+     * adult ones included when the viewer's indexer account shows them.
+     */
+    fun searchText(indexer: NewznabIndexer, query: String, category: String?, agent: String, newsProvider: String = "",
+                   noteUsage: (String) -> Unit = {}): List<SourceItem> = searchTextPage(indexer, query, category, 0, agent, newsProvider, noteUsage).first
+
+    /** [searchText] from result [offset] (0, 100, 200…), and whether the indexer's page was full (so there may be more). */
+    fun searchTextPage(indexer: NewznabIndexer, query: String, category: String?, offset: Int, agent: String, newsProvider: String = "",
+                       noteUsage: (String) -> Unit = {}): Pair<List<SourceItem>, Boolean> {
+        val text = query.trim().take(200)
+        if (text.isEmpty()) return emptyList<SourceItem>() to false
+        val answer = parse(get(address(indexer, "t=search&q=${Net.encode(text)}" + (category?.let { "&cat=$it" } ?: "") +
+            (if (offset > 0) "&offset=$offset" else "")), agent))
+        noteUsage(answer.usage)
+        return links(indexer, answer.releases, newsProvider) to (answer.releases.size >= PAGE)
+    }
+
+    private fun links(indexer: NewznabIndexer, releases: List<Release>, newsProvider: String): List<SourceItem> {
         return releases.take(150).map { release ->
             val age = release.postedAt?.let { ((now() - it) / 86_400_000L).coerceAtLeast(0) }
             SourceItem(title = release.title.take(500), provider = indexer.name, directUrl = UsenetLinks.mark(release.link),
@@ -133,8 +156,11 @@ class Newznab(
         private val capsCache = ConcurrentHashMap<String, Caps>()
         private val EPISODE = Regex("(?i)(?<![a-z0-9])s(\\d{1,2})[ ._-]?e(\\d{1,3})(?!\\d)")
 
+        /** Results asked for per request (the most most indexers give). */
+        const val PAGE = 100
+
         internal fun address(indexer: NewznabIndexer, parameters: String) =
-            "${indexer.url}?$parameters&extended=1&limit=100" + if (indexer.apiKey.isBlank()) "" else "&apikey=${Net.encode(indexer.apiKey)}"
+            "${indexer.url}?$parameters&extended=1&limit=$PAGE" + if (indexer.apiKey.isBlank()) "" else "&apikey=${Net.encode(indexer.apiKey)}"
 
         internal fun episodeOf(title: String): Pair<Int, Int>? = EPISODE.find(title)?.let { it.groupValues[1].toInt() to it.groupValues[2].toInt() }
 

@@ -297,8 +297,8 @@ internal class ExternalProgress(
             started = true; playing = true
             worker.execute {
                 duration = server.durationMs() ?: runtimeMs
-                runCatching { history.show(key, identity) }
-                identity?.let { media -> trackers.forEach { (tracker, _) -> runCatching { tracker.allowPlayback(media) } } }
+                if (!dev.pov.tv.data.UsenetSearch.isNameSearch(identity)) runCatching { history.show(key, identity) }
+                identity?.takeUnless(dev.pov.tv.data.UsenetSearch::isNameSearch)?.let { media -> trackers.forEach { (tracker, _) -> runCatching { tracker.allowPlayback(media) } } }
                 scrobble("start", percent() ?: 0.0)
             }
             return false
@@ -350,14 +350,15 @@ internal class ExternalProgress(
 
     private fun save(at: Long?) {
         val total = duration ?: return
-        if (key.isBlank() || at == null) return
+        // A Usenet name-search link has no catalog title: no history, Continue Watching or trackers.
+        if (key.isBlank() || at == null || dev.pov.tv.data.UsenetSearch.isNameSearch(identity)) return
         runCatching { history.save(key, title, identity, at, total) }
     }
 
     /** The same calls as the built-in player's scrobbles, through the tracker's offline queue. */
     private fun scrobble(action: String, percent: Double) {
         val media = identity ?: return
-        if (history.isHidden(identity = media)) return
+        if (dev.pov.tv.data.UsenetSearch.isNameSearch(media) || history.isHidden(identity = media)) return
         for ((tracker, outbox) in trackers) try {
             if (!tracker.scrobblingEnabled() || !tracker.connected()) continue
             val account = tracker.accountRevision()

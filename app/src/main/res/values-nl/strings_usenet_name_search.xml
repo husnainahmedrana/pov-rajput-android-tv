@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Usenet search by name (TV search page → Usenet). -->
+<resources>
+    <string name="uns_titles">Titels</string>
+    <string name="uns_button">Usenet</string>
+    <string name="uns_title">Usenet · %1$s</string>
+    <string name="uns_cat_all">Alles</string>
+    <string name="uns_cat_movies">Films</string>
+    <string name="uns_cat_tv">TV</string>
+    <string name="uns_cat_sports">Sport</string>
+    <string name="uns_searching">Je indexers worden op naam doorzocht…</string>
+    <string name="uns_nothing_to_search">Om op naam te zoeken: voeg een Usenet-indexer en een nieuwsprovider toe (Instellingen → Bronnen → Usenet) of koppel Easynews.</string>
+    <string name="uns_no_results">Niets gevonden voor deze naam in deze categorie. Probeer Alles.</string>
+    <string name="uns_note">Niet gekoppeld aan een catalogustitel: er gaat niets naar je trackers en het blijft niet in Verder kijken.</string>
+    <string name="uns_no_answer">geen antwoord op tijd</string>
+    <string name="uns_found_on">Doorzocht: %1$s</string>
+    <string name="uns_more">Meer resultaten</string>
+    <string name="uns_no_more">Geen nieuwe resultaten meer.</string>
+</resources>

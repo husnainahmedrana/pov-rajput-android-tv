@@ -51,7 +51,19 @@ object EasynewsIndexer {
     fun search(indexer: NewznabIndexer, identity: PlaybackIdentity, newsProvider: String,
                api: (Pair<String, String>) -> EasynewsApi = { login -> EasynewsApi({ login }) }): List<SourceItem> {
         val login = credentials(indexer) ?: throw ApiException(0, L10n.tr(R.string.eni_enter_login, "Enter your Easynews username and password."))
-        return api(login).search(identity).mapNotNull { item ->
+        return links(indexer, api(login).search(identity), newsProvider)
+    }
+
+    /** Page [page] of Easynews's videos whose names match [text], as Usenet links, and whether the page was full. */
+    fun searchText(indexer: NewznabIndexer, text: String, newsProvider: String, page: Int = 1,
+                   api: (Pair<String, String>) -> EasynewsApi = { login -> EasynewsApi({ login }) }): Pair<List<SourceItem>, Boolean> {
+        val login = credentials(indexer) ?: throw ApiException(0, L10n.tr(R.string.eni_enter_login, "Enter your Easynews username and password."))
+        val (found, full) = api(login).searchTextPage(text, page)
+        return links(indexer, found, newsProvider) to full
+    }
+
+    private fun links(indexer: NewznabIndexer, found: List<SourceItem>, newsProvider: String): List<SourceItem> {
+        return found.mapNotNull { item ->
             val token = EasynewsNzb.token(item.directUrl) ?: return@mapNotNull null
             val link = "$LINK/${Net.encode(token.name + token.ext)}?" + listOf("hash" to token.hash, "name" to token.name, "ext" to token.ext, "sig" to token.sig)
                 .joinToString("&") { Net.encode(it.first) + "=" + Net.encode(it.second) }
