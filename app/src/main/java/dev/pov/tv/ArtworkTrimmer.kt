@@ -79,12 +79,12 @@ internal class ArtworkTrimmer(private val root: View) {
                 if (state == LOADED && !within(0f, 0f, 1f, 1f)) release(view)
                 continue
             }
-            // Sideways a row slides fast, so posters load well ahead (1.5 screens to the right) and arrive ready
-            // instead of popping in as they slide on screen.
-            if (state != LOADED && within(-1f, -0.5f, 2.5f, 1.5f)) {
+            // Sideways a held ◀/▶ moves a poster every ~140 ms, so posters decode well ahead (3 screens to the right)
+            // and arrive ready instead of popping in as they slide on screen.
+            if (state != LOADED && within(-1f, -0.5f, 4f, 1.5f)) {
                 view.setTag(R.id.pov_art_state, LOADED)
                 start.run()
-            } else if (state == LOADED && !within(-2f, -1.25f, 3.5f, 2.25f)) release(view)
+            } else if (state == LOADED && !within(-2f, -1.25f, 5f, 2.25f)) release(view)
         }
     }
 

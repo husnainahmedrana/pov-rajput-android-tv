@@ -408,7 +408,7 @@ class MainActivity : Activity() {
         StreamChoices.searcher = null
         PlayerShowInfo.details = null; PlayerShowInfo.tmdb = null
         rotationHandler.removeCallbacksAndMessages(null); featureHandler.removeCallbacksAndMessages(null)
-        worker.shutdownNow(); metadataWorker.shutdownNow(); imdbWorker.shutdownNow(); images.shutdownNow(); featureImages.shutdownNow(); authWorker.shutdownNow(); bitmapCache.evictAll()
+        worker.shutdownNow(); metadataWorker.shutdownNow(); imdbWorker.shutdownNow(); shelfWarmer.shutdownNow(); images.shutdownNow(); featureImages.shutdownNow(); authWorker.shutdownNow(); bitmapCache.evictAll()
         super.onDestroy()
     }
     @Deprecated("Android TV Back handling") override fun onBackPressed() {
@@ -524,9 +524,9 @@ class MainActivity : Activity() {
     /** Hold Back for one second: Settings, from whatever page is open. */
     private fun openSettingsAnywhere() {
         searchDialog?.dismiss()
-        retainHome()
-        destination = "settings"; backStack.clear(); current = { settings() }
-        settings(); refreshNavigation()
+        if (destination == "settings") return
+        // Opened like any other page: Back from Settings returns to the page and card where Back was held.
+        navigate { destination = "settings"; current = { settings() }; settings(); refreshNavigation() }
         if (flix) body.post { if (!focusController.first()) wantsContentFocus = true }
     }
     override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
@@ -658,9 +658,11 @@ class MainActivity : Activity() {
             Destination("series", getString(R.string.t_shows)) { catalogPage("series") }, Destination("anime", getString(R.string.t_anime)) { animePage() },
             Destination("library", getString(R.string.t_library)) { selectedCloud() }, Destination("search", getString(R.string.t_search)) { search() },
             Destination("wetrakr", wetrakr.name) { weTrakrPage() }, Destination("settings", getString(R.string.t_settings)) { settings() })
-        if (publicPreview || !InAppPlaybackSession.hasActive()) return pages
+        // TV: Search heads the menu, one press above Home, wherever the menu is opened.
+        val ordered = if (DeviceLayout.tv) pages.sortedBy { if (it.key == "search") 0 else 1 } else pages
+        if (publicPreview || !InAppPlaybackSession.hasActive()) return ordered
         val playing = Destination("nowplaying", getString(R.string.t_now_playing)) { returnToVideo() }
-        return if (DeviceLayout.tv) listOf(playing) + pages else pages + playing
+        return if (DeviceLayout.tv) listOf(playing) + ordered else ordered + playing
     }
 
     /** Status bar height on the phone (0 on TV), added to each page's top padding. */
@@ -978,6 +980,7 @@ class MainActivity : Activity() {
             }
             var topTenPending = flix && compact
             shelves.filter { it.title != TOP10_MOVIES && it.title != TOP10_SHOWS }.forEach { shelf ->
+                if (shelf.id.startsWith(LIKED_ROW)) { likedShelf(id, shelf.id); return@forEach }
                 if (shelf.items.isNotEmpty()) {
                     mediaRow(shelfTitle(shelf.title), shelf.items, seeAll = if (rowPageable(shelf.id)) ({ navigate { rowGrid(shelf) } }) else null)
                     // With Continue Watching on the first screen, the tall Top 10 shelves follow the first regular row.
@@ -1101,7 +1104,9 @@ class MainActivity : Activity() {
             HomeRow(ROW_FEATURED_MOVIES, getString(R.string.t_featured_movies)), HomeRow(ROW_FEATURED_SHOWS, getString(R.string.t_featured_shows)),
             HomeRow(ROW_POPULAR_MOVIES, getString(R.string.t_popular_movies)), HomeRow(ROW_POPULAR_SHOWS, getString(R.string.t_popular_shows)))
         val addons = catalogAddons.load().flatMap { addon -> addon.catalogs.map { HomeRow(CatalogAddons.rowId(addon, it), "${it.name} (${addon.name})") } }
-        return builtIn + addons
+        // Liked lists on Home (Trakt and the other trackers) can be moved and switched off like any other row.
+        val liked = if (likedOnHome()) likedRowsCache().map { HomeRow(it.id, "${it.title} (${it.trackerName})") } else emptyList()
+        return builtIn + addons + liked
     }
 
     private fun rowPageable(id: String) = id.isNotBlank() && id != ROW_CINEMAS
@@ -1276,7 +1281,9 @@ class MainActivity : Activity() {
     private fun homeLineup(movies: List<MediaItemData>, shows: List<MediaItemData>, rows: List<CatalogApi.HomeShelf?>): List<CatalogApi.HomeShelf> {
         val ranked = mapOf("movie" to movies.take(10).map { it.imdbId }.toSet(), "series" to shows.take(10).map { it.imdbId }.toSet())
         // Rows after Top 10 follow the viewer's order from Settings → Home rows, without the ones they switched off.
-        val others = homeRows.visible(rows.filterNotNull()) { it.id }.mapNotNull { row ->
+        val liked = if (flix && likedOnHome()) likedRowsCache().map { CatalogApi.HomeShelf(it.title, "liked", emptyList(), id = it.id) } else emptyList()
+        val others = homeRows.visible(rows.filterNotNull() + liked) { it.id }.mapNotNull { row ->
+            if (row.id.startsWith(LIKED_ROW)) return@mapNotNull row
             if (row.unavailable) return@mapNotNull row
             // An add-on row that came back with nothing playable stays, saying so, instead of silently vanishing.
             if (row.items.isEmpty() && row.id.startsWith("addon:")) return@mapNotNull row
@@ -1339,8 +1346,59 @@ class MainActivity : Activity() {
     }
 
     private fun homeLikedLists(id: Int) {
-        if (store.get("wetrakr.home_liked_opt_in") != "true") return
-        likedListSources().forEach { likedLists(id, true, it) }
+        if (!likedOnHome()) return
+        if (!flix) { likedListSources().forEach { likedLists(id, true, it) }; return }
+        // Lists already known have their place in the viewer's order (see homeLineup); new ones join at the end.
+        val known = likedRowsCache().map { it.id }.toSet()
+        likedListSources().forEach { tracker ->
+            read(id, { tracker.likedLists() }) { lists ->
+                saveLikedRows(tracker, lists)
+                val hidden = homeRows.hidden
+                lists.filter { (listId, _) -> likedRowId(tracker, listId).let { it !in known && it !in hidden } }.forEach { (listId, title) ->
+                    val slot = column().apply { tag = "liked-slot:${likedRowId(tracker, listId)}" }
+                    body.addView(slot, margin(-1, -2))
+                    fillLikedShelf(id, slot, tracker, listId, title)
+                }
+            }
+        }
+    }
+
+    private data class LikedRow(val id: String, val tracker: String, val trackerName: String, val listId: String, val title: String)
+    private fun likedOnHome() = !publicPreview && ::store.isInitialized && store.get("wetrakr.home_liked_opt_in") == "true"
+    private fun likedRowId(tracker: Tracker, listId: String) = "$LIKED_ROW${tracker.name.lowercase()}:$listId"
+
+    /** The liked lists Home showed last, so Settings → Home rows can order them and Home can place them before they load. */
+    private fun likedRowsCache(): List<LikedRow> = runCatching {
+        val array = org.json.JSONArray(store.get(LIKED_ROWS_KEY).ifBlank { "[]" })
+        (0 until array.length()).map { index -> array.getJSONObject(index).let {
+            LikedRow(it.getString("id"), it.getString("tracker"), it.optString("name"), it.getString("list"), it.getString("title")) } }
+    }.getOrDefault(emptyList())
+
+    private fun saveLikedRows(tracker: Tracker, lists: List<Pair<String, String>>) {
+        val key = tracker.name.lowercase()
+        val rows = likedRowsCache().filter { it.tracker != key } + lists.map { (listId, title) -> LikedRow(likedRowId(tracker, listId), key, tracker.name, listId, title) }
+        store.put(LIKED_ROWS_KEY, org.json.JSONArray(rows.map { row ->
+            org.json.JSONObject().put("id", row.id).put("tracker", row.tracker).put("name", row.trackerName).put("list", row.listId).put("title", row.title)
+        }).toString())
+    }
+
+    /** A known liked list in its place on Home: an empty slot now, its titles when they arrive. */
+    private fun likedShelf(id: Int, rowId: String) {
+        val row = likedRowsCache().firstOrNull { it.id == rowId } ?: return
+        val tracker = likedListSources().firstOrNull { it.name.lowercase() == row.tracker } ?: return
+        val slot = column().apply { tag = "liked-slot:$rowId" }
+        body.addView(slot, margin(-1, -2))
+        fillLikedShelf(id, slot, tracker, row.listId, row.title)
+    }
+
+    private fun fillLikedShelf(id: Int, slot: LinearLayout, tracker: Tracker, listId: String, title: String) {
+        // A liked list its owner made private or deleted answers 401/403 while the account is fine: drop that shelf.
+        read(id, { try { tracker.likedListPreview(listId) } catch (_: Exception) { null } }) { items ->
+            if (items == null) { body.removeView(slot); return@read }
+            mediaRow(title, items, slot) {
+                navigate { val pageId = page(title, getString(R.string.t_liked_list_wetrakr)); read(pageId, { tracker.likedListItems(listId) }) { mediaGrid(it) } }
+            }
+        }
     }
 
     private fun likedLists(id: Int, home: Boolean, wetrakr: Tracker = this.wetrakr) {
@@ -1558,14 +1616,22 @@ class MainActivity : Activity() {
         val ratingsLine = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; tag = "feature-ratings" }
         ratingsLine.addOnLayoutChangeListener { line, _, _, _, _, _, _, _, _ ->
             val group = line as ViewGroup
+            // Before the page is laid out the line has no width yet: judging then hid every badge for good (the
+            // Movies and Shows pages and details showed none). A badge hidden for room comes back once it fits.
+            if (group.width <= 0) return@addOnLayoutChangeListener
             (0 until group.childCount).map(group::getChildAt).forEach { badge ->
                 val fits = badge.right <= group.width && badge.width >= badge.measuredWidth
-                if (!fits && badge.visibility == View.VISIBLE) group.post { badge.visibility = View.INVISIBLE }
+                val wanted = if (fits) View.VISIBLE else View.INVISIBLE
+                if (badge.visibility != wanted) group.post { badge.visibility = wanted }
             }
         }
         // A fixed height, kept while empty, so badges arriving never push the synopsis down.
         metaRow.addView(ratingsLine, LinearLayout.LayoutParams(-1, dp(20)).apply { bottomMargin = dp(6) })
-        metaRow.addView(text("", 12, Color.WHITE, true).apply { tag = "feature-meta" }, LinearLayout.LayoutParams(-2, -2))
+        val metaText = text("", 12, Color.WHITE, true).apply { tag = "feature-meta"; maxLines = 1 }
+        // The shorter feature (Movies, Shows, Anime) has no room for a second line: year · genres · runtime follow
+        // the badges on theirs, and are left out whole when the badges fill it.
+        if (compact && showAction && DeviceLayout.tv) ratingsLine.addView(metaText, LinearLayout.LayoutParams(-2, -2))
+        else metaRow.addView(metaText, LinearLayout.LayoutParams(-2, -2))
         copy.addView(metaRow, margin(-1, -2, top = 10))
         copy.addView(text("", 13, 0xFFE6E6E6.toInt()).apply {
             tag = "feature-description"; setLineSpacing(dp(2).toFloat(), 1f)
@@ -1586,6 +1652,7 @@ class MainActivity : Activity() {
             fun shown() = frame.getTag(R.id.pov_feature_item) as? MediaItemData ?: item
             actions.addView(primaryButton(playLabel(item)) {
                 val current = shown()
+                animeFeatures[current.imdbId]?.let { title -> navigate { animeDetails(title) }; return@primaryButton }
                 val saved = savedFor(current)
                 when {
                     // Only Continue Watching reuses the saved link; Play always finds fresh links (and still resumes).
@@ -1594,10 +1661,10 @@ class MainActivity : Activity() {
                     else -> navigate { details(current) }
                 }
             }, margin(if (DeviceLayout.phone) 108 else 122, 38, right = if (DeviceLayout.phone) 8 else 12))
-            actions.addView(button(getString(R.string.t_more_info)) { val current = shown(); navigate { details(current) } }.apply { gravity = Gravity.CENTER; maxLines = 1; minWidth = dp(if (DeviceLayout.phone) 124 else 136) },
+            actions.addView(button(getString(R.string.t_more_info)) { val current = shown(); animeFeatures[current.imdbId]?.let { title -> navigate { animeDetails(title) } } ?: navigate { details(current) } }.apply { gravity = Gravity.CENTER; maxLines = 1; minWidth = dp(if (DeviceLayout.phone) 124 else 136) },
                 margin(-2, 38, right = if (DeviceLayout.phone) 8 else 12))
             // The phone has room for three buttons: there the tabs' filter takes My list's place.
-            if (extra == null || DeviceLayout.tv) actions.addView(button(getString(R.string.t_my_list)) {
+            if ((extra == null || DeviceLayout.tv) && !item.imdbId.startsWith(KITSU_ITEM)) actions.addView(button(getString(R.string.t_my_list)) {
                 val item = shown()
                 val tracker = weTrakrClient()
                 if (tracker.connected()) load(generation, { tracker.setWatchlist(PlaybackIdentity(item.imdbId, item.type, item.title), true) }) { toast(getString(R.string.t_added_to_your_x_watchlist, tracker.name)) }
@@ -1608,15 +1675,18 @@ class MainActivity : Activity() {
                     margin(-2, 38).apply { leftMargin = dp(if (DeviceLayout.phone) 8 else 12) })
             }
             if (DeviceLayout.phone) copy.addView(actions, margin(-1, 38, top = 14))
-            else frame.addView(actions, FrameLayout.LayoutParams(-2, dp(38), Gravity.BOTTOM or Gravity.START).apply { bottomMargin = dp(26) })
+            // The shorter feature (Movies, Shows, Anime) sets its buttons lower, so a two-line synopsis keeps clear of them.
+            else frame.addView(actions, FrameLayout.LayoutParams(-2, dp(38), Gravity.BOTTOM or Gravity.START).apply { bottomMargin = dp(if (compact) 10 else 26) })
         }
         // Details pages grow to fit the complete synopsis, as does the phone's Home feature.
         body.addView(frame, at, margin(-1, if (showAction && DeviceLayout.tv) height else -2).apply { if (!showAction || DeviceLayout.phone) bottomMargin = dp(14) })
         renderFeature(frame, item)
         if (!showAction) {
+            // Details: the chips (with their own live IMDb score and votes), then the MDBList badges beneath them.
             val meta = frame.findViewWithTag<View>("feature-meta-row")
-            meta.visibility = View.GONE
+            frame.findViewWithTag<View>("feature-meta").visibility = View.GONE
             copy.addView(metaChips(item), copy.indexOfChild(meta), margin(-1, -2, top = 12))
+            frame.findViewWithTag<LinearLayout>("feature-ratings")?.let { line -> line.setTag(R.id.pov_details_ratings, true); heroRatings(line, item) }
         }
         if (showAction && rotation.size > 1) rotateFeature(frame, rotation)
         frame.post { if (body.findViewWithTag<View>("featured-hero") === frame) refreshHeroTrailer() }
@@ -1878,9 +1948,14 @@ class MainActivity : Activity() {
     }
     private fun scheduleHeroTrailer(item: MediaItemData) {
         if (!trailerPermitted()) { heroTrailer?.stop(); return }
-        if (heroTrailer == null) heroTrailer = HeroTrailerPreview(this, heroBackdrop, worker, trailerCatalog::videos, ::trailerArea, ::trailerPermitted, bg, ::heroTrailerSoundEnabled, ::onHeroTrailerPlaying, ::heroTrailerFillEnabled, ::heroTrailerHighQuality)
+        if (heroTrailer == null) heroTrailer = HeroTrailerPreview(this, heroBackdrop, worker, ::heroTrailerVideos, ::trailerArea, ::trailerPermitted, bg, ::heroTrailerSoundEnabled, ::onHeroTrailerPlaying, ::heroTrailerFillEnabled, ::heroTrailerHighQuality)
         heroTrailer?.select(item)
     }
+
+    /** Hero trailers: Cinemeta's for films and shows, Kitsu's own for anime (which has no IMDb id there). */
+    private fun heroTrailerVideos(item: MediaItemData): List<String> =
+        if (item.imdbId.startsWith(KITSU_ITEM)) listOfNotNull(animeFeatures[item.imdbId]?.youtubeId?.takeIf { it.isNotBlank() })
+        else trailerCatalog.videos(item)
 
     private fun showFeature(item: MediaItemData) {
         scheduleHeroTrailer(item)
@@ -1928,6 +2003,7 @@ class MainActivity : Activity() {
             return true
         }
         val row = strip.getChildAt(0) as? ViewGroup ?: return false
+        warmShelf(row)
         var card = view
         while (card.parent !== row) card = card.parent as? View ?: return false
         // Rows read left to right from the focused title.
@@ -1976,6 +2052,20 @@ class MainActivity : Activity() {
             for (next in listOf(index + 1, index + 2, index - 1)) (row.getChildAt(next)?.getTag(R.id.pov_tile_item) as? MediaItemData)?.let { neighbour ->
                 prefetch(thumbnail(backdropFor(neighbour), wide = true)); logoFor(neighbour).takeIf { it.isNotBlank() }?.let { prefetch(it) }
             }
+        } else if (flix && isHome && DeviceLayout.tv && ThemeSpec.posterSize.isNotEmpty()) {
+            // Small, Medium and Large posters loop endlessly too: the same unseen move of the titles long scrolled
+            // off the left to after See all, then the usual glide to the focused poster.
+            var index = row.indexOfChild(card)
+            val ahead = row.childCount - 1 - index
+            val moved = if (ahead < SHELF_LOOP_AHEAD) minOf(SHELF_LOOP_AHEAD - ahead, index - 1).coerceAtLeast(0) else 0
+            if (moved > 0) {
+                val shift = (0 until moved).sumOf { shelfSlot(row.getChildAt(it)) }
+                repeat(moved) { val first = row.getChildAt(0); row.removeViewAt(0); row.addView(first) }
+                index -= moved
+                rowGlides.remove(strip)?.cancel()
+                strip.scrollTo((strip.scrollX - shift).coerceAtLeast(0), 0)
+            }
+            glideRow(strip, (0 until index).sumOf { shelfSlot(row.getChildAt(it)) })
         } else glideRow(strip, (card.left - row.paddingLeft).coerceAtLeast(0))
         val parent = strip.parent as ViewGroup
         val header = parent.getChildAt(parent.indexOfChild(strip) - 1)?.takeIf { it !is HorizontalScrollView }
@@ -2008,6 +2098,25 @@ class MainActivity : Activity() {
     private var homeScroll: ValueAnimator? = null
     private val rowGlides = java.util.WeakHashMap<HorizontalScrollView, ValueAnimator>()
     private val shelfSlides = java.util.WeakHashMap<ViewGroup, ValueAnimator>()
+    /** Shelves whose posters were already fetched to disk this session. */
+    private val warmedShelves = java.util.WeakHashMap<ViewGroup, Boolean>()
+    private val shelfWarmer = java.util.concurrent.Executors.newFixedThreadPool(3, backgroundThreads)
+
+    /**
+     * The first time a shelf takes focus, every poster on it is downloaded into the image disk cache in the background
+     * (files only, nothing decoded, so memory stays low). A held ▶ then finds each poster a disk read away instead of
+     * a download, even from a slow poster service.
+     */
+    private fun warmShelf(row: ViewGroup) {
+        if (publicPreview || warmedShelves.put(row, true) != null) return
+        fun addresses(view: View): List<String> = when (view) {
+            is ImageView -> listOfNotNull((view.tag as? String)?.takeIf { it.startsWith("https://") })
+            is ViewGroup -> (0 until view.childCount).flatMap { addresses(view.getChildAt(it)) }
+            else -> emptyList()
+        }
+        val all = (0 until row.childCount).flatMap { addresses(row.getChildAt(it)) }.distinct()
+        all.forEach { address -> shelfWarmer.execute { runCatching { ArtworkClient.bytes(address) } } }
+    }
     /** ◀/▶ is being held (key repeats): shelves move at an even pace, each step flowing into the next. */
     private var sideHeld = false
     private fun shelfMotion(): Pair<Long, android.animation.TimeInterpolator> =
@@ -2489,8 +2598,22 @@ class MainActivity : Activity() {
     private fun animePage(type: String = "series", query: String = "", skip: Int = 0) {
         current = { animePage(type, query, skip) }
         destination = "anime"; refreshNavigation()
-        val id = page(if (query.isBlank()) getString(R.string.t_anime) else getString(R.string.t_anime_x, query), getString(R.string.t_discover_anime_series_films_and_new))
-        if (DeviceLayout.phone) {
+        // Streaming layout: like Movies and Shows, a pinned feature shows the focused title's synopsis, backdrop,
+        // Kitsu score and trailer; the tabs and Search move into its filter button.
+        val withFeature = flix && query.isBlank() && !publicPreview
+        val tabNames = listOf("series" to getString(R.string.t_series_seasons), "movie" to getString(R.string.t_anime_movies), "special" to getString(R.string.t_specials_ovas))
+        val id = if (withFeature) page("").also { featurePage = true; body.setPadding(0, 0, 0, contentBottomPadding()) }
+            else page(if (query.isBlank()) getString(R.string.t_anime) else getString(R.string.t_anime_x, query), getString(R.string.t_discover_anime_series_films_and_new))
+        fun animeFilters() {
+            val options = tabNames.map { (key, title) -> (if (key == type) "●  $title" else title) to { if (key != type) animePage(key) } } +
+                listOf(getString(R.string.t_search_anime) to { searchAnime(type) }) +
+                (if (skip > 0) listOf(getString(R.string.t_previous_page) to { animePage(type, query, (skip - 20).coerceAtLeast(0)) }) else emptyList())
+            AlertDialog.Builder(this).setTitle(getString(R.string.t_anime))
+                .setItems(options.map { it.first }.toTypedArray()) { _, index -> options[index].second() }
+                .setNegativeButton(getString(R.string.t_cancel), null).show()
+        }
+        if (withFeature) Unit
+        else if (DeviceLayout.phone) {
             // Phone: search first, then three short tabs that fit the width, so nothing hides off-screen.
             body.addView(button(getString(R.string.t_search_anime)) { searchAnime(type) }, margin(-1, 42, bottom = 10))
             phoneTabs(listOf("series" to getString(R.string.t_series), "movie" to getString(R.string.t_movies), "special" to getString(R.string.t_specials)).map { (key, title) ->
@@ -2512,10 +2635,19 @@ class MainActivity : Activity() {
             // Flix columns stretch to the full content width, as the Movies and Shows grids do.
             val tileWidth = if (flix) (width - 6 - (count - 1) * theme.layout.cardGapDp) / count else cardWidth()
             val tileHeight = if (flix) (if (posters) tileWidth * 3 / 2 else tileWidth * 9 / 16) else theme.layout.cardHeightDp
+            fun media(title: AnimeTitle) = MediaItemData("$KITSU_ITEM${title.kitsuId}", title.type, title.title, title.year, title.poster, title.background, title.description, title.genres)
+                .also { animeFeatures[it.imdbId] = title }
+            if (withFeature && result.items.isEmpty()) body.addView(button("${tabNames.firstOrNull { it.first == type }?.second.orEmpty()}  ▾") { animeFilters() }, margin(-2, 40, top = 60))
+            if (withFeature && result.items.isNotEmpty() && featureHero() == null) {
+                val first = media(result.items.first())
+                streamingHero(first, true, if (DeviceLayout.phone) result.items.take(10).map(::media) else emptyList(), compact = true, at = 0,
+                    extra = "${tabNames.firstOrNull { it.first == type }?.second.orEmpty()}  ▾" to { animeFilters() })
+                featureShown = first
+            }
             result.items.chunked(count).forEach { group ->
                 val row = LinearLayout(this).apply { tag = "media-grid-row" }; body.addView(row, margin(-1, -2, top = 14))
                 group.forEach { title ->
-                    val media = MediaItemData("", title.type, title.title, title.year, title.poster, title.background, title.description, title.genres)
+                    val media = media(title)
                     row.addView(tile(media, caption = animeFormat(title)) { navigate { animeDetails(title) } }.apply { tag = "anime:${title.kitsuId}" }, margin(tileWidth, tileHeight, right = theme.layout.cardGapDp))
                 }
             }
@@ -2765,6 +2897,8 @@ class MainActivity : Activity() {
 
     /** What the search page's grid showed for each category this session, so moving through the list is instant. */
     private val searchBrowseCache = HashMap<String, List<MediaItemData>>()
+    /** Anime shown as features ("kitsu:<id>" → its Kitsu title): trailer, score and where Play / More info go. */
+    private val animeFeatures = HashMap<String, AnimeTitle>()
 
     /**
      * TV search page: a round mic and a wide field along the top, recent searches as chips beneath, a list of
@@ -2819,7 +2953,9 @@ class MainActivity : Activity() {
         body.addView(chipsHost, margin(-1, -2, top = 12))
 
         // Categories on the left, the grid on the right, each scrolling on its own under the fixed top.
-        val split = LinearLayout(this).apply { clipChildren = false }
+        // Clipping stays on here: a parent's clipChildren also decides whether each child clips its own content, so
+        // switching it off let the scrolled category list draw over the top bar and chips.
+        val split = LinearLayout(this)
         // Both columns clip to their own area: scrolled away, the list and grid slide under the top bar, never over it.
         val listScroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; isFocusable = false }
         val list = column().apply { setPadding(0, dp(4), dp(6), dp(40)) }
@@ -3227,7 +3363,7 @@ class MainActivity : Activity() {
         const val METADATA_ON = "metadata.source.on"
         const val IMDB_YELLOW = 0xFFF5C518.toInt()
         /** One Home shelf step up or down. */
-        const val HOME_ROW_SCROLL_MS = 200L; const val ROW_GLIDE_MS = 320L; const val ROW_FLOW_MS = 170L; const val EXPAND_ANIMATED = true; const val SHELF_LOOP_AHEAD = 6; const val SEARCH_LIST_DP = 210
+        const val HOME_ROW_SCROLL_MS = 200L; const val ROW_GLIDE_MS = 320L; const val ROW_FLOW_MS = 170L; const val EXPAND_ANIMATED = true; const val SHELF_LOOP_AHEAD = 6; const val KITSU_ITEM = "kitsu:"; const val RATING_BADGE = "rating-badge"; const val LIKED_ROW = "liked:"; const val LIKED_ROWS_KEY = "home_rows.liked_lists"; const val SEARCH_LIST_DP = 210
         const val CAST_CARD_WIDTH = 132; const val CAST_PHOTO = 112
         /** Room kept for the cast row while it loads, so the details don't move when it arrives. */
         const val CAST_ROW_HEIGHT = 250
@@ -9389,10 +9525,23 @@ class MainActivity : Activity() {
      */
     private fun heroRatings(container: LinearLayout, item: MediaItemData) {
         container.setTag(R.id.pov_tile_item, item.imdbId)
-        fun render(ratings: List<dev.pov.tv.data.MdbListRatings.Rating>) {
-            container.removeAllViews()
-            ratings.forEach { container.addView(ratingBadge(it), LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(10) }) }
-            container.visibility = if (ratings.isEmpty()) View.INVISIBLE else View.VISIBLE
+        animeFeatures[item.imdbId]?.let { title ->
+            clearBadges(container)
+            title.score.toDoubleOrNull()?.let { container.addView(ratingBadge(dev.pov.tv.data.MdbListRatings.Rating("kitsu", it)), 0, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(10) }) }
+            container.visibility = if (container.childCount > 0) View.VISIBLE else View.INVISIBLE
+            return
+        }
+        // On a details page the chips already show IMDb (with votes): only MDBList's other scores, and no empty line.
+        val details = container.getTag(R.id.pov_details_ratings) == true
+        // With a key the line keeps its room while loading (nothing below jumps); without one, details have no line.
+        val hasKey = !publicPreview && ::store.isInitialized && store.get(dev.pov.tv.data.MdbListRatings.KEY).isNotBlank()
+        fun render(all: List<dev.pov.tv.data.MdbListRatings.Rating>) {
+            val ratings = if (details) all.filter { it.source != "imdb" } else all
+            clearBadges(container)
+            ratings.forEachIndexed { index, rating -> container.addView(ratingBadge(rating), index, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(10) }) }
+            val other = container.childCount > ratings.size
+            container.visibility = if (ratings.isNotEmpty() || other) View.VISIBLE else if (details && !hasKey) View.GONE else View.INVISIBLE
+            if (details) (container.parent as? View)?.visibility = container.visibility
         }
         fun imdbOnly() = ((imdbTitleScores.get(item.imdbId).fresh()?.rating) ?: item.rating.trim().toDoubleOrNull())
             ?.takeIf { it > 0 }?.let { listOf(dev.pov.tv.data.MdbListRatings.Rating("imdb", it)) }.orEmpty()
@@ -9416,6 +9565,7 @@ class MainActivity : Activity() {
             return
         }
         render(imdbOnly())
+        if (details) return
         if (known && imdbTitleScores.get(item.imdbId).fresh() == null) container.postDelayed({
             if (!still()) return@postDelayed
             imdbWorker.execute {
@@ -9429,9 +9579,14 @@ class MainActivity : Activity() {
         }, 400)
     }
 
+    /** Removes the rating badges from [line], keeping anything else on it (the short feature's year · genres). */
+    private fun clearBadges(line: LinearLayout) {
+        (0 until line.childCount).map(line::getChildAt).filter { it.tag == RATING_BADGE }.forEach(line::removeView)
+    }
+
     /** One rating as its source's badge and the score: IMDb 8.1 · TMDB 78% · trakt 82% · ●●● 3.9 · 🍅 91% · 🍿 85% · MC 74. */
     private fun ratingBadge(rating: dev.pov.tv.data.MdbListRatings.Rating): View {
-        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; tag = RATING_BADGE }
         val value = rating.value
         val one = String.format(java.util.Locale.ENGLISH, "%.1f", value)
         val percent = "${value.roundToInt()}%"
@@ -9458,6 +9613,7 @@ class MainActivity : Activity() {
                 score(one)
             }
             "tomatoes" -> { name = "Rotten Tomatoes"; row.addView(text("🍅", 12, Color.WHITE).apply { includeFontPadding = false }); score(percent) }
+            "kitsu" -> { name = "Kitsu"; row.addView(label("Kitsu", 0xFFF75239.toInt(), Color.WHITE)); score(percent) }
             "popcorn" -> { name = "Rotten Tomatoes audience"; row.addView(text("🍿", 12, Color.WHITE).apply { includeFontPadding = false }); score(percent) }
             else -> {
                 name = "Metacritic"

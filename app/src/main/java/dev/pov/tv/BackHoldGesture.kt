@@ -38,7 +38,7 @@ internal class BackHoldGesture(private val completed: () -> Unit) {
     }
 
     companion object {
-        const val HOLD_MS = 1_000L
+        const val HOLD_MS = 600L
         /** Set by the player so the browser opens Settings as soon as it returns. */
         @Volatile var settingsRequested = false
     }

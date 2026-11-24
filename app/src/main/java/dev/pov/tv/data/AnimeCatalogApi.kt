@@ -22,7 +22,11 @@ data class AnimeTitle(
     internal val traktId: String = "",
     internal val tvdbId: String = "",
     val startDate: String = "",
-    val relationRole: String = ""
+    val relationRole: String = "",
+    /** Kitsu's trailer (a YouTube video id), for the Anime page's feature. */
+    val youtubeId: String = "",
+    /** Kitsu's community score, 0-100 ("82.34"). */
+    val score: String = ""
 ) {
     /** Discovery format is separate from the movie/series identity required for playback. */
     val category: String get() = when (subtype.lowercase(Locale.ROOT)) {
@@ -327,7 +331,9 @@ class AnimeCatalogApi internal constructor(
             image(attributes.optJSONObject("posterImage")), image(attributes.optJSONObject("coverImage"), COVER_SIZES),
             kitsuSynopsis(attributes.string("description").ifBlank { attributes.string("synopsis") }).take(12_000), subtype,
             listOf("Anime") + genres, uniqueId("trakt"), tvdb,
-            startDate = attributes.string("startDate").takeIf { it.matches(Regex("[12][0-9]{3}-[0-9]{2}-[0-9]{2}")) }.orEmpty()
+            startDate = attributes.string("startDate").takeIf { it.matches(Regex("[12][0-9]{3}-[0-9]{2}-[0-9]{2}")) }.orEmpty(),
+            youtubeId = attributes.string("youtubeVideoId").takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }.orEmpty(),
+            score = attributes.string("averageRating").takeIf { it.toDoubleOrNull()?.let { value -> value in 1.0..100.0 } == true }.orEmpty()
         )
     }
 
