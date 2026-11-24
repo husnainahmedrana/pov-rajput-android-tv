@@ -1850,7 +1850,7 @@
     <string name="t_status_connecting_x">Connecting to %1$s</string>
     <string name="t_status_opening_release_x">Opening the release on %1$s</string>
     <string name="t_status_checking_release">Checking the release is complete</string>
-    <string name="t_status_first_data">Downloading the start of the video</string>
+    <string name="t_status_first_data">Getting ready to play</string>
     <string name="t_status_buffering">Buffering</string>
     <string name="t_status_video_server">the video server</string>
     <string name="t_play_videos_with">Play videos with</string>

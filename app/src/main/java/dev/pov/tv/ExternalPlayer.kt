@@ -102,7 +102,11 @@ internal object ExternalPlayer {
         val name = mediaName.substringBefore(" · ").lineSequence().first().trim().ifBlank { title }
         finishTracking(activity)
         val served = serve(activity, store, routed.url, routed.headers, name)
-        tracked = ExternalProgress(activity.applicationContext, served, key, title, identity, runtimeMs)
+        // Only Kodi's reading pause means it stopped (and its remote control confirms it). Other players (Vimu, VLC, MX,
+        // Just Player) read far ahead and pause reading whenever their buffer is full; taking that as a stop marked
+        // episodes watched and pulled Nabrio to the front mid-episode. They report where they stopped when they close.
+        tracked = ExternalProgress(activity.applicationContext, served, key, title, identity, runtimeMs,
+            readPauseMeansStop = chosen == KodiResume.PACKAGE)
         val view = Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(served.address), LocalStreamServer.contentType(LocalStreamServer.safeName(name)))
             .putExtra("title", title).putExtra(Intent.EXTRA_TITLE, title)
             .putExtra("return_result", true).putExtra("from_start", resumeMs <= 0)
@@ -274,6 +278,8 @@ internal class ExternalProgress(
     private val title: String,
     private val identity: PlaybackIdentity?,
     private val runtimeMs: Long?,
+    /** True only for players whose reading pause means they stopped (Kodi); others pause reading when their buffer is full. */
+    private val readPauseMeansStop: Boolean = false,
 ) {
     private val store = SecureStore(context)
     private val history = PlaybackStore(context)
@@ -311,6 +317,8 @@ internal class ExternalProgress(
             return false
         }
         if (idleSince == 0L) idleSince = now
+        // A full buffer, not a stop: wait for the player to close and say where it stopped.
+        if (!readPauseMeansStop) return false
         if (playing && now - idleSince >= STOPPED_MS) {
             playing = false
             worker.execute { val at = position(); save(at); scrobble("stop", percent(at) ?: 0.0) }
@@ -331,7 +339,12 @@ internal class ExternalProgress(
             if (duration == null) duration = server.durationMs() ?: runtimeMs
             val at = position ?: position()
             save(at)
-            if (wasPlaying) scrobble("stop", percent(at) ?: 0.0)
+            // Without a position from the player, the only guess is how far it read ahead (near the end with a big
+            // buffer): pause there for the trackers, never a stop that could mark it watched.
+            if (wasPlaying) {
+                if (position != null || readPauseMeansStop) scrobble("stop", percent(at) ?: 0.0)
+                else scrobble("pause", minOf(percent(at) ?: 0.0, 79.0))
+            }
         }
         worker.shutdown()
     }

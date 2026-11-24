@@ -89,7 +89,9 @@ data class SourceSortOrder(val qualityDescending: Boolean = true, val sizeAscend
                            /** The Preferred row (Link sorting): lower ranks first; null when the row is off or has no rules. */
                            val preferredRank: ((SourceItem) -> Int)? = null,
                            /** The Source row: where a link comes from (TorBox, Easynews, Usenet…), lower first; null when off (the default). */
-                           val sourceRank: ((SourceItem) -> Int)? = null) {
+                           val sourceRank: ((SourceItem) -> Int)? = null,
+                           /** The Grabs row: Usenet links downloaded most often first (likely complete); off by default. */
+                           val mostGrabsFirst: Boolean = false) {
     fun sorted(sources: List<SourceItem>, languageRank: ((SourceItem) -> Int)? = null): List<SourceItem> = sources.sortedWith { left, right ->
         var result = 0
         for (key in priority) {
@@ -103,6 +105,8 @@ data class SourceSortOrder(val qualityDescending: Boolean = true, val sizeAscend
                 SIZE -> compareKnown(left.sizeBytes?.takeIf { it > 0 }, right.sizeBytes?.takeIf { it > 0 }, sizeAscending)
                 // Fewer days since posting first; links without an age (debrid, add-ons that don't say) after them.
                 AGE -> if (!newestFirst) 0 else compareKnown(left.ageDays, right.ageDays, ascending = true)
+                // Most grabs first; links without a count (debrid, Easynews, add-ons) after them.
+                GRABS -> if (!mostGrabsFirst) 0 else compareKnown(left.grabs, right.grabs, ascending = false)
                 else -> 0
             }
             if (result != 0) break
@@ -112,8 +116,8 @@ data class SourceSortOrder(val qualityDescending: Boolean = true, val sizeAscend
 
     companion object {
         const val LIBRARY = "library"; const val LANGUAGE = "language"; const val QUALITY = "quality"; const val SIZE = "size"; const val PREFERRED = "preferred"
-        const val AGE = "age"; const val SOURCE = "source"
-        val DEFAULT_PRIORITY = listOf(LIBRARY, LANGUAGE, QUALITY, SOURCE, PREFERRED, AGE, SIZE)
+        const val AGE = "age"; const val SOURCE = "source"; const val GRABS = "grabs"
+        val DEFAULT_PRIORITY = listOf(LIBRARY, LANGUAGE, QUALITY, SOURCE, PREFERRED, AGE, GRABS, SIZE)
         /**
          * A saved order, repaired: each key once, unknown keys dropped, missing ones added at the end. Library joined
          * the order later; library links always came first before, so an order saved without it gets it on top.
@@ -127,6 +131,8 @@ data class SourceSortOrder(val qualityDescending: Boolean = true, val sizeAscend
                 .let { if (AGE !in it && SIZE in it) it.toMutableList().apply { add(indexOf(SIZE), AGE) } else it }
                 // Source joined later still: just after quality (off until the viewer switches it on).
                 .let { if (SOURCE !in it && QUALITY in it) it.toMutableList().apply { add(indexOf(QUALITY) + 1, SOURCE) } else it }
+                // Grabs joined later still: just before file size, after age (off until the viewer switches it on).
+                .let { if (GRABS !in it && SIZE in it) it.toMutableList().apply { add(indexOf(SIZE), GRABS) } else it }
             return keys + DEFAULT_PRIORITY.filterNot { it in keys }
         }
     }

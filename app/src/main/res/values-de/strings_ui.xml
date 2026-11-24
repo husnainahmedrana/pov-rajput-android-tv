@@ -1850,7 +1850,7 @@
     <string name="t_status_connecting_x">Verbindung zu %1$s</string>
     <string name="t_status_opening_release_x">Release wird auf %1$s geöffnet</string>
     <string name="t_status_checking_release">Release wird auf Vollständigkeit geprüft</string>
-    <string name="t_status_first_data">Anfang des Videos wird geladen</string>
+    <string name="t_status_first_data">Wiedergabe wird vorbereitet</string>
     <string name="t_status_buffering">Puffern</string>
     <string name="t_status_video_server">dem Videoserver</string>
     <string name="t_play_videos_with">Videos abspielen mit</string>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Link sorting: the Grabs row. -->
+<resources>
+    <string name="gs_grabs">Download</string>
+    <string name="gs_most_first">Più prima</string>
+    <string name="gs_most_grabbed_first">Più scaricati prima</string>
+    <string name="gs_hint">Link Usenet: più download di solito vuol dire una release completa</string>
+</resources>

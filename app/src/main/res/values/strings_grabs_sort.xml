@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Link sorting: the Grabs row. -->
+<resources>
+    <string name="gs_grabs">Grabs</string>
+    <string name="gs_most_first">Most first</string>
+    <string name="gs_most_grabbed_first">Most grabbed first</string>
+    <string name="gs_hint">Usenet links: more grabs usually means a complete release</string>
+</resources>

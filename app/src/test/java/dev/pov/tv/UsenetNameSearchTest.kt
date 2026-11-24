@@ -52,6 +52,30 @@ class UsenetNameSearchTest {
         assertFalse(first[0], "offset=" in first[0])
     }
 
+    @Test fun `Usenet links show how often they were grabbed`() {
+        assertEquals("212", SourceBadges.grabsLabel(212))
+        assertEquals("1K", SourceBadges.grabsLabel(1_000))
+        assertEquals("1.2K", SourceBadges.grabsLabel(1_204))
+        assertEquals("15K", SourceBadges.grabsLabel(15_380))
+        val withGrabs = rss.replace("""<newznab:attr name="size" value="6800000000"/>""", """<newznab:attr name="size" value="6800000000"/><newznab:attr name="grabs" value="212"/>""")
+        val found = Newznab({ _, _ -> withGrabs }) { 0L }.searchText(indexer, "ufc 310", null, "a")
+        assertEquals(212, found[0].grabs)
+        val labels = SourceBadges.forRow(found[0], null, null, emptyList()).map { it.label }
+        assertTrue(labels.toString(), "212 GRABS" in labels)
+    }
+
+    @Test fun `the Grabs row sorts most grabbed first only when switched on`() {
+        fun link(name: String, grabs: Int?) = dev.pov.tv.data.SourceItem(title = name, provider = "x", directUrl = "https://x/$name",
+            sizeBytes = 5_000_000_000, qualityHeight = 1080, grabs = grabs)
+        val links = listOf(link("few", 3), link("none", null), link("many", 900))
+        val on = dev.pov.tv.data.SourceSortOrder(mostGrabsFirst = true).sorted(links).map { it.title }
+        assertEquals(listOf("many", "few", "none"), on)
+        val off = dev.pov.tv.data.SourceSortOrder().sorted(links).map { it.title }
+        assertEquals(listOf("few", "none", "many"), off)
+        assertTrue(dev.pov.tv.data.SourceSortOrder.GRABS in dev.pov.tv.data.SourceSortOrder.priority("library,language,quality,source,preferred,age,size"))
+        assertFalse(dev.pov.tv.data.SourceSortOrder().mostGrabsFirst)
+    }
+
     @Test fun `an empty name asks nothing`() {
         val asked = ArrayList<String>()
         assertTrue(Newznab({ address, _ -> asked += address; rss }) { 0L }.searchText(indexer, "   ", null, "a").isEmpty())

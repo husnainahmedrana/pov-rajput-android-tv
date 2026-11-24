@@ -38,6 +38,6 @@ class SourceOriginsTest {
     @Test fun `Source is off by default and sits after quality`() {
         val links = listOf(offcloud.copy(sizeBytes = 2), torbox.copy(sizeBytes = 1))
         assertEquals(listOf("offcloud", "torbox"), SourceSortOrder().sorted(links).map { it.title })   // size decides, not source
-        assertEquals(listOf("library", "language", "quality", "source", "preferred", "age", "size"), SourceSortOrder.DEFAULT_PRIORITY)
+        assertEquals(listOf("library", "language", "quality", "source", "preferred", "age", "grabs", "size"), SourceSortOrder.DEFAULT_PRIORITY)
     }
 }

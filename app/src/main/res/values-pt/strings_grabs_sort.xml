@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Link sorting: the Grabs row. -->
+<resources>
+    <string name="gs_grabs">Transferências</string>
+    <string name="gs_most_first">Mais primeiro</string>
+    <string name="gs_most_grabbed_first">Mais transferidos primeiro</string>
+    <string name="gs_hint">Links Usenet: mais transferências costuma indicar uma versão completa</string>
+</resources>

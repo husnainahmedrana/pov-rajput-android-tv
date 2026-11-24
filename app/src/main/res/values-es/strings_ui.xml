@@ -1850,7 +1850,7 @@
     <string name="t_status_connecting_x">Conectando con %1$s</string>
     <string name="t_status_opening_release_x">Abriendo la publicación en %1$s</string>
     <string name="t_status_checking_release">Comprobando que la publicación esté completa</string>
-    <string name="t_status_first_data">Descargando el inicio del vídeo</string>
+    <string name="t_status_first_data">Preparando la reproducción</string>
     <string name="t_status_buffering">Cargando</string>
     <string name="t_status_video_server">el servidor de vídeo</string>
     <string name="t_play_videos_with">Reproducir vídeos con</string>

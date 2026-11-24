@@ -128,15 +128,16 @@ class ThemePreferences(context: Context) {
 
     /**
      * Card shape: "" for the usual wide backdrops, or a poster size ("small", "medium", "large", "expanded").
-     * Nothing chosen yet means Expanded focus (the default since 0.4.14); wide cards are saved as "wide".
+     * Nothing chosen yet means Large posters (the default from 0.4.16; 0.4.14-0.4.15 defaulted to Expanded focus, and
+     * anyone who picked Expanded keeps it); wide cards are saved as "wide".
      */
     var posterSize: String
         get() = when (val saved = preferences.getString(CARDS_KEY, null)) {
-            null -> "expanded"
+            null -> DEFAULT_CARDS
             WIDE -> ""
-            else -> saved.takeIf { it in ThemeSpec.POSTER_SIZES } ?: "expanded"
+            else -> saved.takeIf { it in ThemeSpec.POSTER_SIZES } ?: DEFAULT_CARDS
         }
         set(value) { preferences.edit().putString(CARDS_KEY, if (value in ThemeSpec.POSTER_SIZES) value else WIDE).apply() }
 
-    private companion object { const val KEY = "theme"; const val CARDS_KEY = "cards.posters"; const val WIDE = "wide" }
+    private companion object { const val KEY = "theme"; const val CARDS_KEY = "cards.posters"; const val WIDE = "wide"; const val DEFAULT_CARDS = "large" }
 }

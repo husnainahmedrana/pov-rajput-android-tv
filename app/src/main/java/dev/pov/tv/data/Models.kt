@@ -86,6 +86,8 @@ data class SourceItem(
     val scraper: String? = null,
     /** Usenet: days since the release was posted (newer posts are less likely to miss articles); null when unknown. */
     val ageDays: Long? = null,
+    /** Usenet: how many times the indexer's users downloaded this NZB, when the indexer says (a sign it's complete). */
+    val grabs: Int? = null,
     /** The add-on (SourceProvider id) the link came from; empty for the app's own Usenet and Easynews search. */
     val providerId: String = "",
     /**

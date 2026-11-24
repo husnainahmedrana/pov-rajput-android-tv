@@ -1,19 +1,24 @@
-# Nabrio 0.4.15
+# Nabrio 0.4.16
 
-**The Anime tab gets a feature with trailers, your liked lists can be reordered on Home, Search is one press away, and holding Back for Settings is faster and brings you back where you were.**
+**Search Usenet by name for things no catalog lists, like sports events, see how often a Usenet release was grabbed, and external players no longer mark episodes watched when their buffer fills.**
 
 ## New
 
-- **Anime feature:** the Anime tab now has a feature at the top like Movies and Shows: backdrop, synopsis, the Kitsu score and the trailer when Kitsu has one. Series, Movies, Specials and Search are in its ▾ button, and Play or More Info open the anime's page.
-- **Reorder liked lists:** your liked lists (Trakt and the other trackers) now appear in Settings → Home → Home rows, where you can move them up or down or switch them off like any other row. A list you like later joins the end of Home until you move it.
-- **Ratings on title pages:** with an MDBList key, a title's page shows the TMDB, Trakt, Letterboxd and Rotten Tomatoes ratings under its details, next to the IMDb score.
-- **Search first in the menu (TV):** Search is now the top entry of the menu, one press above Home.
+- **Usenet search by name:** the Search page has two chips next to the field, **Titles** (your catalogs, as before) and **Usenet**. Pick Usenet, type a name such as "ufc 310" and press OK: the name goes to all your indexers at once, plus Easynews when it's connected. It's made for things your catalogs don't list, like sports events, concerts and specials. On phones, the search screen has a Usenet button.
+  - Filter by **All, Movies, TV or Sports**. All searches every category your indexer account allows.
+  - The results use the usual link list, badges and sorting, and the same release from several indexers is shown once.
+  - **More results** at the bottom fetches the next page, only from the indexers that had more, so a search costs one API hit per indexer until you ask for more.
+  - These links have no catalog title, so nothing is sent to Trakt, Simkl or WeTrakr and they aren't kept in Continue Watching.
+- **Grabs badge:** Usenet links from your indexers show how many times they were grabbed, such as **212 GRABS** or **1.2K GRABS**. More grabs usually means a complete release.
+- **Sort by grabs:** Settings → Playback → Links & sorting has a new **Grabs** row (off by default). Switched on, the most grabbed Usenet links come first.
+
+## Changed
+
+- **Large posters are the default card shape** for anyone who hasn't picked one. If you chose a card shape yourself, it stays.
+- **Loading card:** "Downloading the start of the video" now reads **"Getting ready to play"**.
 
 ## Fixed
 
-- **Hold Back for Settings:** it opens faster (0.6 seconds instead of 1), and pressing Back in Settings returns to the exact page and title you were on, including a title's page or its list of links.
-- **Endless rows for every poster size:** Small, Medium and Large poster rows (and Top 10) also carry on from their first title after See all, instead of jumping back to the start.
-- **No more blank posters while scrolling:** the first time you reach a row, all its posters are fetched in the background, so holding ▶ along a row you haven't opened before no longer shows empty cards.
-- **Feature text and buttons:** on Movies, Shows, Anime and Home with Continue Watching, the synopsis no longer runs into the Play / More Info buttons; the year and genres sit on the ratings line.
-- **Ratings show straight away** on the Movies and Shows tabs and on title pages, instead of appearing late.
-- **Search page:** the category list no longer draws over the search field and your recent searches when you scroll down it.
+- **External players (Vimu, VLC, MX Player, Just Player):** when the player's buffer filled up and it paused reading, Nabrio took that as "stopped". It marked the episode watched and, on Android 9 and older (Fire TV), jumped back to the front so the player seemed to close. Now Nabrio waits for the player to close and uses the position it reports. If no position comes back, the trackers get a pause, never a watched mark. Kodi works as before.
+- **Loading bar:** the moving light now reaches the last frame before turning back, and the bar fills all the way while buffering.
+- **TV search page:** the focused poster in the last row is no longer cut off at the bottom, and the fifth column no longer runs past the right edge.

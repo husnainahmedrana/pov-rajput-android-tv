@@ -157,7 +157,7 @@ class SourceLanguagesTest {
         assertEquals(listOf(2, 1, 0), english.sorted(items, SourceSortOrder(priority = listOf("size", "quality", "language"))).map(items::indexOf))
         assertEquals(listOf(0, 1, 2), english.sorted(items, SourceSortOrder(sizeAscending = true, priority = listOf("size", "quality", "language"))).map(items::indexOf))
         // A saved order is repaired: duplicates dropped, missing keys added.
-        assertEquals(listOf("library", "quality", "source", "language", "preferred", "age", "size"), SourceSortOrder.priority("quality,quality,bogus"))
+        assertEquals(listOf("library", "quality", "source", "language", "preferred", "age", "grabs", "size"), SourceSortOrder.priority("quality,quality,bogus"))
     }
 
     @Test fun `latin american spanish is told apart from castellano and still counts as spanish`() {

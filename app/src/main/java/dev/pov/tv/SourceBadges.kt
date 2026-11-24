@@ -59,6 +59,13 @@ internal object LinkListPreferences {
 
 /** Release-name tags are provider claims, not a probe of the selected video's capabilities. */
 internal object SourceBadges {
+    /** A grab count for its badge: 212, 1.2K, 15K. */
+    fun grabsLabel(grabs: Int): String = when {
+        grabs < 1_000 -> grabs.toString()
+        grabs < 10_000 -> String.format(java.util.Locale.ROOT, "%.1fK", grabs / 1_000.0).replace(".0K", "K")
+        else -> "${grabs / 1_000}K"
+    }
+
     /** The release name of a link: providers often add lines of seeders, sizes and emoji around it; the longest line is the name. */
     fun name(source: SourceItem): String {
         val name = source.title.lines().map(String::trim).filter(String::isNotBlank).maxByOrNull { it.length } ?: source.title
@@ -179,6 +186,8 @@ internal object SourceBadges {
         group(listOfNotNull(SourceMetadata.sizeLabel(source.sizeBytes), mbps?.let { "≈${Math.round(it)} Mbps" }), SourceBadgeTone.SIZE, mbps)
         // NZB age (Usenet links from your indexers): how long ago it was posted, as "Today", "12d", "5mo" or "2y".
         source.ageDays?.let { add(SourceBadge(SourceMetadata.ageLabel(it), SourceBadgeTone.SIZE)) }
+        // Grabs (Usenet links from your indexers): how often others downloaded it, "212 GRABS" or "1.2K GRABS".
+        source.grabs?.takeIf { it > 0 }?.let { add(SourceBadge(L10n.tr(R.string.t_x_grabs_badge, "%1\$s GRABS", grabsLabel(it)), SourceBadgeTone.SIZE)) }
         val metadata = "${source.title} ${source.detail}".take(4000)
         fun has(pattern: String) = Regex("(?i)(?<![a-z0-9])(?:$pattern)(?![a-z0-9])").containsMatchIn(metadata)
         group(buildList {

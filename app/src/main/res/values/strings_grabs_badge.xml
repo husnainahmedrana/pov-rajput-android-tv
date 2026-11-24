@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Usenet link badge: how many times an NZB was grabbed. Kept in English like the other badges (USENET, CACHED). -->
+<resources>
+    <string name="t_x_grabs_badge" translatable="false">%1$s GRABS</string>
+</resources>
