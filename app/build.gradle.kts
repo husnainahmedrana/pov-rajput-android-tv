@@ -36,6 +36,8 @@ android {
     val appShort = providers.gradleProperty("povAppShortName").orElse(appName).get()
     defaultConfig.buildConfigField("String", "APP_NAME", "\"${appName.replace("\"", "")}\"")
     defaultConfig.buildConfigField("String", "APP_SHORT", "\"${appShort.replace("\"", "")}\"")
+    // Test builds (installed beside the app) show how long each step of a Usenet start took.
+    defaultConfig.buildConfigField("boolean", "USENET_TIMES", (providers.gradleProperty("povAppIdSuffix").orNull != null).toString())
     defaultConfig.buildConfigField("String", "SEEKR_KEY", "\"${providers.gradleProperty("povSeekrKey").orNull.orEmpty()}\"")
     // Account backup server (server/backup in this repo). Forks set their own: -PpovBackupServer=https://backup.example.com
     defaultConfig.buildConfigField("String", "BACKUP_SERVER", "\"${providers.gradleProperty("povBackupServer").orElse("https://backup.rajput.cc").get()}\"")

@@ -16,9 +16,8 @@ interface ByteSource : Closeable {
 }
 
 /**
- * How much of a video's end is fetched as soon as it opens. An MKV keeps its seek index (Cues) at the end and the
- * player reads it before the first picture; on a big remux it is 2–5 MB. Fetched alongside the start, that jump costs
- * nothing, instead of waiting behind the start's read-ahead (35 s on a 10 GB set on the onn).
+ * How much of a video's end is fetched as soon as it opens, when its seek index can't be located exactly (MP4's moov,
+ * 7z entries). An MKV's Cues are found from its SeekHead instead ([MkvIndex]), so only those articles are fetched.
  */
 const val VIDEO_TAIL_BYTES = 5L * 1024 * 1024
 
@@ -44,6 +43,8 @@ class UsenetStream(
     var partSize = 0L; private set
     private var window = 4
     private val slots = HashMap<Int, Fetch>()
+    /** Articles asked for by [prefetch] (the player's seek index): read-ahead elsewhere doesn't cancel them until read. */
+    private val pinned = LinkedHashSet<Int>()
     private val lock = Any()
     private var scheduled = -1
     /** The size was taken from a sibling file, not read from this one: every article must agree with it. */
@@ -97,7 +98,11 @@ class UsenetStream(
             val from = (position / partSize).toInt().coerceIn(0, last)
             val to = ((position + length - 1) / partSize + 1).toInt().coerceIn(0, last)
             // Ahead of read-ahead in the queue: these few articles are what the player is about to block on.
-            for (index in from..to) if (index !in slots) slots[index] = pool.fetch(segments[index].messageId, urgent = true)
+            for (index in from..to) {
+                if (index !in slots) slots[index] = pool.fetch(segments[index].messageId, urgent = true)
+                pinned += index
+            }
+            while (pinned.size > MAX_PINNED) pinned.remove(pinned.first())
         }
     }
 
@@ -111,7 +116,7 @@ class UsenetStream(
 
     /** Lets go of everything downloaded or queued; the stream can still be read again later. */
     fun release() {
-        synchronized(lock) { slots.values.forEach { it.cancel() }; slots.clear(); scheduled = -1 }
+        synchronized(lock) { slots.values.forEach { it.cancel() }; slots.clear(); pinned.clear(); scheduled = -1 }
     }
 
     override fun read(position: Long, target: ByteArray, offset: Int, length: Int): Int {
@@ -131,6 +136,7 @@ class UsenetStream(
                 }
                 else -> {
                     schedule(index)
+                    synchronized(lock) { if (pinned.isNotEmpty()) pinned.remove(index) }
                     val count = minOf(length.toLong(), end - position).toInt()
                     System.arraycopy(segment.data, (position - segment.begin).toInt(), target, offset, count)
                     return count
@@ -146,7 +152,7 @@ class UsenetStream(
             if (index == scheduled || closed) return
             scheduled = index
             val keep = (index - 1)..(index + window)
-            val stale = slots.keys.filter { it !in keep && !(pinEnds && (it <= 1 || it >= last - 2)) }
+            val stale = slots.keys.filter { it !in keep && it !in pinned && !(pinEnds && (it <= 1 || it >= last - 2)) }
             for (key in stale) slots.remove(key)?.cancel()
             for (next in index + 1..minOf(last, index + window)) if (next !in slots) slots[next] = pool.fetch(segments[next].messageId)
         }
@@ -180,11 +186,14 @@ class UsenetStream(
     }
 
     override fun close() {
-        synchronized(lock) { closed = true; slots.values.forEach { it.cancel() }; slots.clear() }
+        synchronized(lock) { closed = true; slots.values.forEach { it.cancel() }; slots.clear(); pinned.clear() }
     }
 
-    private companion object { const val AWAIT_MS = 60_000L; const val STALL_MS = 12_000L }
+    private companion object { const val AWAIT_MS = 60_000L; const val STALL_MS = 12_000L; const val MAX_PINNED = 16 }
 }
+
+/** The availability check found articles of this release gone from every provider: choose another link. */
+class ReleaseIncompleteException(message: String) : IOException(message)
 
 /** No article arrived in time: the connection or server was slow just then. Worth trying again; not a broken release. */
 class SlowArticleException : IOException(L10n.tr(R.string.t_the_news_server_took_too_long, "The news server took too long to send the video."))
@@ -197,7 +206,7 @@ fun isPassingFailure(error: Throwable): Boolean {
     var cause: Throwable? = error
     while (cause != null) {
         when (cause) {
-            is MissingArticleException, is UnsupportedSetException, is NntpRefusedException -> return false
+            is MissingArticleException, is ReleaseIncompleteException, is UnsupportedSetException, is NntpRefusedException -> return false
             is SlowArticleException, is java.net.SocketTimeoutException, is java.net.SocketException,
             is java.net.UnknownHostException, is javax.net.ssl.SSLException, is java.io.EOFException -> return true
             // The indexer unreachable (code 0), busy (429) or failing (5xx) while fetching the NZB: try again later.

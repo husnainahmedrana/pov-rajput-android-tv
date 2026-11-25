@@ -35,6 +35,8 @@ class UsenetStreamTest {
         val socket = ServerSocket(0)
         val busiest = AtomicInteger()
         val served = AtomicInteger()
+        private val servedKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        fun servedIds(): Set<String> = servedKeys
         val accepted = AtomicInteger()
         private val live = AtomicInteger()
         @Volatile var open = true
@@ -80,7 +82,7 @@ class UsenetStreamTest {
                             val key = command.removePrefix("BODY <").removeSuffix(">")
                             val article = articles[key]
                             if (article == null || key in missing) line("430 No such article")
-                            else { served.incrementAndGet(); line("222 0 <$key>"); out.write(encode(article)) }
+                            else { served.incrementAndGet(); servedKeys += key; line("222 0 <$key>"); out.write(encode(article)) }
                         }
                         else -> line("500 What?")
                     }
@@ -264,6 +266,38 @@ BODY evil</segment>
         stream.prepare()
         assertReadsLike(file, stream, 3)
         assertEquals("the pool reused the warm connection", 1, server.accepted.get())
+    }
+
+    @Test fun `prestart signs connections in before any article is asked for`() {
+        val file = Random(12).nextBytes(200_000)
+        val server = server()
+        val posted = server.post(file, even(file.size, 50_000), "early.mkv")
+        val pool = pool(server, connections = 4)
+        pool.prestart(3)
+        val deadline = System.currentTimeMillis() + 5_000
+        while (pool.connected < 3 && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        assertEquals(3, pool.connected)
+        assertTrue(pool.firstConnectedAt > 0)
+        val stream = UsenetStream(pool, posted.segments, windowBytes = 100_000)
+        stream.prepare()
+        assertReadsLike(file, stream, 4)
+    }
+
+    @Test fun `an MKV's seek index is fetched at open, where its SeekHead says, and survives read-ahead`() {
+        val cuesAt = 600_000L
+        val head = MkvIndexTest.head(cuesAt - MkvIndexTest.segmentStart())
+        val file = head + Random(13).nextBytes(800_000 - head.size)
+        val server = server()
+        val nzb = Nzb(listOf(server.post(file, even(file.size, 40_000), "Film.2020.1080p.mkv")), null)
+        val opened = UsenetMedia.open(pool(server, 2), nzb)
+        val cuesArticle = (cuesAt / 40_000).toInt() + 1
+        val deadline = System.currentTimeMillis() + 5_000
+        while (!server.servedIds().contains("f1-p$cuesArticle@test") && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        assertTrue("the Cues article was fetched before the player asked", server.servedIds().contains("f1-p$cuesArticle@test"))
+        // The player reads the head, then a little further (read-ahead moves on), then jumps to the Cues.
+        readAll(opened.source, 0, 120_000)
+        assertArrayEquals(file.copyOfRange(cuesAt.toInt(), cuesAt.toInt() + 50_000), readAll(opened.source, cuesAt, 50_000))
+        assertReadsLike(file, opened.source, 5)
     }
 
     @Test fun `parts of uneven sizes are still found by position`() {

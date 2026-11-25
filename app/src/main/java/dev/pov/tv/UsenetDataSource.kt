@@ -65,6 +65,57 @@ internal object UsenetLog {
     }
 }
 
+/**
+ * The opened video, which the availability check (running beside the start, see [UsenetPlayback]) can still fail: once
+ * it finds the release taken down, every read throws that reason instead of the player hitting the hole later.
+ */
+internal class GuardedSource : ByteSource {
+    @Volatile private var inner: ByteSource? = null
+    @Volatile var failure: dev.pov.tv.usenet.ReleaseIncompleteException? = null; private set
+    val attached: Boolean get() = inner != null
+    fun attach(source: ByteSource) { inner = source }
+    fun fail(error: dev.pov.tv.usenet.ReleaseIncompleteException) { failure = error }
+    private fun source(): ByteSource = inner ?: throw IOException("The stream isn't open yet.")
+    override val size: Long get() = source().size
+    override fun read(position: Long, target: ByteArray, offset: Int, length: Int): Int {
+        failure?.let { throw dev.pov.tv.usenet.ReleaseIncompleteException(it.message.orEmpty()) }
+        return source().read(position, target, offset, length)
+    }
+    override fun prefetch(position: Long, length: Long) { inner?.prefetch(position, length) }
+    override fun close() { inner?.close() }
+}
+
+/**
+ * How long each step of the last Usenet start took, from pressing play to the first picture. Preview builds show it on
+ * screen (BuildConfig.USENET_TIMES); every build writes it to the Usenet log.
+ */
+internal object UsenetStartTimes {
+    @Volatile private var started = 0L
+    private val marks = java.util.LinkedHashMap<String, Long>()
+
+    fun begin() { synchronized(marks) { started = System.nanoTime(); marks.clear() } }
+    fun cancel() { synchronized(marks) { started = 0L; marks.clear() } }
+
+    /** Notes that [name] finished now, or at [at] (System.nanoTime) when given. A start already reported is left alone. */
+    fun mark(name: String, at: Long = 0L) {
+        synchronized(marks) { if (started != 0L && name !in marks) marks[name] = if (at > 0) at else System.nanoTime() }
+    }
+
+    /** The first picture: the summary of this start (once; null afterwards or when no Usenet start was timed). */
+    fun firstPicture(): String? {
+        val text = synchronized(marks) {
+            val from = started
+            if (from == 0L) return null
+            started = 0L
+            fun seconds(at: Long) = "%.1f".format(java.util.Locale.ROOT, (at - from) / 1e9)
+            val steps = marks.entries.sortedBy { it.value }.joinToString(" · ") { "${it.key} ${seconds(it.value)}" }
+            "Usenet start ${seconds(System.nanoTime())} s" + if (steps.isEmpty()) " (stream already open)" else "  ($steps)"
+        }
+        UsenetLog.i(text)
+        return text
+    }
+}
+
 /** The video now streaming from a news server: its connections and read-ahead outlive the player's seeks and reopens. */
 internal object UsenetSessions {
     class Session(val key: String, val pool: java.io.Closeable, val source: ByteSource)
@@ -161,36 +212,53 @@ internal object UsenetPlayback {
             UsenetSessions.get(key) {
                 val providers = NewsProviders(store).active()
                 if (providers.isEmpty()) throw IOException(L10n.tr(R.string.t_add_a_news_provider_in_settings, "Add a news provider in Settings → Sources → Usenet to play Usenet links."))
-                PlaybackStatus.stage(L10n.tr(R.string.t_status_getting_nzb, "Getting the NZB from the indexer"))
-                val text = nzbText(address, key, store, cache)
-                val nzb = Nzb.parse(text)
-                if (nzb.files.isEmpty()) throw IOException(L10n.tr(R.string.t_the_indexer_sent_an_empty_article, "The indexer sent an empty article list for this link."))
-                val healthKey = sha1(key + store.get(NewsProviders.KEY))
-                // The availability check runs beside the opening (each takes a few round trips; one after the other
-                // doubled the wait before the first picture). Its answer is waited for before playback starts.
-                val health: java.util.concurrent.Future<Boolean>? = if (healthCache.contains(healthKey)) {
-                    UsenetLog.i("health: reusing a recent successful check"); null
-                } else java.util.concurrent.FutureTask { checkHealth(nzb, providers) }.also { Thread(it, "usenet-health").apply { isDaemon = true }.start() }
-                fun healthy() {
-                    val ok = try { health?.get() ?: return } catch (error: java.util.concurrent.ExecutionException) { throw error.cause ?: error }
-                    if (ok) healthCache.remember(healthKey)
-                }
                 val warm = NewsProviders.warm { store.get(it) }
+                // The connections first: they sign in while the NZB downloads (sign-in is 0.5–3 s, as long as the NZB
+                // itself), instead of only once it has been read.
                 val chain = ProviderChain(providers.mapIndexed { index, provider ->
                     NntpPool(NntpServer(provider.host, provider.port, provider.tls, provider.user, provider.password), provider.connections, provider.pipelineDepth,
                         log = { UsenetLog.i("${provider.name}: $it") }, keepOpen = if (index == 0) minOf(warm, provider.connections) else 0)
                 })
                 try {
+                    chain.prestart(minOf(providers[0].connections, PRESTART))
+                    PlaybackStatus.stage(L10n.tr(R.string.t_status_getting_nzb, "Getting the NZB from the indexer"))
+                    val text = nzbText(address, key, store, cache)
+                    UsenetStartTimes.mark("NZB")
+                    val nzb = Nzb.parse(text)
+                    if (nzb.files.isEmpty()) throw IOException(L10n.tr(R.string.t_the_indexer_sent_an_empty_article, "The indexer sent an empty article list for this link."))
+                    val healthKey = sha1(key + store.get(NewsProviders.KEY))
+                    // The availability check runs beside the opening and playback no longer waits for it: it signs in
+                    // on its own connection, which made it the slowest step of a start. When it finds the release taken
+                    // down, the stream fails with that reason (before or soon after the first picture).
+                    val guard = GuardedSource()
+                    val health: java.util.concurrent.FutureTask<Unit>? = if (healthCache.contains(healthKey)) {
+                        UsenetLog.i("health: reusing a recent successful check"); null
+                    } else java.util.concurrent.FutureTask {
+                        try {
+                            if (checkHealth(nzb, providers)) healthCache.remember(healthKey)
+                            UsenetStartTimes.mark("check")
+                        } catch (error: dev.pov.tv.usenet.ReleaseIncompleteException) {
+                            UsenetLog.w("health check found the release incomplete", error)
+                            guard.fail(error)
+                            if (guard.attached) UsenetSessions.giveUp(key, error.message.orEmpty())
+                        }
+                    }.also { Thread(it, "usenet-health").apply { isDaemon = true }.start() }
                     PlaybackStatus.stage(L10n.tr(R.string.t_status_opening_release_x, "Opening the release on %1\$s", providers[0].name))
                     val opened = try { UsenetMedia.open(chain, nzb, cache) { UsenetLog.i(it) } }
-                        // A failed opening of a taken-down release: the check's "missing parts" says it better.
-                        catch (error: Exception) { healthy(); throw error }
-                    PlaybackStatus.stage(L10n.tr(R.string.t_status_checking_release, "Checking the release is complete"))
-                    try { healthy() } catch (error: Exception) { opened.source.close(); throw error }
+                        catch (error: Exception) {
+                            // A failed opening of a taken-down release: the check's "missing parts" says it better.
+                            if (!dev.pov.tv.usenet.isCancellation(error)) try { health?.get(HEALTH_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: Exception) {}
+                            guard.failure?.let { throw it }
+                            throw error
+                        }
+                    chain.firstConnectedAt.takeIf { it > 0 }?.let { UsenetStartTimes.mark("signed in", it) }
+                    UsenetStartTimes.mark("opened")
+                    guard.attach(opened.source)
+                    guard.failure?.let { opened.source.close(); throw it }
                     PlaybackStatus.stage(L10n.tr(R.string.t_status_first_data, "Downloading the start of the video"))
                     UsenetLog.i("Streaming from ${providers[0].name} · ${providers[0].connections} connections · pipeline ${providers[0].pipelineDepth} · ${opened.kind}" +
                         if (providers.size > 1) " · ${providers.size - 1} backup" else "")
-                    UsenetSessions.Session(key, chain, opened.source)
+                    UsenetSessions.Session(key, chain, guard)
                 } catch (error: Exception) { chain.close(); throw error }
             }
         } catch (error: Exception) {
@@ -231,7 +299,7 @@ internal object UsenetPlayback {
             { ids: List<String> -> Nntp.missing(NntpServer(provider.host, provider.port, provider.tls, provider.user, provider.password), ids) }
         })
         UsenetLog.i("health: ${result.missing.size} missing, ${result.unknown.size} unknown of ${sample.size} checked")
-        if (result.missing.isNotEmpty()) throw IOException(L10n.tr(R.string.t_your_news_providers_are_missing_parts, "Your news providers are missing parts of this release (%1\$s of %2\$s checked). Choose another link.", result.missing.size, sample.size))
+        if (result.missing.isNotEmpty()) throw dev.pov.tv.usenet.ReleaseIncompleteException(L10n.tr(R.string.t_your_news_providers_are_missing_parts, "Your news providers are missing parts of this release (%1\$s of %2\$s checked). Choose another link.", result.missing.size, sample.size))
         // Unknown checks are inconclusive: actual BODY reads still enforce availability and checksums.
         return result.unknown.isEmpty()
     }
@@ -290,6 +358,10 @@ internal object UsenetPlayback {
     private const val KEEP_MS = 14L * 24 * 60 * 60 * 1000
     private const val KEEP_FILES = 40
     private const val SAMPLE = 24
+    /** Connections to the main provider signed in while the NZB downloads. */
+    private const val PRESTART = 6
+    /** How long a failed opening waits for the availability check's clearer reason. */
+    private const val HEALTH_WAIT_MS = 4_000L
 }
 
 /** Easynews over its news servers (NNTP) instead of its web servers: "Easynews NNTP streaming" in Easynews settings. */
@@ -441,7 +513,10 @@ internal object ReadWatch {
 /** Reads a Usenet [ByteSource] for the player. Opening at a new position is cheap: the session keeps its connections. */
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 internal class UsenetDataSource(private val session: UsenetSessions.Session) : BaseDataSource(true) {
-    private companion object { const val PASSING_RETRIES = 4; const val STEADY_BYTES = 64L * 1024 * 1024 }
+    private companion object {
+        const val PASSING_RETRIES = 4; const val STEADY_BYTES = 64L * 1024 * 1024
+        const val SMALL_BUFFER = 64 * 1024; const val SMALL_READ = 4 * 1024
+    }
     private var uri: Uri? = null
     private var position = 0L
     private var remaining = 0L
@@ -450,6 +525,14 @@ internal class UsenetDataSource(private val session: UsenetSessions.Session) : B
     private var openedAt = 0L
     private var firstRead = false
     private var readSinceOpen = 0L
+    /**
+     * The player's extractor reads an MKV's seek index (hundreds of thousands of small elements on a remux) a few bytes
+     * at a time. Each of those went through the stream's article lookup; now small reads are served from this copy,
+     * filled one article piece at a time. The stream's bytes never change, so it stays valid across reopens.
+     */
+    private val small = ByteArray(SMALL_BUFFER)
+    private var smallStart = 0L
+    private var smallLength = 0
 
     override fun open(dataSpec: DataSpec): Long {
         uri = dataSpec.uri; spec = dataSpec
@@ -469,8 +552,21 @@ internal class UsenetDataSource(private val session: UsenetSessions.Session) : B
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
         if (length == 0) return 0
         if (remaining <= 0) return C.RESULT_END_OF_INPUT
+        val wanted = minOf(length.toLong(), remaining).toInt()
+        val cached = position - smallStart
+        if (smallLength > 0 && cached in 0 until smallLength) {
+            val count = minOf(wanted.toLong(), smallLength - cached).toInt()
+            System.arraycopy(small, cached.toInt(), buffer, offset, count)
+            return delivered(count)
+        }
+        val fill = wanted < SMALL_READ
         val watch = ReadWatch.start(position)
-        val count = try { session.source.read(position, buffer, offset, minOf(length.toLong(), remaining).toInt()) }
+        val count = try {
+            if (!fill) session.source.read(position, buffer, offset, wanted)
+            else session.source.read(position, small, 0, minOf(SMALL_BUFFER.toLong(), remaining).toInt()).also { got ->
+                if (got > 0) { smallStart = position; smallLength = got; System.arraycopy(small, 0, buffer, offset, minOf(got, wanted)) }
+            }.let { got -> if (got > 0) minOf(got, wanted) else got }
+        }
         catch (error: IOException) {
             // A seek or Stop interrupts the read: called off, not a failure of the link.
             if (dev.pov.tv.usenet.isCancellation(error)) throw error
@@ -480,11 +576,19 @@ internal class UsenetDataSource(private val session: UsenetSessions.Session) : B
             // (an Easynews link then moves to the web servers).
             val passing = dev.pov.tv.usenet.isPassingFailure(error)
             if (!passing || UsenetSessions.stumble(session.key) > PASSING_RETRIES)
-                UsenetSessions.giveUp(session.key, if (error is dev.pov.tv.usenet.MissingArticleException) "Your news providers are missing part of this release. Choose another link." else "")
+                UsenetSessions.giveUp(session.key, when (error) {
+                    is dev.pov.tv.usenet.MissingArticleException -> "Your news providers are missing part of this release. Choose another link."
+                    is dev.pov.tv.usenet.ReleaseIncompleteException -> error.message.orEmpty()
+                    else -> ""
+                })
             throw error
         } finally { ReadWatch.done(watch) }                       // however the read ended (a cancel too)
         if (count < 0) return C.RESULT_END_OF_INPUT
-        if (firstRead) { firstRead = false; readSinceOpen = 0; UsenetLog.i("  first bytes after ${(System.nanoTime() - openedAt) / 1_000_000} ms") }
+        return delivered(count)
+    }
+
+    private fun delivered(count: Int): Int {
+        if (firstRead) { firstRead = false; readSinceOpen = 0; UsenetStartTimes.mark("first bytes"); UsenetLog.i("  first bytes after ${(System.nanoTime() - openedAt) / 1_000_000} ms") }
         // A long stretch read without trouble: earlier hiccups no longer count towards giving the link up, so a
         // five-hour film (or a TV left on for days) isn't refused for a handful of unrelated timeouts.
         if (readSinceOpen < STEADY_BYTES && readSinceOpen + count >= STEADY_BYTES) UsenetSessions.steady(session.key)

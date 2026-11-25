@@ -93,7 +93,7 @@ object UsenetMedia {
         if (!Rar.isRar(start)) {
             log("plain file: ${first.name} · starts ${hex(start)}")
             if (!looksLikeVideo(start)) { first.close(); refuseArchive(start, first.name) }
-            return Opened(first, first.name, "single file")
+            return warmIndex(Opened(first, first.name, "single file"), log)
         }
         // A RAR volume: take the listed order from it on, and check it really is where the set starts.
         val listed = files.subList(files.indexOf(biggest), files.size)
@@ -118,6 +118,36 @@ object UsenetMedia {
 
     private class OutOfOrderException : java.io.IOException(L10n.tr(R.string.t_the_set_s_parts_are_out, "The set's parts are out of order."))
 
+    private const val HEAD_PEEK = 64 * 1024
+    /** From the Cues' start: two articles' worth. A bigger index (a remux) continues with the player's own read-ahead. */
+    private const val CUES_BYTES = 2L * 1024 * 1024
+    /** An MKV whose SeekHead doesn't list its Cues: they are nearly always at the very end. */
+    private const val MKV_TAIL_BYTES = 2L * 1024 * 1024
+
+    /**
+     * Starts the video's seek index downloading before the player asks for it: for an MKV exactly where its SeekHead
+     * says (a couple of articles), otherwise the file's last [VIDEO_TAIL_BYTES]. Reads only the first article, which
+     * opening already fetched, so it adds no wait.
+     */
+    internal fun warmIndex(opened: Opened, log: (String) -> Unit): Opened {
+        val source = opened.source
+        val size = source.size
+        if (size <= 0) return opened
+        val head = ByteArray(HEAD_PEEK)
+        val count = try { source.read(0, head, 0, minOf(HEAD_PEEK.toLong(), size).toInt()) } catch (_: java.io.IOException) { return opened }
+        if (MkvIndex.isMkv(head, count)) {
+            val cues = MkvIndex.cuesPosition(head, count, size)
+            if (cues != null) {
+                source.prefetch(cues, minOf(CUES_BYTES, size - cues))
+                log("MKV seek index at byte $cues (${"%.1f".format(Locale.ROOT, cues * 100.0 / size)}%); fetching it now")
+                return opened
+            }
+            log("MKV seek index isn't listed at the start; fetching the file's last ${MKV_TAIL_BYTES / 1_048_576} MB")
+            source.prefetch(size - minOf(size, MKV_TAIL_BYTES), minOf(size, MKV_TAIL_BYTES))
+        } else source.prefetch(size - minOf(size, VIDEO_TAIL_BYTES), minOf(size, VIDEO_TAIL_BYTES))
+        return opened
+    }
+
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
 
     private fun head(source: ByteSource): ByteArray {
@@ -128,16 +158,16 @@ object UsenetMedia {
 
     private fun openPlain(file: NzbFile, stream: (NzbFile, Boolean) -> UsenetStream, log: (String) -> Unit, cache: java.io.File?, password: String?): Opened {
         val opened = stream(file, true)
-        // Ask for the opening articles and the last two at once: a player reads the start, then jumps to the end
-        // (an MKV's seek index, an MP4's moov), then back. Fetched together, that is one wait instead of three.
-        opened.warm(); opened.beginTail(((VIDEO_TAIL_BYTES + 716_799) / 716_800).toInt())
+        // Ask for the opening articles now; the seek index (an MKV's Cues, an MP4's moov) is asked for as soon as the
+        // first article says where it is ([warmIndex]), ahead of the player's own jump there.
+        opened.warm()
         opened.prepare()
         val start = head(opened)
         if (isSevenZip(start)) return sevenZip(opened, cache, password, log)
         if (Rar.isRar(start)) { opened.close(); return openSet(listOf(file), stream, log, trusted = true) }
         log("plain file: ${opened.name} · starts ${hex(start)}")
         if (!looksLikeVideo(start)) { opened.close(); refuseArchive(start, opened.name) }
-        return Opened(opened, opened.name, "single file")
+        return warmIndex(Opened(opened, opened.name, "single file"), log)
     }
 
     /**
@@ -167,8 +197,7 @@ object UsenetMedia {
             log("split set: $base · ${parts.size} parts · ${set.size} bytes · starts ${hex(start)}")
             if (isSevenZip(start)) return sevenZip(set, cache, password, log)
             if (Rar.isRar(start) || !looksLikeVideo(start)) refuseArchive(start, base)
-            set.prefetch(set.size - minOf(set.size, VIDEO_TAIL_BYTES), VIDEO_TAIL_BYTES)
-            return Opened(set, base, "split · ${parts.size} parts")
+            return warmIndex(Opened(set, base, "split · ${parts.size} parts"), log)
         } catch (error: Exception) {
             streams.forEach { it.close() }
             throw error
@@ -215,7 +244,7 @@ object UsenetMedia {
                 }
             }
             log("RAR set: ${entry.name} · ${entry.unpackedSize} bytes in ${pieces.size} of ${volumes.size} parts")
-            return Opened(VolumeSet(entry.unpackedSize, pieces), entry.name, if (pieces.size == 1) "RAR" else "RAR · ${pieces.size} parts")
+            return warmIndex(Opened(VolumeSet(entry.unpackedSize, pieces), entry.name, if (pieces.size == 1) "RAR" else "RAR · ${pieces.size} parts"), log)
         } catch (error: Exception) {
             opened.forEach { it.close() }
             throw error

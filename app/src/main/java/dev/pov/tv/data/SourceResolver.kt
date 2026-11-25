@@ -58,6 +58,8 @@ class SourceResolver internal constructor(
                         ownLimitMs: (String) -> Long? = { null },
                         progress: ((SearchProgress) -> Boolean)? = null): SearchResult {
         validateIdentity(identity)
+        // A link is about to be chosen: the player's one-time setup runs now instead of after pressing play.
+        dev.pov.tv.PlayerPrewarm.run()
         val providers = (configuredProviders?.invoke()
             ?: listOf(SourceProvider("legacy", "Source 1", sourceEndpoint()))).filter { it.enabled }
         // Searches that are not add-ons: Easynews' own search, then each Usenet indexer.

@@ -557,7 +557,10 @@ class PlayerActivity : Activity() {
     private fun updateSplash() {
         if (previewPrep != null) return                                   // previews are being made on the splash
         val state = player?.playbackState
-        if (state == Player.STATE_READY) { everReady = true; controlsAfterLoading() }
+        if (state == Player.STATE_READY) {
+            if (!everReady) UsenetStartTimes.firstPicture()?.let { if (BuildConfig.USENET_TIMES) Toast.makeText(this, it, Toast.LENGTH_LONG).show() }
+            everReady = true; controlsAfterLoading()
+        }
         // A failure before the first picture: the controls (Retry, Streams) are needed after all.
         if (InAppPlaybackSession.error != null) controlsAfterLoading()
         val waiting = InAppPlaybackSession.error == null && player != null &&

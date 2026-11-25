@@ -248,6 +248,7 @@ object InAppPlaybackSession {
         lastLinkSaved = false
         debridService = PlaybackDebrid.normalize(saved?.getString("debrid_service") ?: intent.getStringExtra("debrid_service"))
         // The loading card's first line: Usenet links report their own steps; the rest name where the video comes from.
+        if (saved == null) { if (dev.pov.tv.data.UsenetLinks.isNzb(sourceUrl)) UsenetStartTimes.begin() else UsenetStartTimes.cancel() }
         PlaybackStatus.reset(if (dev.pov.tv.data.UsenetLinks.isNzb(sourceUrl)) null
             else L10n.tr(R.string.t_status_connecting_x, "Connecting to %1\$s",
                 debridService?.let(dev.pov.tv.data.DebridServices::name) ?: L10n.tr(R.string.t_status_video_server, "the video server")))

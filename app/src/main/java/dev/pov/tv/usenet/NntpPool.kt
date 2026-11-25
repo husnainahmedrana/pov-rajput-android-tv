@@ -101,6 +101,24 @@ class NntpPool(
     @Volatile var refusal: NntpRefusedException? = null; private set
     /** Connections now signed in. */
     val connected: Int get() = live.get()
+    /** When the first connection of this pool was signed in (System.nanoTime), 0 until then: for the start-time readout. */
+    @Volatile var firstConnectedAt = 0L; private set
+
+    /**
+     * Signs in up to [count] connections now, before any article is asked for: the NZB is still downloading, and the
+     * sign-ins (TLS + login, 0.5–3 s each) are then done by the time the first articles are wanted. Each worker signs
+     * in and waits for work; unused ones close after the usual idle time.
+     */
+    fun prestart(count: Int) {
+        synchronized(lock) {
+            if (closed) return
+            val target = minOf(count, limit)
+            while (workers < target) {
+                workers++
+                Thread({ work() }, "nntp-${workers}").apply { isDaemon = true }.start()
+            }
+        }
+    }
 
     override fun fetch(messageId: String, urgent: Boolean): Fetch {
         val fetch = Fetch(messageId)
@@ -169,7 +187,8 @@ class NntpPool(
                         if (warm == null) try { fresh.connect() } catch (error: IOException) { fresh.close(); sockets -= fresh; throw error }
                         if (closed) { fresh.close(); sockets -= fresh; return }
                         connection = fresh
-                        live.incrementAndGet(); failures = 0
+                        if (live.incrementAndGet() == 1 && firstConnectedAt == 0L) firstConnectedAt = System.nanoTime()
+                        failures = 0
                     } catch (error: IOException) {
                         if (closed) return
                         if (error is NntpRefusedException) {
@@ -310,6 +329,10 @@ class ProviderChain(private val pools: List<NntpPool>) : ArticleSource {
 
     override fun hurry(fetch: Fetch) { current[fetch]?.let { (pool, inner) -> pool.hurry(inner) } }
     override fun close() { pools.forEach { it.close() } }
+    /** Signs in [count] connections to the main provider now (see [NntpPool.prestart]); backups stay closed until needed. */
+    fun prestart(count: Int) = pools[0].prestart(count)
+    /** When the main provider's first connection was signed in, 0 until then. */
+    val firstConnectedAt: Long get() = pools[0].firstConnectedAt
 }
 
 /**
