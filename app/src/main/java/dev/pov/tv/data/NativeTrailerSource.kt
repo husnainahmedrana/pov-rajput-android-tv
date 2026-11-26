@@ -25,11 +25,12 @@ internal class NativeTrailerSource {
     private val cache = linkedMapOf<String, Pair<Long,Source>>()
     /** VP9 is usually cleaner than AVC at the same 720p size; only used with a hardware decoder. */
     private val vp9 by lazy { hardwareVp9() }
-    @Synchronized fun resolve(id: String, highQuality: Boolean = true): Source? {
+    /** [language] (as es-ES, or empty): on a video with several audio tracks, the track in that language. */
+    @Synchronized fun resolve(id: String, highQuality: Boolean = true, language: String = ""): Source? {
         if (!id.matches(Regex("[A-Za-z0-9_-]{11}"))) return null
         val now = System.currentTimeMillis()
         val useVp9 = highQuality && vp9
-        val cacheKey = "$id:$useVp9"
+        val cacheKey = "$id:$useVp9:$language"
         cache[cacheKey]?.takeIf { now - it.first in 0..1_200_000L }?.let { return it.second }
         if (now < blockedUntil) return null
         if (key == null || now - keyAt !in 0..10_800_000L) {
@@ -46,7 +47,7 @@ internal class NativeTrailerSource {
             .header("User-Agent",UA).header("X-Youtube-Client-Name","3")
             .header("X-Youtube-Client-Version","20.10.35")
             .post(body.toString().toRequestBody("application/json".toMediaType())).build()) ?: return null
-        val source = parse(JSONObject(response), useVp9) ?: return null
+        val source = parse(JSONObject(response), useVp9, language) ?: return null
         cache[cacheKey] = now to source
         while (cache.size > 12) cache.remove(cache.keys.first())
         return source
@@ -68,11 +69,18 @@ internal class NativeTrailerSource {
             }
         }.getOrDefault(false)
         /** Picks the tallest video up to 720p; at equal height VP9 wins when [vp9] is allowed. */
-        fun parse(response: JSONObject, vp9: Boolean = false): Source? {
+        /**
+         * The best AVC (or VP9) video up to 720p and its AAC audio. A video can carry several audio tracks (its own and
+         * dubs, YouTube's automatic ones among them), and the default one follows the viewer YouTube was told of
+         * (English here): with a [language], that language's track is taken when there is one.
+         */
+        fun parse(response: JSONObject, vp9: Boolean = false, language: String = ""): Source? {
             if (response.optJSONObject("playabilityStatus")?.optString("status") != "OK") return null
             val streaming = response.optJSONObject("streamingData") ?: return null
             val candidates = mutableListOf<Pair<Int,Source>>()
             val audio = mutableListOf<Pair<Int,Audio>>()
+            val wanted = language.substringBefore('-').lowercase()
+            val inLanguage = mutableListOf<Pair<Int,Audio>>()
             for (name in listOf("adaptiveFormats","formats")) {
                 val formats = streaming.optJSONArray(name) ?: continue
                 for (i in 0 until formats.length()) {
@@ -89,6 +97,9 @@ internal class NativeTrailerSource {
                         val track = f.optJSONObject("audioTrack")
                         if (track == null || track.optBoolean("audioIsDefault",true))
                             audio += f.optInt("bitrate") to Audio(address,length)
+                        // Track ids are language-REGION.n ("es-US.4"); the region is often not the viewer's.
+                        val trackLanguage = track?.optString("id").orEmpty().substringBefore('.').substringBefore('-').lowercase()
+                        if (wanted.isNotEmpty() && trackLanguage == wanted) inLanguage += f.optInt("bitrate") to Audio(address,length)
                     } else if (height in 144..720 && mime.contains("avc1")) {
                         candidates += height * 2 to Source(address,length,UA)
                     } else if (vp9 && height in 144..720 && VP9_MIME.matches(mime)) {
@@ -96,7 +107,8 @@ internal class NativeTrailerSource {
                     }
                 }
             }
-            return candidates.maxByOrNull { it.first }?.second?.copy(audio = audio.maxByOrNull { it.first }?.second)
+            val chosen = inLanguage.maxByOrNull { it.first } ?: audio.maxByOrNull { it.first }
+            return candidates.maxByOrNull { it.first }?.second?.copy(audio = chosen?.second)
         }
     }
 }

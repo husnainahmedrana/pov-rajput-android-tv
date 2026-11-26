@@ -58,6 +58,20 @@ class TrailerLanguageTest {
         assertEquals(listOf("spain000000", "named000000"), TrailerLanguage.pick(results, choice("es-ES"), "How I Met Your Mother"))
     }
 
+    @Test fun `a trailer with YouTube's English dub as default plays its Spanish track`() {
+        fun format(itag: Int, id: String?, default: Boolean, bitrate: Int) = org.json.JSONObject()
+            .put("url", "https://rr1.googlevideo.com/$itag").put("contentLength", 1000).put("bitrate", bitrate)
+            .put("mimeType", "audio/mp4; codecs=\"mp4a.40.2\"")
+            .apply { if (id != null) put("audioTrack", org.json.JSONObject().put("id", id).put("audioIsDefault", default)) }
+        val video = org.json.JSONObject().put("url", "https://rr1.googlevideo.com/v").put("contentLength", 5000)
+            .put("mimeType", "video/mp4; codecs=\"avc1.4d401f\"").put("height", 720)
+        val response = org.json.JSONObject().put("playabilityStatus", org.json.JSONObject().put("status", "OK"))
+            .put("streamingData", org.json.JSONObject().put("adaptiveFormats", org.json.JSONArray()
+                .put(video).put(format(140, "en-US.10", true, 130_000)).put(format(141, "es-US.4", false, 128_000))))
+        assertEquals("https://rr1.googlevideo.com/141", dev.pov.tv.data.NativeTrailerSource.parse(response, language = "es-ES")?.audio?.url)
+        assertEquals("https://rr1.googlevideo.com/140", dev.pov.tv.data.NativeTrailerSource.parse(response)?.audio?.url)
+    }
+
     @Test fun `a results page is read from its initial data, not from every video id on it`() {
         val html = """<script>var ytInitialData = {"contents":{"a":[
             {"adSlotRenderer":{"videoId":"adadadadada"}},

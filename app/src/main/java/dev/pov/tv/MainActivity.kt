@@ -1949,7 +1949,8 @@ class MainActivity : Activity() {
     private fun scheduleHeroTrailer(item: MediaItemData) {
         if (!trailerPermitted()) { heroTrailer?.stop(); return }
         if (heroTrailer == null) heroTrailer = HeroTrailerPreview(this, heroBackdrop, worker, ::heroTrailerVideos, ::trailerArea, ::trailerPermitted, bg, ::heroTrailerSoundEnabled, ::onHeroTrailerPlaying, ::heroTrailerFillEnabled, ::heroTrailerHighQuality,
-            { item -> TrailerLanguage.get(this).takeIf { it.isNotEmpty() }?.let { TrailerLanguage.searched(item, it) }.orEmpty() })
+            { item -> TrailerLanguage.get(this).takeIf { it.isNotEmpty() }?.let { TrailerLanguage.searched(item, it) }.orEmpty() },
+            { TrailerLanguage.get(this) })
         heroTrailer?.select(item)
     }
 

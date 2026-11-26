@@ -28,7 +28,9 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
     private val soundEnabled: () -> Boolean, private val playingChanged: (Boolean) -> Unit, private val fillScreen: () -> Boolean,
     private val highQuality: () -> Boolean = { true },
     /** More trailers found after [fetch] answered (no network), tried before the rest when one can't play. */
-    private val later: (MediaItemData) -> List<String> = { emptyList() }) {
+    private val later: (MediaItemData) -> List<String> = { emptyList() },
+    /** The trailer language chosen in Settings (empty: the video's default audio). */
+    private val audioLanguage: () -> String = { "" }) {
     private var item: MediaItemData? = null
     private val handler = Handler(Looper.getMainLooper())
     private val resolver = NativeTrailerSource()
@@ -66,7 +68,7 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
         disposePlayer(); status = "loading"; playingId = ids[index]
         val id = playingId
         worker.execute {
-            val source = runCatching { resolver.resolve(id, highQuality()) }.getOrNull()
+            val source = runCatching { resolver.resolve(id, highQuality(), audioLanguage()) }.getOrNull()
             handler.post {
                 if (ticket != serial || id != playingId || !permitted()) return@post
                 if (source == null) { android.util.Log.i("TrailerLanguage", "trailer $id: no stream found, next"); next(ticket) } else play(source, ticket)
