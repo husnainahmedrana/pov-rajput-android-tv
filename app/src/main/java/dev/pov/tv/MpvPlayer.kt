@@ -35,7 +35,7 @@ import java.util.Locale
 internal class MpvPlayer(context: Context) : SimpleBasePlayer(Looper.getMainLooper()) {
     private val app = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
-    private val mpv: MPV
+    private val mpv: MPV = Engine.get(context)
 
     private var item: MediaItem? = null
     private var startMs = 0L
@@ -121,67 +121,70 @@ internal class MpvPlayer(context: Context) : SimpleBasePlayer(Looper.getMainLoop
     }
 
     init {
-        Utils.copyAssets(app)
-        mpv = MPV(app, app.filesDir.path, app.cacheDir.path)
-        mpv.command("apply-profile", "fast")
-        mpv.setOptionString("vo", "null")
-        mpv.setOptionString("force-window", "no")
-        mpv.setOptionString("gpu-context", "android")
-        mpv.setOptionString("opengl-es", "yes")
-        // Hardware decoding straight to the picture where the chip can, copied back where it can't; software after that.
-        mpv.setOptionString("hwdec", "mediacodec,mediacodec-copy")
-        mpv.setOptionString("hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1")
-        mpv.setOptionString("ao", "audiotrack,opensles")
-        mpv.setOptionString("audio-set-media-role", "yes")
-        mpv.setOptionString("tls-verify", "yes")
-        mpv.setOptionString("tls-ca-file", "${app.filesDir.path}/cacert.pem")
-        mpv.setOptionString("sub-codepage", "auto:utf-8")
-        mpv.setOptionString("sub-use-margins", "yes")
-        mpv.setOptionString("demuxer-max-bytes", "${64 * 1024 * 1024}")
-        mpv.setOptionString("demuxer-max-back-bytes", "${32 * 1024 * 1024}")
-        mpv.setOptionString("cache-on-disk", "no")
-        // Stays on the last frame at the end, so the end is reported (and saved) like the main player's.
-        mpv.setOptionString("keep-open", "yes")
-        mpv.setOptionString("save-position-on-quit", "no")
-        mpv.setOptionString("idle", "yes")
-        mpv.setOptionString("pause", "yes")
-        mpv.setOptionString("msg-level", "all=warn")
-        // The player screen sizes the surface to the picture (and to Zoom / Stretch); mpv fills it exactly.
-        mpv.setOptionString("keepaspect", "no")
+        // Per video: paused until asked, the viewer's sound and subtitle settings, and this player's listener.
+        mpv.setPropertyString("pause", "yes")
         configureAudio()
         applySubtitleStyle()
-        mpv.observeProperty("time-pos", MPV.mpvFormat.MPV_FORMAT_DOUBLE)
-        mpv.observeProperty("duration", MPV.mpvFormat.MPV_FORMAT_DOUBLE)
-        mpv.observeProperty("demuxer-cache-time", MPV.mpvFormat.MPV_FORMAT_DOUBLE)
-        mpv.observeProperty("pause", MPV.mpvFormat.MPV_FORMAT_FLAG)
-        mpv.observeProperty("paused-for-cache", MPV.mpvFormat.MPV_FORMAT_FLAG)
-        mpv.observeProperty("seeking", MPV.mpvFormat.MPV_FORMAT_FLAG)
-        mpv.observeProperty("eof-reached", MPV.mpvFormat.MPV_FORMAT_FLAG)
-        mpv.observeProperty("dwidth", MPV.mpvFormat.MPV_FORMAT_INT64)
-        mpv.observeProperty("dheight", MPV.mpvFormat.MPV_FORMAT_INT64)
-        mpv.observeProperty("track-list", MPV.mpvFormat.MPV_FORMAT_NONE)
-        mpv.observeProperty("container-fps", MPV.mpvFormat.MPV_FORMAT_DOUBLE)
         mpv.addObserver(observer)
+    }
+
+    /**
+     * One mpv for the whole app, set up once and reused for every video. Tearing mpv down (its graphics context goes
+     * with it, in the app's own process) while the screen was still drawing crashed the app now and then on Back, and
+     * the teardown is what made Stop take 1-2 s; between videos it now only stops and lets go of the picture.
+     */
+    private object Engine {
+        @Volatile private var instance: MPV? = null
+        fun get(context: Context): MPV = instance ?: synchronized(this) {
+            instance ?: create(context.applicationContext).also { instance = it }
+        }
+        private fun create(app: Context): MPV {
+            Utils.copyAssets(app)
+            val mpv = MPV(app, app.filesDir.path, app.cacheDir.path)
+            mpv.command("apply-profile", "fast")
+            mpv.setOptionString("vo", "null")
+            mpv.setOptionString("force-window", "no")
+            mpv.setOptionString("gpu-context", "android")
+            mpv.setOptionString("opengl-es", "yes")
+            // Hardware decoding straight to the picture where the chip can, copied back where it can't; software after that.
+            mpv.setOptionString("hwdec", "mediacodec,mediacodec-copy")
+            mpv.setOptionString("hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1")
+            mpv.setOptionString("ao", "audiotrack,opensles")
+            mpv.setOptionString("audio-set-media-role", "yes")
+            mpv.setOptionString("tls-verify", "yes")
+            mpv.setOptionString("tls-ca-file", "${app.filesDir.path}/cacert.pem")
+            mpv.setOptionString("sub-codepage", "auto:utf-8")
+            mpv.setOptionString("sub-use-margins", "yes")
+            mpv.setOptionString("demuxer-max-bytes", "${64 * 1024 * 1024}")
+            mpv.setOptionString("demuxer-max-back-bytes", "${32 * 1024 * 1024}")
+            mpv.setOptionString("cache-on-disk", "no")
+            // Stays on the last frame at the end, so the end is reported (and saved) like the main player's.
+            mpv.setOptionString("keep-open", "yes")
+            mpv.setOptionString("save-position-on-quit", "no")
+            mpv.setOptionString("idle", "yes")
+            mpv.setOptionString("pause", "yes")
+            mpv.setOptionString("msg-level", "all=warn")
+            // The player screen sizes the surface to the picture (and to Zoom / Stretch); mpv fills it exactly.
+            mpv.setOptionString("keepaspect", "no")
+            for ((name, format) in listOf("time-pos" to MPV.mpvFormat.MPV_FORMAT_DOUBLE, "duration" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
+                    "demuxer-cache-time" to MPV.mpvFormat.MPV_FORMAT_DOUBLE, "pause" to MPV.mpvFormat.MPV_FORMAT_FLAG,
+                    "paused-for-cache" to MPV.mpvFormat.MPV_FORMAT_FLAG, "seeking" to MPV.mpvFormat.MPV_FORMAT_FLAG,
+                    "eof-reached" to MPV.mpvFormat.MPV_FORMAT_FLAG, "dwidth" to MPV.mpvFormat.MPV_FORMAT_INT64,
+                    "dheight" to MPV.mpvFormat.MPV_FORMAT_INT64, "track-list" to MPV.mpvFormat.MPV_FORMAT_NONE,
+                    "container-fps" to MPV.mpvFormat.MPV_FORMAT_DOUBLE)) mpv.observeProperty(name, format)
+            return mpv
+        }
     }
 
     private fun changed() { main.post { invalidateState() } }
 
     /**
-     * Sound like the main player: formats the TV takes go to it encoded (passthrough), as Settings, Audio, Audio
-     * passthrough allows; the rest is decoded without Dolby's dynamic range compression (which made dialogue quiet) and
-     * with the default volume boost.
+     * mpv decodes every audio format itself (its passthrough output never opened on the onn: playback hung at "getting
+     * ready"), without Dolby's dynamic range compression (which made dialogue quiet), with a downmix that keeps the
+     * level, and with the default volume boost. Passthrough stays with the main player.
      */
     private fun configureAudio() {
-        val mode = AudioPassthrough.mode(app)
-        val spdif = if (AudioPassthrough.surroundNever(app)) emptyList() else runCatching {
-            val caps = androidx.media3.exoplayer.audio.AudioCapabilities.getCapabilities(app, androidx.media3.common.AudioAttributes.DEFAULT, null)
-            listOf(Triple(C.ENCODING_AC3, "ac3", MimeTypes.AUDIO_AC3), Triple(C.ENCODING_E_AC3, "eac3", MimeTypes.AUDIO_E_AC3),
-                Triple(C.ENCODING_DTS, "dts", MimeTypes.AUDIO_DTS), Triple(C.ENCODING_DTS_HD, "dts-hd", MimeTypes.AUDIO_DTS_HD),
-                Triple(C.ENCODING_DOLBY_TRUEHD, "truehd", MimeTypes.AUDIO_TRUEHD))
-                .filter { (encoding, _, mime) -> caps.supportsEncoding(encoding) && !AudioPassthrough.decodes(mode, mime) }.map { it.second }
-        }.getOrDefault(emptyList())
-        if (spdif.isNotEmpty()) mpv.setOptionString("audio-spdif", spdif.joinToString(","))
-        android.util.Log.i("PovMpv", "passthrough: ${spdif.ifEmpty { listOf("none") }.joinToString(",")}")
+        mpv.setOptionString("audio-spdif", "")
         mpv.setOptionString("ad-lavc-ac3drc", "0")
         mpv.setOptionString("audio-normalize-downmix", "no")
         mpv.setOptionString("volume-gain-max", "30")
@@ -443,7 +446,7 @@ internal class MpvPlayer(context: Context) : SimpleBasePlayer(Looper.getMainLoop
         runCatching { mpv.removeObserver(observer) }
         runCatching { mpv.command("stop") }
         detach()
-        runCatching { mpv.close() }
+        // Kept for the next video (see [Engine]): never closed while the app runs.
         return Futures.immediateVoidFuture()
     }
 

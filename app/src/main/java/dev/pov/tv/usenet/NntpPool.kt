@@ -32,6 +32,8 @@ class Fetch internal constructor(val messageId: String) {
     @Volatile private var segment: Segment? = null
     @Volatile private var failure: IOException? = null
     @Volatile internal var cancelled = false
+    /** What the player is waiting on (or a backup copy of it): only an idle connection takes it, see [NntpPool.take]. */
+    @Volatile internal var urgent = false
     /** The copy came from a backup provider (ProviderChain), not the main one: for the log. */
     @Volatile var fromBackupProvider = false; internal set
     internal var attempts = 0
@@ -134,7 +136,7 @@ class NntpPool(
     }
 
     override fun hurry(fetch: Fetch) {
-        synchronized(lock) { if (queue.remove(fetch)) { queue.addFirst(fetch); lock.notify() } }
+        synchronized(lock) { if (queue.remove(fetch)) { fetch.urgent = true; queue.addFirst(fetch); lock.notify() } }
     }
 
     private fun enqueue(fetch: Fetch, urgent: Boolean) {
@@ -143,7 +145,7 @@ class NntpPool(
             if (limit == 0) { fetch.fail(refusal ?: IOException(L10n.tr(R.string.t_the_news_server_can_t_be, "The news server can't be reached."))); return }
             val now = System.nanoTime() / 1_000_000
             if (regrowAt in 1..now && limit < connections) { limit++; regrowAt = if (limit < connections) now + REGROW_MS else 0 }
-            if (urgent) queue.addFirst(fetch) else queue.addLast(fetch)
+            if (urgent) { fetch.urgent = true; queue.addFirst(fetch) } else queue.addLast(fetch)
             if (idle == 0 && workers < limit) {
                 workers++
                 Thread({ work() }, "nntp-${workers}").apply { isDaemon = true }.start()
@@ -158,8 +160,13 @@ class NntpPool(
             while (true) {
                 if (closed) return null
                 while (true) {
-                    val next = queue.pollFirst() ?: break
-                    if (!next.cancelled) return next
+                    // Priority lane: what the player waits on goes only to a connection with nothing in flight, so it
+                    // never queues behind other articles in a pipeline (5-10 s each on a slow line). Busy connections
+                    // stop topping up meanwhile, so the next one free takes it.
+                    val front = queue.peekFirst() ?: break
+                    if (front.cancelled) { queue.pollFirst(); continue }
+                    if (!block && front.urgent) return null
+                    return queue.pollFirst()
                 }
                 if (!block) return null
                 val left = (deadline - System.nanoTime()) / 1_000_000

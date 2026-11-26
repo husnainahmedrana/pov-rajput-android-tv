@@ -83,6 +83,10 @@ internal object BuiltInSeekPreviews {
     @Volatile private var cancelled = false
     /** The reads the preparation is making: OK, Back or a time limit ends them at once. */
     @Volatile private var reading: AbortableSources? = null
+    /** For the mpv picture maker while the film plays (it needs the app to start). */
+    @Volatile private var appContext: Context? = null
+    /** Keyframes fetched at once while preparing: each read mostly waits on the network, the decoder is quick. */
+    private const val READERS = 4
 
     fun playNow() { playEarly = true; reading?.abort() }
     fun cancel() { cancelled = true; reading?.abort() }
@@ -172,6 +176,7 @@ internal object BuiltInSeekPreviews {
                 seekrHas: (Long) -> Boolean = { false }, copies: List<LightCopy> = emptyList(), progress: (Int) -> Unit) {
         clear()
         playEarly = false; cancelled = false
+        appContext = context.applicationContext
         val myGeneration = synchronized(lock) { generation }
         val factory = ExternalPlayer.sources(context, SecureStore(context.applicationContext), headers)
         val reads = AbortableSources(factory)
@@ -214,7 +219,10 @@ internal object BuiltInSeekPreviews {
             reading = reads
             if (cancelled) { video.release(); throw InterruptedException("cancelled") }
             // Before playback the hardware decoder is free (it also takes 10-bit HEVC, which the CPU decoders can't).
-            grabber = HardwareKeyframes.open(video) ?: run { video.release(); throw java.io.IOException("no decoder for this video") }
+            // Videos the hardware decoder won't take (10-bit H.264, odd codecs): an invisible mpv makes the pictures.
+            grabber = HardwareKeyframes.open(video)
+                ?: MpvKeyframes.open(context, reads.linked(readSources), readFrom, video.pq, WIDTH)?.also { video.release() }
+                ?: run { video.release(); throw java.io.IOException("no decoder for this video") }
             synchronized(lock) {
                 url = address; durationMs = duration; sources = readSources; readUrl = readFrom
                 val step = slotMs()
@@ -226,6 +234,12 @@ internal object BuiltInSeekPreviews {
             val wanted = FIRST_PASS * startAtPercent / 100
             var made = 0
             val started = SystemClock.elapsedRealtime()
+            val codec = grabber as? MediaCodecKeyframes
+            if (codec != null && wanted > 0) {
+                made = prepareInParallel(codec, video, reads.linked(readSources), readFrom, wanted, myGeneration, ::limit) { done -> progress(done) }
+                android.util.Log.i(TAG, "$made previews in ${SystemClock.elapsedRealtime() - started} ms with ${grabber.name} and $READERS readers")
+                return
+            }
             while (made < wanted && !playEarly) {
                 if (cancelled || Thread.currentThread().isInterrupted || myGeneration != generation) throw InterruptedException("cancelled")
                 val at = nextSlot(-1) ?: break
@@ -268,7 +282,14 @@ internal object BuiltInSeekPreviews {
         Thread({
             val decoder: KeyframeSource = try {
                 val opened = KeyframeVideo.open(AbortableSources(factory), address)
-                SoftwareKeyframes.open(opened) ?: run { opened.release(); throw java.io.IOException("no CPU decoder for this video (10-bit?)") }
+                SoftwareKeyframes.open(opened) ?: run {
+                    // 10-bit (or HDR) while the hardware decoder plays the film: mpv's software decoder, up to 1080p (the
+                    // processor can't decode 4K keyframes beside playback).
+                    val context = appContext
+                    val small = opened.height in 1..MPV_WHILE_PLAYING_MAX_HEIGHT
+                    opened.release()
+                    if (context != null && small) MpvKeyframes.open(context, AbortableSources(factory), address, opened.pq, WIDTH) else null
+                } ?: throw java.io.IOException("no CPU decoder for this video (10-bit 4K?)")
             } catch (error: Throwable) {
                 android.util.Log.w(TAG, "no CPU decoder for the rest of the previews: ${error.message}"); return@Thread
             }
@@ -307,7 +328,56 @@ internal object BuiltInSeekPreviews {
         return out.map { it * step }
     }
 
+    /**
+     * The first pass with [READERS] readers fetching keyframes at once into a short queue, and [codec] (the hardware
+     * decoder) turning them into pictures as they arrive. Returns how many were made.
+     */
+    private fun prepareInParallel(codec: MediaCodecKeyframes, first: KeyframeVideo, sources: AbortableSources, address: String,
+                                  wanted: Int, myGeneration: Int, limit: (Long) -> java.util.concurrent.ScheduledFuture<*>,
+                                  progress: (Int) -> Unit): Int {
+        val done = Triple(-1L, ByteArray(0), -1L)
+        val queue = java.util.concurrent.LinkedBlockingQueue<Triple<Long, ByteArray, Long>>(READERS * 2)
+        val stop = java.util.concurrent.atomic.AtomicBoolean(false)
+        val readers = ArrayList<KeyframeVideo>().apply { add(first) }
+        repeat(READERS - 1) { runCatching { KeyframeVideo.open(sources, address) }.getOrNull()?.let(readers::add) }
+        val threads = readers.map { reader ->
+            Thread({
+                try {
+                    while (!stop.get()) {
+                        val at = nextSlot(-1) ?: break
+                        val keyframe = runCatching { reader.keyframe(at) }.getOrNull() ?: continue
+                        while (!stop.get() && !queue.offer(Triple(at, keyframe.first, keyframe.second), 200, java.util.concurrent.TimeUnit.MILLISECONDS)) Unit
+                    }
+                } catch (_: Exception) {
+                } finally { queue.offer(done) }
+            }, "preview-reader").apply { isDaemon = true; start() }
+        }
+        var made = 0; var ended = 0
+        try {
+            while (made < wanted && !playEarly) {
+                if (cancelled || myGeneration != generation) throw InterruptedException("cancelled")
+                val waiting = limit(FRAME_LIMIT_MS)
+                val item = queue.poll(FRAME_LIMIT_MS + 1_000, java.util.concurrent.TimeUnit.MILLISECONDS)
+                waiting.cancel(false)
+                Thread.interrupted()
+                if (item == null || sources.aborted) break                    // OK, or too slow: play with what is ready
+                if (item === done) { if (++ended >= readers.size) break else continue }
+                val frame = runCatching { codec.decode(item.second, item.third, WIDTH) }.getOrNull()
+                if (frame != null) keep(item.first, frame, myGeneration)
+                made++
+                if (made == 4 && first.unseekable()) { android.util.Log.w(TAG, "this file can't be seeked by keyframe; no previews"); clear(); return 0 }
+                progress(made * 100 / wanted.coerceAtLeast(1))
+            }
+        } finally {
+            stop.set(true); queue.clear()
+            threads.forEach { runCatching { it.join(2_000) } }
+            readers.drop(1).forEach { it.release() }                         // the first one goes with the decoder
+        }
+        return made
+    }
+
     internal const val TAG = "PovPreviews"
+    private const val MPV_WHILE_PLAYING_MAX_HEIGHT = 1088
     private const val OPEN_LIMIT_MS = 30_000L
     private const val FRAME_LIMIT_MS = 15_000L
     private const val COPY_LIMIT_MS = 20_000L
@@ -324,12 +394,18 @@ internal class AbortableSources(private val upstream: DataSource.Factory) : Data
     private val inside = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<Thread, Boolean>())
     @Volatile var aborted = false
         private set
+    private val children = java.util.concurrent.CopyOnWriteArrayList<AbortableSources>()
 
     fun abort() {
         aborted = true
         inside.forEach { it.interrupt() }
         open.forEach { runCatching { it.close() } }
+        children.forEach { it.abort() }
     }
+
+    /** Sources over [other] that are stopped together with these (OK, Back or a time limit stops both). */
+    fun linked(other: DataSource.Factory): AbortableSources =
+        (if (other === upstream) this else AbortableSources(other).also { child -> children += child; if (aborted) child.abort() })
 
     private inline fun <T> guarded(block: () -> T): T {
         if (aborted) throw java.io.InterruptedIOException("previews stopped")
@@ -356,6 +432,7 @@ internal class AbortableSources(private val upstream: DataSource.Factory) : Data
 internal class KeyframeVideo private constructor(private val extractor: MediaExtractorCompat, val format: MediaFormat) {
     val mime: String = format.getString(MediaFormat.KEY_MIME)!!.let { if (it == MediaFormat.MIMETYPE_VIDEO_DOLBY_VISION) MediaFormat.MIMETYPE_VIDEO_HEVC else it }
     val durationMs: Long? = if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION) / 1000 else null
+    val height: Int = if (format.containsKey(MediaFormat.KEY_HEIGHT)) format.getInteger(MediaFormat.KEY_HEIGHT) else 0
     /** HDR10 (PQ): the picture is brought down to SDR so the preview isn't washed out. */
     val pq: Boolean = format.containsKey(MediaFormat.KEY_COLOR_TRANSFER) && format.getInteger(MediaFormat.KEY_COLOR_TRANSFER) == MediaFormat.COLOR_TRANSFER_ST2084
     private val landed = ArrayList<Long>()
@@ -411,6 +488,11 @@ internal open class MediaCodecKeyframes protected constructor(private val video:
 
     override fun frameAt(positionMs: Long, width: Int): Bitmap? {
         val (bytes, time) = video.keyframe(positionMs) ?: return null
+        return decode(bytes, time, width)
+    }
+
+    /** One keyframe's bytes (read by any reader of the same video) as a picture [width] px wide. */
+    fun decode(bytes: ByteArray, time: Long, width: Int): Bitmap? {
         if (!started) { codec.start(); started = true } else codec.flush()
         val info = MediaCodec.BufferInfo()
         var fed = false; var endSent = false

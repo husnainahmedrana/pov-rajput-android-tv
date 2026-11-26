@@ -394,7 +394,8 @@ object InAppPlaybackSession {
         val exo: Player = if (usingMpv) MpvPlayer(application!!) else ExoPlayer.Builder(application!!, renderers)
             .setMediaSourceFactory(mediaSources)
             // A bigger cushion after each stall (Kodi-like) for links that only just keep up with the film's bitrate.
-            .setLoadControl(RebufferGuard(ReadAheadPreferences(application!!).loadControl(usenet = dev.pov.tv.data.UsenetLinks.isNzb(playing))))
+            .setLoadControl(RebufferGuard(ReadAheadPreferences(application!!).loadControl(usenet = dev.pov.tv.data.UsenetLinks.isNzb(playing)),
+                quickStartMs = RebufferGuard.USENET_QUICK_START_MS.takeIf { dev.pov.tv.data.UsenetLinks.isNzb(playing) }))
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
             .setHandleAudioBecomingNoisy(true)
             .setSeekBackIncrementMs(10_000).setSeekForwardIncrementMs(10_000).build()
@@ -636,8 +637,10 @@ object InAppPlaybackSession {
         targetView?.get()?.let { it.player = null; it.keepScreenOn = false }
         targetView = null
         mediaSession?.release(); mediaSession = null
+        // mpv's reads end at once when its loopback server closes first (Stop no longer waits on a news server).
+        mpvServer?.close(); mpvServer = null
         exo?.release(); player = null
-        mpvServer?.close(); mpvServer = null; usingMpv = false
+        usingMpv = false
         UsenetSessions.close()
         sourceUrl = ""; sourceKey = ""; sourceHeaders = emptyMap(); streamSubtitles = emptyList(); title = ""; mediaName = ""; mediaSize = null; identity = null; debridService = null; sourceAddon = null; sourceOrigin = ""; proxied = false; playbackAccount = null; lastLinkSaved = false
         remotePercent = 0.0; error = null

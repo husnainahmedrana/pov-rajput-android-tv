@@ -153,12 +153,11 @@ class UsenetStream(
     private fun schedule(index: Int) {
         synchronized(lock) {
             if (index == scheduled || closed) return
-            // The first read of a stream is often only a peek (the player reads a video's first bytes, then jumps to
-            // its seek index at the end): a full window there filled every connection with articles nobody read yet
-            // and the seek index waited behind them (12–28 s on a slow line). Only that first read starts small;
-            // anywhere after, the whole window is asked at once: one connection to a far server is slow (1–1.5
-            // Mbit/s), so playback keeps up only with every connection downloading.
-            val ahead = if (scheduled < 0) minOf(window, START_WINDOW) else window
+            // A read at a new place (the first one, a jump to the seek index, a seek, a seek preview's keyframe) is
+            // often only a peek: a full window there filled every connection with articles nobody read, and what
+            // was wanted waited behind them. Start small there; reading on to the next article means playback, and
+            // the whole window follows at once (one connection to a far server is slow, so playback needs them all).
+            val ahead = if (scheduled < 0 || index != scheduled + 1) minOf(window, START_WINDOW) else window
             scheduled = index
             val keep = (index - 1)..(index + window)
             val stale = slots.keys.filter { it !in keep && it !in pinned && !(pinEnds && (it <= 1 || it >= last - 2)) }
@@ -216,7 +215,7 @@ class UsenetStream(
         synchronized(lock) { closed = true; slots.values.forEach { it.cancel() }; slots.clear(); pinned.clear() }
     }
 
-    private companion object { const val AWAIT_MS = 60_000L; const val STALL_MS = 12_000L; const val HEDGE_MS = 3_500L; const val MAX_PINNED = 16; const val START_WINDOW = 4 }
+    private companion object { const val AWAIT_MS = 60_000L; const val STALL_MS = 12_000L; const val HEDGE_MS = 3_500L; const val MAX_PINNED = 16; const val START_WINDOW = 2 }
 }
 
 /** The availability check found articles of this release gone from every provider: choose another link. */
