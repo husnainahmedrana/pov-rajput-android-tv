@@ -26,6 +26,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -767,7 +768,7 @@ class PlayerActivity : Activity() {
         val torboxUsenet = InAppPlaybackSession.sourceAddon?.substringBefore('|') == PlaybackDebrid.TORBOX_USENET
         val deepbridUsenet = InAppPlaybackSession.sourceAddon?.substringBefore('|') == PlaybackDebrid.DEEPBRID_USENET
         view.findViewById<PlayerBadgeRow>(R.id.pov_media_badges)?.show(PlayerMediaBadges.from(PlayerMediaFacts.from(
-            InAppPlaybackSession.mediaName, InAppPlaybackSession.mediaSize, player?.videoFormat, player?.audioFormat)) +
+            InAppPlaybackSession.mediaName, InAppPlaybackSession.mediaSize, (player as? ExoPlayer)?.videoFormat, (player as? ExoPlayer)?.audioFormat)) +
             listOfNotNull(PlayerBadge("USENET", PlayerBadgeKind.USENET).takeIf { usenet },
                 PlayerBadge("TORBOX USENET", PlayerBadgeKind.USENET).takeIf { torboxUsenet },
                 PlayerBadge("DEEPBRID USENET", PlayerBadgeKind.USENET).takeIf { deepbridUsenet }))
@@ -783,7 +784,7 @@ class PlayerActivity : Activity() {
         }
         // Settings → Playback → Player engine Auto: a format or container this player can't handle plays in mpv,
         // from the same spot, instead of stopping here.
-        if (PlayerEngine.get(this) == PlayerEngine.AUTO && deadUsenetKind(error) == null && formatFailure(error)) {
+        if (PlayerEngine.get(this) == PlayerEngine.AUTO && !InAppPlaybackSession.usingMpv && deadUsenetKind(error) == null && formatFailure(error)) {
             switchToMpv(); return
         }
         if (error is VideoCompatibilityException) {
@@ -815,17 +816,19 @@ class PlayerActivity : Activity() {
 
     private var switchedToMpv = false
 
-    /** Reopens the playing link in mpv at the current spot and closes this player. */
+    /** Reopens the playing link with mpv, here in this same player screen, at the current spot. */
     private fun switchToMpv() {
         if (switchedToMpv) return
         switchedToMpv = true
         val from = InAppPlaybackSession.startIntent ?: intent
         val at = player?.currentPosition?.takeIf { it > 0 } ?: from.getLongExtra("resume", 0L)
-        val launch = MpvPlayerActivity.intentFrom(this, from).putExtra("resume", at)
+        val next = Intent(from).putExtra("resume", at).putExtra("engine_mpv", true)
         Toast.makeText(this, getString(R.string.t_switching_to_mpv), Toast.LENGTH_LONG).show()
-        InAppPlaybackSession.stop()
-        startActivity(launch)
-        finish()
+        activeDialog?.dismiss()
+        observedError = null
+        if (!InAppPlaybackSession.start(this, next)) { Toast.makeText(this, getString(R.string.t_mpv_couldnt_play), Toast.LENGTH_LONG).show(); return }
+        InAppPlaybackSession.attachPlayerView(view)
+        updateControls()
     }
 
     private enum class DeadLink { MISSING, UNPLAYABLE }
@@ -1512,7 +1515,7 @@ class PlayerActivity : Activity() {
                 val distance = kotlin.math.abs(target - from)
                 val short = minOf(SEEK_SHORT_OF_MS, (distance - SEEK_KEEP_MOVING_MS).coerceAtLeast(0)) * 1000
                 val beyond = SEEK_SNAP_MS * 1000
-                exo.setSeekParameters(if (target >= from) androidx.media3.exoplayer.SeekParameters(short, beyond)
+                (exo as? ExoPlayer)?.setSeekParameters(if (target >= from) androidx.media3.exoplayer.SeekParameters(short, beyond)
                     else androidx.media3.exoplayer.SeekParameters(beyond, short))
                 if (target >= from - ReadAheadPreferences.BACK_BUFFER_MS && target <= exo.bufferedPosition)
                     quietSeekUntil = android.os.SystemClock.uptimeMillis() + QUIET_SEEK_MS
@@ -1708,7 +1711,7 @@ class PlayerActivity : Activity() {
     /** Match frame rate "Always": the display mode whose refresh rate fits the playing video (FrameRateMatch). */
     private fun matchFrameRate() {
         val exo = player ?: return
-        val fps = exo.videoFormat?.frameRate?.takeIf { it > 0f } ?: return
+        val fps = (exo as? ExoPlayer)?.videoFormat?.frameRate?.takeIf { it > 0f } ?: return
         val link = InAppPlaybackSession.sourceUrl
         if (link == frameRateFor || FrameRateMatch.mode(this) != FrameRateMatch.ALWAYS) return
         frameRateFor = link

@@ -1944,12 +1944,7 @@
     <string name="t_engine_auto">"Auto · hoofdspeler, mpv indien nodig"</string>
     <string name="t_engine_exoplayer">"Alleen hoofdspeler"</string>
     <string name="t_engine_mpv">"Altijd mpv"</string>
-    <string name="t_opening_with_mpv">"Openen met mpv…"</string>
     <string name="t_mpv_couldnt_play">"Ook mpv kon deze link niet afspelen. Kies een andere bron."</string>
-    <string name="t_mpv_controls_hint">"OK afspelen/pauze · ◀ ▶ spoelen · ▲ ▼ audio en ondertitels · Terug sluiten"</string>
-    <string name="t_mpv_tracks">"Audio en ondertitels"</string>
-    <string name="t_mpv_audio">"Audio"</string>
-    <string name="t_mpv_subtitles">"Ondertitels"</string>
-    <string name="t_subtitles_off_mpv">"Ondertitels uit"</string>
     <string name="t_switching_to_mpv">"De hoofdspeler ondersteunt het formaat van dit bestand niet · afspelen met mpv"</string>
+    <string name="t_the_set_holds_another_archive">"Deze set bevat nog een archief (%1$s), dat niet kan worden gestreamd."</string>
 </resources>

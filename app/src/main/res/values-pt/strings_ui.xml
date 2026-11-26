@@ -1944,12 +1944,7 @@
     <string name="t_engine_auto">"Auto · player principal, mpv quando preciso"</string>
     <string name="t_engine_exoplayer">"Só o player principal"</string>
     <string name="t_engine_mpv">"Sempre mpv"</string>
-    <string name="t_opening_with_mpv">"Abrindo com mpv…"</string>
     <string name="t_mpv_couldnt_play">"O mpv também não conseguiu reproduzir este link. Escolha outra fonte."</string>
-    <string name="t_mpv_controls_hint">"OK reproduzir/pausar · ◀ ▶ avançar/voltar · ▲ ▼ áudio e legendas · Voltar fecha"</string>
-    <string name="t_mpv_tracks">"Áudio e legendas"</string>
-    <string name="t_mpv_audio">"Áudio"</string>
-    <string name="t_mpv_subtitles">"Legendas"</string>
-    <string name="t_subtitles_off_mpv">"Legendas desligadas"</string>
     <string name="t_switching_to_mpv">"O player principal não suporta o formato deste arquivo · reproduzindo com mpv"</string>
+    <string name="t_the_set_holds_another_archive">"Este conjunto contém outro arquivo compactado (%1$s), que não pode ser reproduzido por streaming."</string>
 </resources>

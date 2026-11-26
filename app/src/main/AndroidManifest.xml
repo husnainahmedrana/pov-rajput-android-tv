@@ -44,8 +44,6 @@
         <activity android:name=".UpdateActivity" android:exported="false" android:screenOrientation="${mainOrientation}" />
         <activity android:name=".PlayerActivity" android:exported="false" android:screenOrientation="${playerOrientation}"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" />
-        <activity android:name=".MpvPlayerActivity" android:exported="false" android:screenOrientation="${playerOrientation}"
-            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" />
         <activity android:name=".MainActivity" android:launchMode="singleTop" android:exported="true" android:screenOrientation="${mainOrientation}">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -6262,10 +6262,8 @@ class MainActivity : Activity() {
                 .putExtra("source_origin", playingOrigin)
                 .putExtra("stream_subtitles", dev.pov.tv.data.StreamSubtitle.toJson(playingSubtitles))
             playingMedia = null; playingSourceText = ""; switchResumeMs = null; playingAddon = null; playingOrigin = ""; playingSubtitles = emptyList()
-            // Settings → Playback → Player engine: mpv always plays here; Auto and ExoPlayer start in the main player.
-            val launch = if (PlayerEngine.get(this) == PlayerEngine.MPV) MpvPlayerActivity.intentFrom(this, intent) else intent
             @Suppress("DEPRECATION")
-            startActivityForResult(launch, PLAYBACK_REQUEST)
+            startActivityForResult(intent, PLAYBACK_REQUEST)
             identity?.let { searchStreamsInBackground(it) }
             @Suppress("DEPRECATION")
             overridePendingTransition(0, 0)

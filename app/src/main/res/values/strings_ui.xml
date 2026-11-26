@@ -1944,12 +1944,7 @@
     <string name="t_engine_auto">"Auto · main player, mpv when needed"</string>
     <string name="t_engine_exoplayer">"Main player only"</string>
     <string name="t_engine_mpv">"mpv always"</string>
-    <string name="t_opening_with_mpv">"Opening with mpv…"</string>
     <string name="t_mpv_couldnt_play">"mpv couldn\'t play this link either. Pick another source."</string>
-    <string name="t_mpv_controls_hint">"OK play/pause · ◀ ▶ seek · ▲ ▼ audio and subtitles · Back close"</string>
-    <string name="t_mpv_tracks">"Audio and subtitles"</string>
-    <string name="t_mpv_audio">"Audio"</string>
-    <string name="t_mpv_subtitles">"Subtitles"</string>
-    <string name="t_subtitles_off_mpv">"Subtitles off"</string>
     <string name="t_switching_to_mpv">"This file\'s format isn\'t supported by the main player · playing it with mpv"</string>
+    <string name="t_the_set_holds_another_archive">"This set holds another archive inside (%1$s), which can't be streamed."</string>
 </resources>

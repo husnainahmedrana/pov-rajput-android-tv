@@ -119,6 +119,8 @@ object UsenetMedia {
     private class OutOfOrderException : java.io.IOException(L10n.tr(R.string.t_the_set_s_parts_are_out, "The set's parts are out of order."))
 
     private const val HEAD_PEEK = 64 * 1024
+    /** A file this big without a video extension may still be the video (its first bytes decide). */
+    private const val UNNAMED_VIDEO_MIN = 50L * 1024 * 1024
     /** From the Cues' start: two articles' worth. A bigger index (a remux) continues with the player's own read-ahead. */
     private const val CUES_BYTES = 2L * 1024 * 1024
     /** An MKV whose SeekHead doesn't list its Cues: they are nearly always at the very end. */
@@ -218,12 +220,17 @@ object UsenetMedia {
         try {
             first.prepare()
             val entries = Rar.entries(first)
+            // Every name in full: a set refused for its contents can then be understood from the log.
+            log("RAR first volume holds: " + entries.joinToString(" | ") { "${it.name} (${it.unpackedSize} bytes${if (it.stored) "" else ", compressed"})" })
             val entry = entries.filter { isVideo(it.name) }.maxByOrNull { it.unpackedSize } ?: entries.maxByOrNull { it.unpackedSize }
                 ?: throw UnsupportedSetException(L10n.tr(R.string.t_the_set_holds_no_file, "The set holds no file."))
             if (entry.splitBefore) { if (!trusted) throw OutOfOrderException(); throw UnsupportedSetException(L10n.tr(R.string.t_the_set_s_first_part_is, "The set's first part is missing.")) }
             if (entry.encrypted) throw UnsupportedSetException(L10n.tr(R.string.t_this_set_is_password_protected, "This set is password-protected."))
             if (!entry.stored) throw UnsupportedSetException(L10n.tr(R.string.t_this_set_is_compressed_so_it, "This set is compressed, so it can't be streamed."))
-            if (!isVideo(entry.name)) throw UnsupportedSetException(L10n.tr(R.string.t_the_set_holds_no_video_x, "The set holds no video (%1\$s).", entry.name.take(60)))
+            // The biggest file without a video extension (renamed or obfuscated inside the set) is still played when its
+            // first bytes are a video's; that is checked below, once its pieces are known.
+            val named = isVideo(entry.name)
+            if (!named && entry.unpackedSize < UNNAMED_VIDEO_MIN) throw UnsupportedSetException(L10n.tr(R.string.t_the_set_holds_no_video_x, "The set holds no video (%1\$s).", entry.name.takeLast(60)))
             val pieces = ArrayList<VolumeSet.Piece>()
             pieces += VolumeSet.Piece(first, entry.dataOffset, minOf(entry.packedSize, entry.unpackedSize))
             var left = entry.unpackedSize - pieces[0].length
@@ -255,7 +262,15 @@ object UsenetMedia {
             // seek index prefetch below reaches it; an unprepared volume would skip the prefetch.
             if (pieces.size > 1) pieces.last().volume.prepare()
             log("RAR set: ${entry.name} · ${entry.unpackedSize} bytes in ${pieces.size} of ${volumes.size} parts")
-            return warmIndex(Opened(VolumeSet(entry.unpackedSize, pieces), entry.name, if (pieces.size == 1) "RAR" else "RAR · ${pieces.size} parts"), log)
+            val set = VolumeSet(entry.unpackedSize, pieces)
+            if (!named) {
+                val start = head(set)
+                log("the set's file has no video extension; it starts ${hex(start)}")
+                if (!looksLikeVideo(start)) throw UnsupportedSetException(
+                    if (Rar.isRar(start) || isSevenZip(start)) L10n.tr(R.string.t_the_set_holds_another_archive, "This set holds another archive inside (%1\$s), which can't be streamed.", entry.name.takeLast(60))
+                    else L10n.tr(R.string.t_the_set_holds_no_video_x, "The set holds no video (%1\$s).", entry.name.takeLast(60)))
+            }
+            return warmIndex(Opened(set, entry.name, if (pieces.size == 1) "RAR" else "RAR · ${pieces.size} parts"), log)
         } catch (error: Exception) {
             opened.forEach { it.close() }
             throw error

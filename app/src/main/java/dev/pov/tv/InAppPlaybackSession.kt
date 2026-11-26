@@ -50,7 +50,11 @@ import java.util.concurrent.Executors
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 object InAppPlaybackSession {
     private var application: Application? = null
-    private var player: ExoPlayer? = null
+    private var player: Player? = null
+    /** The loopback server mpv reads the link from (Usenet, Easynews, headers, the proxy route); null with ExoPlayer. */
+    private var mpvServer: LocalStreamServer? = null
+    /** True while mpv plays this video (Settings → Player engine, or the Auto switch after a format failure). */
+    var usingMpv = false; private set
     private var mediaSession: MediaSession? = null
     private var targetView: WeakReference<PlayerView>? = null
     private lateinit var history: PlaybackStore
@@ -99,7 +103,7 @@ object InAppPlaybackSession {
         private set
     var error: PlaybackException? = null
         private set
-    val playerOrNull: ExoPlayer? get() = player
+    val playerOrNull: Player? get() = player
     internal val playbackIdentity: PlaybackIdentity? get() = identity
     internal fun secureValue(key: String): String = if (::secureStore.isInitialized) secureStore.get(key) else ""
     internal val volumeBoost = SessionVolumeBoost(
@@ -129,7 +133,7 @@ object InAppPlaybackSession {
     private const val MAX_DEVICE_RECOVERIES = 5
     private const val AIO_SOURCE_RETRIES = 6
     private const val AIO_RETRY_DELAY_MS = 2_000L
-    private val surfaceAttachment = SurfaceReadyAttachment<ExoPlayer, PlayerView>(
+    private val surfaceAttachment = SurfaceReadyAttachment<Player, PlayerView>(
         currentSession = { player?.takeUnless { releasing } },
         isReady = { view ->
             view.isAttachedToWindow && view.isShown && view.windowVisibility == View.VISIBLE &&
@@ -378,7 +382,16 @@ object InAppPlaybackSession {
                 override fun getRetryDelayMsFor(info: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo): Long =
                     if (refusedUsenet(info.exception)) C.TIME_UNSET else super.getRetryDelayMsFor(info)
             })
-        val exo = ExoPlayer.Builder(application!!, renderers)
+        // Settings → Playback → Player engine mpv, or the Auto switch after this player couldn't play the file: mpv
+        // behind the same player interface, reading the link through a loopback server built from the same sources.
+        usingMpv = intent.getBooleanExtra("engine_mpv", false) || PlayerEngine.get(application!!) == PlayerEngine.MPV
+        mpvServer?.close(); mpvServer = null
+        if (usingMpv) {
+            val name = mediaName.substringBefore(" · ").lineSequence().firstOrNull()?.trim().orEmpty().ifBlank { title }
+            mpvServer = try { LocalStreamServer(playerSources, Uri.parse(routed.url), name) { android.util.Log.i("PovMpv", it) } }
+                catch (failure: Exception) { android.util.Log.w("PovMpv", "local server failed", failure); usingMpv = false; null }
+        }
+        val exo: Player = if (usingMpv) MpvPlayer(application!!) else ExoPlayer.Builder(application!!, renderers)
             .setMediaSourceFactory(mediaSources)
             // A bigger cushion after each stall (Kodi-like) for links that only just keep up with the film's bitrate.
             .setLoadControl(RebufferGuard(ReadAheadPreferences(application!!).loadControl(usenet = dev.pov.tv.data.UsenetLinks.isNzb(playing))))
@@ -388,7 +401,7 @@ object InAppPlaybackSession {
         player = exo
         // Match frame rate: Off keeps the TV as it is; otherwise Android may switch where it's seamless. "Always" is
         // done by the player screen itself (FrameRateMatch), which asks the TV for a fitting display mode.
-        exo.videoChangeFrameRateStrategy = if (FrameRateMatch.mode(application!!) == FrameRateMatch.SEAMLESS)
+        (exo as? ExoPlayer)?.videoChangeFrameRateStrategy = if (FrameRateMatch.mode(application!!) == FrameRateMatch.SEAMLESS)
             C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
         exo.trackSelectionParameters = SubtitlePreferences(application!!).trackParameters(exo.trackSelectionParameters)
         exo.trackSelectionParameters = AudioPreferences(application!!).trackParameters(exo.trackSelectionParameters)
@@ -540,7 +553,7 @@ object InAppPlaybackSession {
                 notifyChanged()
             }
         })
-        exo.setMediaItem(MediaItem.Builder().setUri(routed.url)
+        exo.setMediaItem(MediaItem.Builder().setUri(mpvServer?.address ?: routed.url)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build())
         exo.seekTo(position)
         exo.prepare()
@@ -623,6 +636,7 @@ object InAppPlaybackSession {
         targetView = null
         mediaSession?.release(); mediaSession = null
         exo?.release(); player = null
+        mpvServer?.close(); mpvServer = null; usingMpv = false
         UsenetSessions.close()
         sourceUrl = ""; sourceKey = ""; sourceHeaders = emptyMap(); streamSubtitles = emptyList(); title = ""; mediaName = ""; mediaSize = null; identity = null; debridService = null; sourceAddon = null; sourceOrigin = ""; proxied = false; playbackAccount = null; lastLinkSaved = false
         remotePercent = 0.0; error = null
@@ -695,11 +709,11 @@ object InAppPlaybackSession {
      *   would not open): the audio is opened again.
      * Encoded passthrough the device refuses to open is handled after this, by decoding that format in the app.
      */
-    private fun recoverOnDevice(exo: ExoPlayer, failure: PlaybackException): Boolean {
+    private fun recoverOnDevice(exo: Player, failure: PlaybackException): Boolean {
         if (error != null || deviceRecoveries >= MAX_DEVICE_RECOVERIES) return false
         val playback = failure as? androidx.media3.exoplayer.ExoPlaybackException ?: return false
         if (playback.type != androidx.media3.exoplayer.ExoPlaybackException.TYPE_RENDERER) return false
-        val type = runCatching { exo.getRendererType(playback.rendererIndex) }.getOrDefault(C.TRACK_TYPE_UNKNOWN)
+        val type = runCatching { (exo as? ExoPlayer)?.getRendererType(playback.rendererIndex) ?: C.TRACK_TYPE_UNKNOWN }.getOrDefault(C.TRACK_TYPE_UNKNOWN)
         val code = failure.errorCode
         val decoderFailure = code in setOf(PlaybackException.ERROR_CODE_DECODER_INIT_FAILED, PlaybackException.ERROR_CODE_DECODING_FAILED,
             PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED, PlaybackException.ERROR_CODE_DECODING_RESOURCES_RECLAIMED)
@@ -764,7 +778,7 @@ object InAppPlaybackSession {
         notifyChanged()
     }
 
-    private fun isCurrent(exo: ExoPlayer) = !releasing && player === exo
+    private fun isCurrent(exo: Player) = !releasing && player === exo
 
     /** Intro, recap and credits times for the current video, once found (the player shows Skip buttons for them). */
     @Volatile var skipSegments: List<dev.pov.tv.data.SkipSegment> = emptyList()
@@ -772,7 +786,7 @@ object InAppPlaybackSession {
     private var skipLookupFor = ""
 
     /** Once per video, when its length is known: the length picks the matching cut in the skip databases. */
-    private fun lookUpSkips(exo: ExoPlayer) {
+    private fun lookUpSkips(exo: Player) {
         val media = identity ?: return
         val app = application ?: return
         val duration = exo.duration.takeIf { it > 0 && it != C.TIME_UNSET } ?: return
@@ -819,7 +833,7 @@ object InAppPlaybackSession {
      * from OpenSubtitles, Wyzie/SubDL with the viewer's keys, the viewer's own subtitle add-ons and the subtitles the
      * link's add-on sent with it, added as extra subtitle tracks. The first one is chosen.
      */
-    private fun findMissingSubtitles(exo: ExoPlayer, tracks: Tracks) {
+    private fun findMissingSubtitles(exo: Player, tracks: Tracks) {
         if (externalSubtitlesChecked || tracks.groups.none { it.type == C.TRACK_TYPE_VIDEO || it.type == C.TRACK_TYPE_AUDIO }) return
         externalSubtitlesChecked = true
         val app = application ?: return
@@ -882,7 +896,7 @@ object InAppPlaybackSession {
      * Auto subtitle sync: a subtitle Nabrio added (not the file's own, not one sent with the stream) is lined up with a
      * subtitle made for this exact file, once per subtitle, unless the viewer has moved the timing by hand.
      */
-    private fun autoSyncSubtitles(exo: ExoPlayer, tracks: Tracks) {
+    private fun autoSyncSubtitles(exo: Player, tracks: Tracks) {
         if (SubtitleSync.manual) return
         val chosen = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
             .firstNotNullOfOrNull { group -> (0 until group.length).firstOrNull(group::isTrackSelected)?.let { group.getTrackFormat(it) } } ?: return
@@ -911,7 +925,7 @@ object InAppPlaybackSession {
      * Spanish (Latin America) chosen: files often tag both Spanish tracks "spa", so among several Spanish audio tracks
      * the one named Latino / Latin / LAT / México / es-419 is chosen. Once per video, never over the viewer's own pick.
      */
-    private fun preferLatinSpanishAudio(exo: ExoPlayer, tracks: Tracks) {
+    private fun preferLatinSpanishAudio(exo: Player, tracks: Tracks) {
         if (latinAudioChecked) return
         val audio = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
         if (audio.isEmpty()) return
@@ -931,7 +945,7 @@ object InAppPlaybackSession {
             .setOverrideForType(androidx.media3.common.TrackSelectionOverride(pick.first.mediaTrackGroup, pick.second)).build()
     }
 
-    private fun preferFullSubtitles(exo: ExoPlayer, tracks: Tracks) {
+    private fun preferFullSubtitles(exo: Player, tracks: Tracks) {
         if (subtitlesChecked) return
         val text = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
         if (text.isEmpty()) return
@@ -971,9 +985,9 @@ object InAppPlaybackSession {
             else view.viewTreeObserver.takeIf { it.isAlive }?.removeOnPreDrawListener(preDraw)
         }
     }
-    private fun enforceVideoCompatibility(exo: ExoPlayer, tracks: Tracks = exo.currentTracks): Boolean {
+    private fun enforceVideoCompatibility(exo: Player, tracks: Tracks = exo.currentTracks): Boolean {
         val existing = error as? VideoCompatibilityException
-        val issue = existing?.issue ?: VideoPlaybackCompatibility.issue(tracks, exo.playbackState, exo.videoFormat)
+        val issue = existing?.issue ?: VideoPlaybackCompatibility.issue(tracks, exo.playbackState, (exo as? ExoPlayer)?.videoFormat)
         if (issue == null) return false
         if (existing == null) error = VideoCompatibilityException(issue)
         resumeAfterBackground = false
