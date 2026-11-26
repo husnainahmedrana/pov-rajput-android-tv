@@ -15,21 +15,28 @@ import java.util.concurrent.ConcurrentHashMap
 internal object TrailerLanguage {
     /**
      * [code] as TMDB writes it (language-COUNTRY); [search] is how a trailer in that language is called on YouTube.
-     * A search result is kept only when its title (without accents, lower case) has one of [want] and none of [avoid].
+     * A search result is kept when its title (without accents, lower case) has none of [avoid] and either it comes from a
+     * channel whose name has one of [channels] (a studio's own channel for that country, as "Universal Spain" or "Sony
+     * Pictures España", which titles its dub only "Tráiler oficial"), first, or its title has one of [want]. Channels
+     * with one of [otherChannels] (the same language elsewhere, as "Sony Pictures México" for Castilian) never count.
      */
-    data class Choice(val code: String, val label: String, val search: String, val want: List<String> = emptyList(), val avoid: List<String> = emptyList())
+    data class Choice(val code: String, val label: String, val search: String, val want: List<String> = emptyList(), val avoid: List<String> = emptyList(),
+        val channels: List<String> = emptyList(), val otherChannels: List<String> = emptyList())
 
+    private val LATIN_AMERICA = listOf("mexico", "latam", "latino", "latinoamerica", "argentina", "colombia", "chile", "peru")
     private val SUBTITLED = listOf("subtitul", " sub ", " sub-", "(sub", "[sub", " subs ", "vose", "vostfr", "legendad", "untertitel", "sottotitol", "ondertitel")
     val CHOICES = listOf(
         Choice("", "", ""),
-        Choice("es-ES", "Español (España)", "tráiler castellano", listOf("castellano", "espanol", "espana"), listOf("latino", "latinoamerica", "mexico") + SUBTITLED),
-        Choice("es-MX", "Español (Latinoamérica)", "tráiler español latino", listOf("latino", "espanol"), listOf("castellano", "espana") + SUBTITLED),
-        Choice("fr-FR", "Français", "bande annonce VF", listOf(" vf", "vf ", "francais", "french"), listOf("quebec") + SUBTITLED),
-        Choice("de-DE", "Deutsch", "trailer deutsch", listOf("deutsch", "german"), SUBTITLED),
-        Choice("it-IT", "Italiano", "trailer italiano", listOf("italiano", " ita ", " ita)", "(ita"), SUBTITLED),
+        Choice("es-ES", "Español (España)", "tráiler castellano", listOf("castellano", "espanol", "espana"), listOf("latino", "latinoamerica", "mexico") + SUBTITLED,
+            listOf("spain", "espana"), LATIN_AMERICA),
+        Choice("es-MX", "Español (Latinoamérica)", "tráiler español latino", listOf("latino", "espanol"), listOf("castellano", "espana") + SUBTITLED,
+            LATIN_AMERICA, listOf("spain", "espana")),
+        Choice("fr-FR", "Français", "bande annonce VF", listOf(" vf", "vf ", "francais", "french"), listOf("quebec") + SUBTITLED, listOf("france"), listOf("quebec", "canada")),
+        Choice("de-DE", "Deutsch", "trailer deutsch", listOf("deutsch", "german"), SUBTITLED, listOf("deutschland", "germany")),
+        Choice("it-IT", "Italiano", "trailer italiano", listOf("italiano", " ita ", " ita)", "(ita"), SUBTITLED, listOf("italia", "italy")),
         Choice("nl-NL", "Nederlands", "trailer nederlands", listOf("nederlands", "dutch", "vlaams"), emptyList()),
-        Choice("pt-BR", "Português (Brasil)", "trailer dublado", listOf("dublado", "portugues", "brasil"), listOf("portugal") + SUBTITLED),
-        Choice("pt-PT", "Português (Portugal)", "trailer português", listOf("portugal", "portugues", "pt-pt"), listOf("dublado", "brasil") + SUBTITLED),
+        Choice("pt-BR", "Português (Brasil)", "trailer dublado", listOf("dublado", "portugues", "brasil"), listOf("portugal") + SUBTITLED, listOf("brasil", "brazil"), listOf("portugal")),
+        Choice("pt-PT", "Português (Portugal)", "trailer português", listOf("portugal", "portugues", "pt-pt"), listOf("dublado", "brasil") + SUBTITLED, listOf("portugal"), listOf("brasil", "brazil")),
         Choice("hi-IN", "हिन्दी", "trailer hindi", listOf("hindi", "हिन्दी", "हिंदी"), emptyList()),
         Choice("ur-PK", "اردو", "trailer urdu", listOf("urdu", "اردو"), emptyList()),
     )
@@ -66,13 +73,13 @@ internal object TrailerLanguage {
     private fun youtube(item: MediaItemData, choice: Choice): List<String> {
         val query = listOf(item.title, item.year.take(4), choice.search).filter { it.isNotBlank() }.joinToString(" ")
         val language = choice.code.substringBefore('-')
-        val html = Net.raw("https://www.youtube.com/results?search_query=${Net.encode(query)}&hl=$language",
+        val html = Net.raw("https://www.youtube.com/results?search_query=${Net.encode(query)}&hl=$language&gl=${choice.code.substringAfter('-')}",
             headers = mapOf("Accept-Language" to "${choice.code},$language;q=0.9"))
         return pick(results(html), choice)
     }
 
     /** A search result: its video id, title and length in seconds (0 when YouTube gave none, as for a live stream). */
-    data class Result(val id: String, val title: String, val seconds: Int)
+    data class Result(val id: String, val title: String, val seconds: Int, val channel: String = "")
 
     /** The videos of a YouTube results page, in order (its ytInitialData; ads, shorts shelves and channels skipped). */
     internal fun results(html: String): List<Result> {
@@ -88,8 +95,10 @@ internal object TrailerLanguage {
                         val title = (0 until (runs?.length() ?: 0)).joinToString("") { runs!!.optJSONObject(it)?.optString("text").orEmpty() }
                         val length = video.optJSONObject("lengthText")?.optString("simpleText").orEmpty()
                         val seconds = length.split(':').fold(0) { total, part -> total * 60 + (part.trim().toIntOrNull() ?: return@let) }
+                        val owner = video.optJSONObject("ownerText")?.optJSONArray("runs")
+                        val channel = (0 until (owner?.length() ?: 0)).joinToString("") { owner!!.optJSONObject(it)?.optString("text").orEmpty() }
                         val id = video.optString("videoId")
-                        if (id.matches(Regex("[A-Za-z0-9_-]{11}"))) found += Result(id, title, seconds)
+                        if (id.matches(Regex("[A-Za-z0-9_-]{11}"))) found += Result(id, title, seconds, channel)
                         return
                     }
                     if (value.has("reelShelfRenderer") || value.has("adSlotRenderer")) return
@@ -102,12 +111,21 @@ internal object TrailerLanguage {
         return found
     }
 
-    /** The results that are a trailer in [choice]'s language, by their titles: up to three, in YouTube's order. */
-    internal fun pick(results: List<Result>, choice: Choice): List<String> = results.filter { result ->
-        val title = " " + plain(result.title) + " "
-        result.seconds in 30..300 && choice.want.any { plain(it) in title } && choice.avoid.none { plain(it) in title } &&
-            NOT_A_TRAILER.none { it in title }
-    }.map { it.id }.distinct().take(3)
+    /**
+     * The results that are a trailer in [choice]'s language: the country's own studio channels first, then uploads whose
+     * titles name the language; up to three, otherwise in YouTube's order.
+     */
+    internal fun pick(results: List<Result>, choice: Choice): List<String> {
+        val usable = results.filter { result ->
+            val title = " " + plain(result.title) + " "
+            val channel = " " + plain(result.channel) + " "
+            result.seconds in 30..300 && choice.avoid.none { plain(it) in title } && NOT_A_TRAILER.none { it in title } &&
+                choice.otherChannels.none { plain(it) in channel }
+        }
+        val official = usable.filter { result -> choice.channels.any { plain(it) in " " + plain(result.channel) + " " } }
+        val named = usable.filter { result -> choice.want.any { plain(it) in " " + plain(result.title) + " " } }
+        return (official + named).map { it.id }.distinct().take(3)
+    }
 
     /** Lower case without accents (tráiler → trailer, español → espanol); other scripts stay as they are. */
     private fun plain(text: String): String = java.text.Normalizer.normalize(text.lowercase(), java.text.Normalizer.Form.NFD)

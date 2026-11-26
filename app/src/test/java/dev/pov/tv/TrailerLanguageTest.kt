@@ -26,6 +26,17 @@ class TrailerLanguageTest {
         assertEquals(listOf("lat").map { it.padEnd(11, 'x') }, TrailerLanguage.pick(results.take(2), choice("es-MX")))
     }
 
+    @Test fun `castilian puts Spain's studio channel first and skips Mexico's`() {
+        val results = listOf(
+            TrailerLanguage.Result("aggregator1", "LA ODISEA Tráiler Oficial Español (2026)", 129, "Trailers In Spanish"),
+            TrailerLanguage.Result("mexico00000", "La Odisea | Tráiler Oficial (Universal Pictures)", 145, "Universal Pictures México"),
+            TrailerLanguage.Result("spain000000", "LA ODISEA - Tráiler Oficial (Universal Pictures) HD", 145, "Universal Spain"),
+            TrailerLanguage.Result("english0000", "The Odyssey | Official New Trailer", 152, "Universal Pictures"),
+        )
+        assertEquals(listOf("spain000000", "aggregator1"), TrailerLanguage.pick(results, choice("es-ES")))
+        assertEquals(listOf("mexico00000", "aggregator1"), TrailerLanguage.pick(results, choice("es-MX")))
+    }
+
     @Test fun `a results page is read from its initial data, not from every video id on it`() {
         val html = """<script>var ytInitialData = {"contents":{"a":[
             {"adSlotRenderer":{"videoId":"adadadadada"}},
