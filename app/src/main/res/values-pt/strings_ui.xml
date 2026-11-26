@@ -1939,4 +1939,17 @@
     <string name="t_missing_release_trying_next">"Release indisponível · tentando o próximo link: %1$s"</string>
     <string name="t_link_cant_stream_trying_next">"Este link não pode ser reproduzido · tentando o próximo: %1$s"</string>
     <string name="t_release_missing_pick_another">"Esta release não está mais nos seus provedores de news e não há outro link. Escolha outra fonte."</string>
+    <string name="t_player_engine">"Motor do player"</string>
+    <string name="t_player_engine_hint">"Auto reproduz no player principal e muda sozinho para o mpv se o formato ou contêiner não for suportado. O mpv reproduz quase tudo, com controles mais simples."</string>
+    <string name="t_engine_auto">"Auto · player principal, mpv quando preciso"</string>
+    <string name="t_engine_exoplayer">"Só o player principal"</string>
+    <string name="t_engine_mpv">"Sempre mpv"</string>
+    <string name="t_opening_with_mpv">"Abrindo com mpv…"</string>
+    <string name="t_mpv_couldnt_play">"O mpv também não conseguiu reproduzir este link. Escolha outra fonte."</string>
+    <string name="t_mpv_controls_hint">"OK reproduzir/pausar · ◀ ▶ avançar/voltar · ▲ ▼ áudio e legendas · Voltar fecha"</string>
+    <string name="t_mpv_tracks">"Áudio e legendas"</string>
+    <string name="t_mpv_audio">"Áudio"</string>
+    <string name="t_mpv_subtitles">"Legendas"</string>
+    <string name="t_subtitles_off_mpv">"Legendas desligadas"</string>
+    <string name="t_switching_to_mpv">"O player principal não suporta o formato deste arquivo · reproduzindo com mpv"</string>
 </resources>

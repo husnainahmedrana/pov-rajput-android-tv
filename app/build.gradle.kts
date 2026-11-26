@@ -103,6 +103,9 @@ android {
         resources.excludes += setOf("META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*")
         // Every Nabrio device is ARM (TVs, boxes, phones); the x86 FFmpeg builds would only add size.
         jniLibs.excludes += setOf("lib/x86/**", "lib/x86_64/**")
+        // mpv and FFmpeg are ~85 MB of native code: compressed in the APK (unpacked once on install) the download is
+        // about half the size, which matters for updates over slow lines.
+        jniLibs.useLegacyPackaging = true
     }
 }
 
@@ -121,6 +124,8 @@ dependencies {
     implementation("androidx.media3:media3-inspector:1.11.1")
     // Phones (and many TVs for DTS/TrueHD) lack these decoders; FFmpeg decodes them to PCM in software.
     implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1")
+    // mpv (libmpv with its own FFmpeg): the second engine for formats and containers ExoPlayer can't play.
+    implementation("io.github.abdallahmehiz:mpv-android-lib:0.2.1")
     // NextLib FFmpeg (37 MB build) removed 2026-11-21; see the 37 MB backup to bring it back
     // Artwork only: HTTP/2 shares one connection per image server, with a disk cache for posters.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

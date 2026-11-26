@@ -781,6 +781,11 @@ class PlayerActivity : Activity() {
         if (cachedLinkAttempt) {
             cachedLinkAttempt = false; setResult(RESULT_FIRST_USER, Intent().putExtra("cached_identity", intent.getStringExtra("identity"))); InAppPlaybackSession.stop(); finish(); return
         }
+        // Settings → Playback → Player engine Auto: a format or container this player can't handle plays in mpv,
+        // from the same spot, instead of stopping here.
+        if (PlayerEngine.get(this) == PlayerEngine.AUTO && deadUsenetKind(error) == null && formatFailure(error)) {
+            switchToMpv(); return
+        }
         if (error is VideoCompatibilityException) {
             showSheet(getString(R.string.t_choose_a_compatible_video), error.issue.message,
                 listOf(PlayerSheetChoice(getString(R.string.t_choose_another_source)) { showStreams() }))
@@ -801,6 +806,26 @@ class PlayerActivity : Activity() {
                 // The title's other links open right here in the Streams panel; picking one continues from the same spot.
                 PlayerSheetChoice(getString(R.string.t_browse_sources)) { showStreams() }
             ))
+    }
+
+    /** A failure about the file's format (decoder, container), not the network or the link: another engine may play it. */
+    private fun formatFailure(error: PlaybackException): Boolean = error is VideoCompatibilityException ||
+        error.errorCode in PlaybackException.ERROR_CODE_DECODER_INIT_FAILED..PlaybackException.ERROR_CODE_DECODING_RESOURCES_RECLAIMED ||
+        error.errorCode in PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED..PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED
+
+    private var switchedToMpv = false
+
+    /** Reopens the playing link in mpv at the current spot and closes this player. */
+    private fun switchToMpv() {
+        if (switchedToMpv) return
+        switchedToMpv = true
+        val from = InAppPlaybackSession.startIntent ?: intent
+        val at = player?.currentPosition?.takeIf { it > 0 } ?: from.getLongExtra("resume", 0L)
+        val launch = MpvPlayerActivity.intentFrom(this, from).putExtra("resume", at)
+        Toast.makeText(this, getString(R.string.t_switching_to_mpv), Toast.LENGTH_LONG).show()
+        InAppPlaybackSession.stop()
+        startActivity(launch)
+        finish()
     }
 
     private enum class DeadLink { MISSING, UNPLAYABLE }

@@ -1939,4 +1939,17 @@
     <string name="t_missing_release_trying_next">"Release manquante · essai du lien suivant : %1$s"</string>
     <string name="t_link_cant_stream_trying_next">"Ce lien ne peut pas être lu · essai du lien suivant : %1$s"</string>
     <string name="t_release_missing_pick_another">"Cette release n'est plus chez vos fournisseurs de news et il ne reste aucun autre lien. Choisissez une autre source."</string>
+    <string name="t_player_engine">"Moteur du lecteur"</string>
+    <string name="t_player_engine_hint">"Auto lit dans le lecteur principal et passe tout seul à mpv si le format ou le conteneur n\'est pas pris en charge. mpv lit presque tout, avec des commandes plus simples."</string>
+    <string name="t_engine_auto">"Auto · lecteur principal, mpv si besoin"</string>
+    <string name="t_engine_exoplayer">"Lecteur principal seulement"</string>
+    <string name="t_engine_mpv">"Toujours mpv"</string>
+    <string name="t_opening_with_mpv">"Ouverture avec mpv…"</string>
+    <string name="t_mpv_couldnt_play">"mpv n\'a pas pu lire ce lien non plus. Choisissez une autre source."</string>
+    <string name="t_mpv_controls_hint">"OK lecture/pause · ◀ ▶ avancer/reculer · ▲ ▼ audio et sous-titres · Retour fermer"</string>
+    <string name="t_mpv_tracks">"Audio et sous-titres"</string>
+    <string name="t_mpv_audio">"Audio"</string>
+    <string name="t_mpv_subtitles">"Sous-titres"</string>
+    <string name="t_subtitles_off_mpv">"Sous-titres désactivés"</string>
+    <string name="t_switching_to_mpv">"Le lecteur principal ne prend pas en charge ce format · lecture avec mpv"</string>
 </resources>

@@ -52,7 +52,8 @@ internal object VideoPlaybackCompatibility {
      * decoder at all stops playback; a real decoder failure still ends in the player's error.
      */
     fun issue(tracks: Tracks, playbackState: Int, actualVideoFormat: Format? = null, strict: Boolean = DeviceLayout.tv): VideoCompatibilityIssue? {
-        fun playable(support: Int) = support == C.FORMAT_HANDLED || (!strict && support == C.FORMAT_EXCEEDS_CAPABILITIES)
+        fun playable(candidate: Candidate) = candidate.support == C.FORMAT_HANDLED ||
+            (candidate.support == C.FORMAT_EXCEEDS_CAPABILITIES && (!strict || hardwareFits(candidate.format)))
         if (playbackState == Player.STATE_IDLE || playbackState == Player.STATE_ENDED) return null
         val video = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }.flatMap { group ->
             (0 until group.length).map { index ->
@@ -67,13 +68,36 @@ internal object VideoPlaybackCompatibility {
         // An adaptive selection can contain several representations. Only an actual matching
         // unsupported format proves that its handled alternatives aren't currently being used.
         val actual = actualVideoFormat?.let { format -> selected.firstOrNull { it.format == format } }
-        if (actual != null && !playable(actual.support)) return failure(actual)
-        if (selected.any { playable(it.support) }) return null
+        if (actual != null && !playable(actual)) return failure(actual)
+        if (selected.any { playable(it) }) return null
         if (selected.isNotEmpty()) return failure(selected.first())
-        if (video.none { playable(it.support) }) {
+        if (video.none { playable(it) }) {
             return failure(video.firstOrNull { it.support == C.FORMAT_EXCEEDS_CAPABILITIES } ?: video.first())
         }
         return if (playbackState == Player.STATE_READY) VideoCompatibilityIssue(VideoCompatibilityReason.NO_SELECTED_VIDEO) else null
+    }
+
+    private val fits = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    /**
+     * The device's own hardware decoder for this codec takes this size at this frame rate (24–30 fps when the file
+     * doesn't say), although the track's profile/level label is above what the decoder advertises: e.g. a 4K H.264 film
+     * labelled level 5.2 on a decoder listed up to 5.1 but able to decode 3840×2160 at 30 fps. The label is a ceiling,
+     * not the film's real demand, so such a track is tried instead of refused. Dolby Vision keeps the strict check.
+     */
+    private fun hardwareFits(format: Format): Boolean {
+        val mime = format.sampleMimeType ?: return false
+        if (mime == MimeTypes.VIDEO_DOLBY_VISION || format.width <= 0 || format.height <= 0) return false
+        val fps = if (format.frameRate > 0) format.frameRate.toDouble() else 30.0
+        return fits.getOrPut("$mime ${format.width}x${format.height}@$fps") {
+            runCatching {
+                android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
+                    !info.isEncoder && (android.os.Build.VERSION.SDK_INT < 29 || info.isHardwareAccelerated) &&
+                        info.supportedTypes.any { it.equals(mime, ignoreCase = true) } &&
+                        info.getCapabilitiesForType(mime).videoCapabilities?.areSizeAndRateSupported(format.width, format.height, fps) == true
+                }
+            }.getOrDefault(false)
+        }
     }
 
     private fun failure(candidate: Candidate): VideoCompatibilityIssue = VideoCompatibilityIssue(

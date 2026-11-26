@@ -1939,4 +1939,17 @@
     <string name="t_missing_release_trying_next">"Release no disponible · probando el siguiente enlace: %1$s"</string>
     <string name="t_link_cant_stream_trying_next">"Este enlace no se puede reproducir · probando el siguiente: %1$s"</string>
     <string name="t_release_missing_pick_another">"Esta release ya no está en tus proveedores de noticias y no quedan más enlaces. Elige otra fuente."</string>
+    <string name="t_player_engine">"Motor del reproductor"</string>
+    <string name="t_player_engine_hint">"Auto reproduce en el reproductor principal y cambia solo a mpv si el formato o contenedor no es compatible. mpv reproduce casi todo, con controles más simples."</string>
+    <string name="t_engine_auto">"Auto · reproductor principal, mpv si hace falta"</string>
+    <string name="t_engine_exoplayer">"Solo reproductor principal"</string>
+    <string name="t_engine_mpv">"Siempre mpv"</string>
+    <string name="t_opening_with_mpv">"Abriendo con mpv…"</string>
+    <string name="t_mpv_couldnt_play">"mpv tampoco pudo reproducir este enlace. Elige otra fuente."</string>
+    <string name="t_mpv_controls_hint">"OK reproducir/pausa · ◀ ▶ avanzar/retroceder · ▲ ▼ audio y subtítulos · Atrás cerrar"</string>
+    <string name="t_mpv_tracks">"Audio y subtítulos"</string>
+    <string name="t_mpv_audio">"Audio"</string>
+    <string name="t_mpv_subtitles">"Subtítulos"</string>
+    <string name="t_subtitles_off_mpv">"Sin subtítulos"</string>
+    <string name="t_switching_to_mpv">"El reproductor principal no admite el formato de este archivo · reproduciendo con mpv"</string>
 </resources>

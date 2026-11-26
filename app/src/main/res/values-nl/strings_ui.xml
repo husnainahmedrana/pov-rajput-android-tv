@@ -1939,4 +1939,17 @@
     <string name="t_missing_release_trying_next">"Release ontbreekt · volgende link wordt geprobeerd: %1$s"</string>
     <string name="t_link_cant_stream_trying_next">"Deze link kan niet worden gestreamd · volgende wordt geprobeerd: %1$s"</string>
     <string name="t_release_missing_pick_another">"Deze release staat niet meer bij je nieuwsproviders en er is geen andere link meer. Kies een andere bron."</string>
+    <string name="t_player_engine">"Speler-engine"</string>
+    <string name="t_player_engine_hint">"Auto speelt af in de hoofdspeler en schakelt zelf over naar mpv als het formaat of de container niet wordt ondersteund. mpv speelt bijna alles af, met eenvoudigere bediening."</string>
+    <string name="t_engine_auto">"Auto · hoofdspeler, mpv indien nodig"</string>
+    <string name="t_engine_exoplayer">"Alleen hoofdspeler"</string>
+    <string name="t_engine_mpv">"Altijd mpv"</string>
+    <string name="t_opening_with_mpv">"Openen met mpv…"</string>
+    <string name="t_mpv_couldnt_play">"Ook mpv kon deze link niet afspelen. Kies een andere bron."</string>
+    <string name="t_mpv_controls_hint">"OK afspelen/pauze · ◀ ▶ spoelen · ▲ ▼ audio en ondertitels · Terug sluiten"</string>
+    <string name="t_mpv_tracks">"Audio en ondertitels"</string>
+    <string name="t_mpv_audio">"Audio"</string>
+    <string name="t_mpv_subtitles">"Ondertitels"</string>
+    <string name="t_subtitles_off_mpv">"Ondertitels uit"</string>
+    <string name="t_switching_to_mpv">"De hoofdspeler ondersteunt het formaat van dit bestand niet · afspelen met mpv"</string>
 </resources>

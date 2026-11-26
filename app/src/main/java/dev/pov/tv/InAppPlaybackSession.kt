@@ -234,7 +234,11 @@ object InAppPlaybackSession {
     fun removeListener(listener: () -> Unit) { listeners -= listener }
 
     /** Returns false for an invalid link without disturbing an existing session. */
+    /** The intent the playing link was started with (the first link, or one picked in Streams): mpv reopens it. */
+    @Volatile var startIntent: Intent? = null; private set
+
     internal fun start(context: Context, intent: Intent, saved: Bundle? = null): Boolean {
+        startIntent = intent
         initialize(context)
         val address = intent.getStringExtra("url").orEmpty()
         val uri = try { Uri.parse(address) } catch (_: RuntimeException) { null }

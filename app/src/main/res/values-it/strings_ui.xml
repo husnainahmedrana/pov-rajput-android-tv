@@ -1939,4 +1939,17 @@
     <string name="t_missing_release_trying_next">"Release mancante · provo il link successivo: %1$s"</string>
     <string name="t_link_cant_stream_trying_next">"Questo link non si può riprodurre · provo il successivo: %1$s"</string>
     <string name="t_release_missing_pick_another">"Questa release non è più sui tuoi provider news e non restano altri link. Scegli un'altra fonte."</string>
+    <string name="t_player_engine">"Motore del lettore"</string>
+    <string name="t_player_engine_hint">"Auto riproduce nel lettore principale e passa da solo a mpv se il formato o il contenitore non è supportato. mpv riproduce quasi tutto, con comandi più semplici."</string>
+    <string name="t_engine_auto">"Auto · lettore principale, mpv se serve"</string>
+    <string name="t_engine_exoplayer">"Solo lettore principale"</string>
+    <string name="t_engine_mpv">"Sempre mpv"</string>
+    <string name="t_opening_with_mpv">"Apertura con mpv…"</string>
+    <string name="t_mpv_couldnt_play">"Neanche mpv riesce a riprodurre questo link. Scegli un\'altra fonte."</string>
+    <string name="t_mpv_controls_hint">"OK riproduci/pausa · ◀ ▶ avanti/indietro · ▲ ▼ audio e sottotitoli · Indietro chiudi"</string>
+    <string name="t_mpv_tracks">"Audio e sottotitoli"</string>
+    <string name="t_mpv_audio">"Audio"</string>
+    <string name="t_mpv_subtitles">"Sottotitoli"</string>
+    <string name="t_subtitles_off_mpv">"Sottotitoli disattivati"</string>
+    <string name="t_switching_to_mpv">"Il lettore principale non supporta il formato di questo file · riproduzione con mpv"</string>
 </resources>

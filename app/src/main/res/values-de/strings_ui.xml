@@ -1939,4 +1939,17 @@
     <string name="t_missing_release_trying_next">"Release fehlt · nächster Link wird versucht: %1$s"</string>
     <string name="t_link_cant_stream_trying_next">"Dieser Link lässt sich nicht streamen · nächster Link wird versucht: %1$s"</string>
     <string name="t_release_missing_pick_another">"Dieses Release ist bei deinen Newsprovidern nicht mehr vorhanden, und es gibt keinen weiteren Link. Wähle eine andere Quelle."</string>
+    <string name="t_player_engine">"Player-Engine"</string>
+    <string name="t_player_engine_hint">"Auto spielt im Hauptplayer und wechselt von selbst zu mpv, wenn Format oder Container einer Datei nicht unterstützt werden. mpv spielt fast alles, mit einfacheren Bedienelementen."</string>
+    <string name="t_engine_auto">"Auto · Hauptplayer, bei Bedarf mpv"</string>
+    <string name="t_engine_exoplayer">"Nur Hauptplayer"</string>
+    <string name="t_engine_mpv">"Immer mpv"</string>
+    <string name="t_opening_with_mpv">"Wird mit mpv geöffnet…"</string>
+    <string name="t_mpv_couldnt_play">"Auch mpv konnte diesen Link nicht abspielen. Wähle eine andere Quelle."</string>
+    <string name="t_mpv_controls_hint">"OK Wiedergabe/Pause · ◀ ▶ spulen · ▲ ▼ Audio und Untertitel · Zurück schließen"</string>
+    <string name="t_mpv_tracks">"Audio und Untertitel"</string>
+    <string name="t_mpv_audio">"Audio"</string>
+    <string name="t_mpv_subtitles">"Untertitel"</string>
+    <string name="t_subtitles_off_mpv">"Untertitel aus"</string>
+    <string name="t_switching_to_mpv">"Das Format dieser Datei wird vom Hauptplayer nicht unterstützt · Wiedergabe mit mpv"</string>
 </resources>

@@ -6262,8 +6262,10 @@ class MainActivity : Activity() {
                 .putExtra("source_origin", playingOrigin)
                 .putExtra("stream_subtitles", dev.pov.tv.data.StreamSubtitle.toJson(playingSubtitles))
             playingMedia = null; playingSourceText = ""; switchResumeMs = null; playingAddon = null; playingOrigin = ""; playingSubtitles = emptyList()
+            // Settings → Playback → Player engine: mpv always plays here; Auto and ExoPlayer start in the main player.
+            val launch = if (PlayerEngine.get(this) == PlayerEngine.MPV) MpvPlayerActivity.intentFrom(this, intent) else intent
             @Suppress("DEPRECATION")
-            startActivityForResult(intent, PLAYBACK_REQUEST)
+            startActivityForResult(launch, PLAYBACK_REQUEST)
             identity?.let { searchStreamsInBackground(it) }
             @Suppress("DEPRECATION")
             overridePendingTransition(0, 0)
@@ -8189,6 +8191,13 @@ class MainActivity : Activity() {
                 AlertDialog.Builder(this).setTitle(getString(R.string.t_read_ahead))
                     .setSingleChoiceItems(ReadAhead.entries.map { it.label }.toTypedArray(), readAhead.mode.ordinal) { dialog, index ->
                         readAhead.mode = ReadAhead.entries[index]; dialog.dismiss(); refreshSettings()
+                    }.setNegativeButton(getString(R.string.t_cancel), null).show()
+            }
+            settingsRow(playback, getString(R.string.t_player_engine), PlayerEngine.label(this),
+                getString(R.string.t_player_engine_hint)) {
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_player_engine))
+                    .setSingleChoiceItems(PlayerEngine.CHOICES.map { PlayerEngine.label(this, it) }.toTypedArray(), PlayerEngine.CHOICES.indexOf(PlayerEngine.get(this))) { dialog, index ->
+                        PlayerEngine.set(this, PlayerEngine.CHOICES[index]); dialog.dismiss(); refreshSettings()
                     }.setNegativeButton(getString(R.string.t_cancel), null).show()
             }
             settingsRow(playback, getString(R.string.t_play_videos_with), ExternalPlayer.label(this),
