@@ -586,6 +586,7 @@ object InAppPlaybackSession {
 
     fun refreshSubtitleStyle() {
         targetView?.get()?.let { SubtitlePreferences(it.context).applyTo(it) }
+        (player as? MpvPlayer)?.applySubtitleStyle()
     }
 
     fun attachPlayerView(view: PlayerView) {
@@ -671,6 +672,7 @@ object InAppPlaybackSession {
 
     internal fun setVolumeBoostGain(db: Int): VolumeBoostState {
         val result = volumeBoost.setGain(db)
+        (player as? MpvPlayer)?.setBoost(db)
         notifyChanged()
         return result
     }

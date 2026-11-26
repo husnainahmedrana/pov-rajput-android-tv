@@ -55,6 +55,8 @@ internal class MpvPlayer(context: Context) : SimpleBasePlayer(Looper.getMainLoop
     @Volatile private var paused = true
     @Volatile private var waiting = true
     @Volatile private var ended = false
+    /** The video's frame rate from its container (0 until known): for Match frame rate. */
+    @Volatile var frameRate = 0f; private set
     @Volatile private var width = 0
     @Volatile private var height = 0
     private var firstFrame = false
@@ -89,7 +91,12 @@ internal class MpvPlayer(context: Context) : SimpleBasePlayer(Looper.getMainLoop
         }
         override fun eventProperty(property: String, value: String) = Unit
         override fun eventProperty(property: String, value: Double) {
-            when (property) { "time-pos" -> positionS = value; "duration" -> durationS = value; "demuxer-cache-time" -> cacheS = value }
+            when (property) {
+                "time-pos" -> { positionS = value; syncSubtitles() }
+                "duration" -> durationS = value
+                "demuxer-cache-time" -> cacheS = value
+                "container-fps" -> { frameRate = value.toFloat(); main.post { applyFrameRate() } }
+            }
             if (property != "time-pos" && property != "demuxer-cache-time") changed()
         }
         override fun eventProperty(property: String, value: MPVNode) = Unit
@@ -139,6 +146,10 @@ internal class MpvPlayer(context: Context) : SimpleBasePlayer(Looper.getMainLoop
         mpv.setOptionString("idle", "yes")
         mpv.setOptionString("pause", "yes")
         mpv.setOptionString("msg-level", "all=warn")
+        // The player screen sizes the surface to the picture (and to Zoom / Stretch); mpv fills it exactly.
+        mpv.setOptionString("keepaspect", "no")
+        configureAudio()
+        applySubtitleStyle()
         mpv.observeProperty("time-pos", MPV.mpvFormat.MPV_FORMAT_DOUBLE)
         mpv.observeProperty("duration", MPV.mpvFormat.MPV_FORMAT_DOUBLE)
         mpv.observeProperty("demuxer-cache-time", MPV.mpvFormat.MPV_FORMAT_DOUBLE)
@@ -149,10 +160,112 @@ internal class MpvPlayer(context: Context) : SimpleBasePlayer(Looper.getMainLoop
         mpv.observeProperty("dwidth", MPV.mpvFormat.MPV_FORMAT_INT64)
         mpv.observeProperty("dheight", MPV.mpvFormat.MPV_FORMAT_INT64)
         mpv.observeProperty("track-list", MPV.mpvFormat.MPV_FORMAT_NONE)
+        mpv.observeProperty("container-fps", MPV.mpvFormat.MPV_FORMAT_DOUBLE)
         mpv.addObserver(observer)
     }
 
     private fun changed() { main.post { invalidateState() } }
+
+    /**
+     * Sound like the main player: formats the TV takes go to it encoded (passthrough), as Settings, Audio, Audio
+     * passthrough allows; the rest is decoded without Dolby's dynamic range compression (which made dialogue quiet) and
+     * with the default volume boost.
+     */
+    private fun configureAudio() {
+        val mode = AudioPassthrough.mode(app)
+        val spdif = if (AudioPassthrough.surroundNever(app)) emptyList() else runCatching {
+            val caps = androidx.media3.exoplayer.audio.AudioCapabilities.getCapabilities(app, androidx.media3.common.AudioAttributes.DEFAULT, null)
+            listOf(Triple(C.ENCODING_AC3, "ac3", MimeTypes.AUDIO_AC3), Triple(C.ENCODING_E_AC3, "eac3", MimeTypes.AUDIO_E_AC3),
+                Triple(C.ENCODING_DTS, "dts", MimeTypes.AUDIO_DTS), Triple(C.ENCODING_DTS_HD, "dts-hd", MimeTypes.AUDIO_DTS_HD),
+                Triple(C.ENCODING_DOLBY_TRUEHD, "truehd", MimeTypes.AUDIO_TRUEHD))
+                .filter { (encoding, _, mime) -> caps.supportsEncoding(encoding) && !AudioPassthrough.decodes(mode, mime) }.map { it.second }
+        }.getOrDefault(emptyList())
+        if (spdif.isNotEmpty()) mpv.setOptionString("audio-spdif", spdif.joinToString(","))
+        android.util.Log.i("PovMpv", "passthrough: ${spdif.ifEmpty { listOf("none") }.joinToString(",")}")
+        mpv.setOptionString("ad-lavc-ac3drc", "0")
+        mpv.setOptionString("audio-normalize-downmix", "no")
+        mpv.setOptionString("volume-gain-max", "30")
+        VolumeBoostPreferences(app).defaultDb.takeIf { it > 0 }?.let { setBoost(it) }
+    }
+
+    /** The player's Volume boost (dB), as mpv's gain. */
+    fun setBoost(db: Int) { mpv.setPropertyDouble("volume-gain", db.toDouble()) }
+
+    /** Subtitle sync (the player's Sync menu or auto sync): mpv's sub-delay and sub-speed follow it. */
+    @Volatile private var appliedDelay = Long.MIN_VALUE
+    @Volatile private var appliedSpeed = 0.0
+    private fun syncSubtitles() {
+        val offset = SubtitleSync.offsetMs; val factor = SubtitleSync.factor
+        if (offset == appliedDelay && factor == appliedSpeed) return
+        appliedDelay = offset; appliedSpeed = factor
+        main.post {
+            mpv.setPropertyDouble("sub-delay", offset / 1000.0)
+            mpv.setPropertyDouble("sub-speed", factor)
+        }
+    }
+
+    /** Match frame rate "Seamless": asks for the video's rate on the surface where the TV can switch without a blink. */
+    private fun applyFrameRate() {
+        val target = surface ?: return
+        if (frameRate <= 0f || android.os.Build.VERSION.SDK_INT < 30 || FrameRateMatch.mode(app) != FrameRateMatch.SEAMLESS) return
+        runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= 31) target.setFrameRate(frameRate, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS)
+            else target.setFrameRate(frameRate, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
+        }
+        invalidateState()
+    }
+
+    /**
+     * The viewer's subtitle look (Settings, Subtitles and the player's Style menu): font, size, position, colors, outline,
+     * shadow and box, as close to the main player's as mpv draws them. Sizes follow the main player's (5.33% of the
+     * picture height at Medium, in mpv's 720-line units).
+     */
+    fun applySubtitleStyle() {
+        val style = SubtitlePreferences(app)
+        fun set(name: String, value: String) { mpv.setPropertyString(name, value) }
+        fun color(argb: Int) = String.format(Locale.ROOT, "#%08X", argb)
+        val captions = app.getSystemService(Context.CAPTIONING_SERVICE) as? android.view.accessibility.CaptioningManager
+        set("sub-font-size", String.format(Locale.ROOT, "%.1f", 38.4 * style.sizePercent / 100.0 * (captions?.fontScale ?: 1f)))
+        set("sub-bold", if (style.boldText) "yes" else "no")
+        subtitleFont(style.font)?.let { set("sub-font", it) }
+        set("sub-color", color(style.textColor ?: android.graphics.Color.WHITE))
+        val edge = style.edgeColor ?: android.graphics.Color.BLACK
+        val (outline, shadow) = when (style.edgeType) {
+            androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE -> 0.0 to 0.0
+            androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE -> 2.5 to 0.0
+            androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW -> 0.0 to 2.0
+            androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_RAISED, androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_DEPRESSED -> 0.5 to 1.5
+            else -> 2.5 to 0.0
+        }
+        // Both spellings: newer mpv calls the border an outline.
+        for (name in listOf("sub-outline-size", "sub-border-size")) set(name, outline.toString())
+        for (name in listOf("sub-outline-color", "sub-border-color")) set(name, color(edge))
+        set("sub-shadow-offset", shadow.toString())
+        set("sub-shadow-color", color(edge))
+        val opacity = style.backgroundOpacity
+        if (opacity > 0) {
+            set("sub-border-style", "background-box")
+            set("sub-back-color", color((style.backgroundColor and 0x00FFFFFF) or ((opacity * 255 / 100) shl 24)))
+        } else set("sub-border-style", "outline-and-shadow")
+        val position = style.positionPercent
+        if (position >= 0) { set("sub-pos", (100 - position).toString()); set("sub-margin-y", "0") }
+        else { set("sub-pos", "100"); set("sub-margin-y", "22") }
+        // Styled (ASS) subtitles take the viewer's look too, keeping their own placement, as the main player does.
+        set("sub-ass-override", "yes")
+    }
+
+    /** The chosen font's family for mpv; its files are copied once from the app's assets to a folder mpv reads. */
+    private fun subtitleFont(id: String): String? {
+        val family = mapOf("lato" to "Lato", "inter" to "Inter", "arimo" to "Arimo", "open-sans" to "Open Sans", "noto-sans" to "Noto Sans")[id]
+            ?: return when (id) { "roboto", "" -> "Roboto"; "mono" -> "monospace"; "serif" -> "serif"; else -> null }
+        val folder = java.io.File(app.filesDir, "mpv-fonts").apply { mkdirs() }
+        for (weight in listOf("regular", "bold")) {
+            val target = java.io.File(folder, "$id-$weight.ttf")
+            if (!target.isFile) runCatching { app.assets.open("subtitle-fonts/$id-$weight.ttf").use { input -> target.outputStream().use { input.copyTo(it) } } }
+        }
+        mpv.setPropertyString("sub-fonts-dir", folder.path)
+        return family
+    }
 
     private val commands = Player.Commands.Builder().addAll(
         Player.COMMAND_PLAY_PAUSE, Player.COMMAND_PREPARE, Player.COMMAND_STOP, Player.COMMAND_RELEASE,
@@ -174,7 +287,8 @@ internal class MpvPlayer(context: Context) : SimpleBasePlayer(Looper.getMainLoop
             .setPlayWhenReady(playWhenReady, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
             .setPlaybackState(state)
             .setPlayerError(error)
-            .setIsLoading(loading || (loaded && !ended))
+            // Only while it plays or waits: the player library refuses "loading" when idle or ended (that crashed on exit).
+            .setIsLoading((state == Player.STATE_BUFFERING || state == Player.STATE_READY) && (loading || loaded))
             .setPlaybackParameters(PlaybackParameters(speed))
             .setTrackSelectionParameters(trackParameters)
             .setVolume(volume)
@@ -305,6 +419,7 @@ internal class MpvPlayer(context: Context) : SimpleBasePlayer(Looper.getMainLoop
         mpv.attachSurface(next)
         mpv.setOptionString("force-window", "yes")
         mpv.setPropertyString("vo", "gpu")
+        applyFrameRate()
         if (prepared && !loaded) load()
     }
 

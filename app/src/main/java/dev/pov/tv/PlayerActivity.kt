@@ -768,12 +768,19 @@ class PlayerActivity : Activity() {
         val torboxUsenet = InAppPlaybackSession.sourceAddon?.substringBefore('|') == PlaybackDebrid.TORBOX_USENET
         val deepbridUsenet = InAppPlaybackSession.sourceAddon?.substringBefore('|') == PlaybackDebrid.DEEPBRID_USENET
         view.findViewById<PlayerBadgeRow>(R.id.pov_media_badges)?.show(PlayerMediaBadges.from(PlayerMediaFacts.from(
-            InAppPlaybackSession.mediaName, InAppPlaybackSession.mediaSize, (player as? ExoPlayer)?.videoFormat, (player as? ExoPlayer)?.audioFormat)) +
+            InAppPlaybackSession.mediaName, InAppPlaybackSession.mediaSize, playingFormat(C.TRACK_TYPE_VIDEO), playingFormat(C.TRACK_TYPE_AUDIO))) +
             listOfNotNull(PlayerBadge("USENET", PlayerBadgeKind.USENET).takeIf { usenet },
                 PlayerBadge("TORBOX USENET", PlayerBadgeKind.USENET).takeIf { torboxUsenet },
                 PlayerBadge("DEEPBRID USENET", PlayerBadgeKind.USENET).takeIf { deepbridUsenet }))
         speedButton.text = getString(R.string.t_speed_x, speedLabel(player?.playbackParameters?.speed ?: 1f))
         controls.refreshPlaybackState()
+    }
+
+    /** The format playing for [type]: ExoPlayer's decoder input, or (mpv) the selected track's. */
+    private fun playingFormat(type: Int): androidx.media3.common.Format? {
+        val current = player ?: return null
+        (current as? ExoPlayer)?.let { return if (type == C.TRACK_TYPE_VIDEO) it.videoFormat else it.audioFormat }
+        return current.currentTracks.groups.firstOrNull { it.type == type && it.isSelected }?.getTrackFormat(0)
     }
 
     private fun showPlaybackFailure(error: PlaybackException) {
@@ -1711,7 +1718,7 @@ class PlayerActivity : Activity() {
     /** Match frame rate "Always": the display mode whose refresh rate fits the playing video (FrameRateMatch). */
     private fun matchFrameRate() {
         val exo = player ?: return
-        val fps = (exo as? ExoPlayer)?.videoFormat?.frameRate?.takeIf { it > 0f } ?: return
+        val fps = ((exo as? ExoPlayer)?.videoFormat?.frameRate ?: (exo as? MpvPlayer)?.frameRate)?.takeIf { it > 0f } ?: return
         val link = InAppPlaybackSession.sourceUrl
         if (link == frameRateFor || FrameRateMatch.mode(this) != FrameRateMatch.ALWAYS) return
         frameRateFor = link
