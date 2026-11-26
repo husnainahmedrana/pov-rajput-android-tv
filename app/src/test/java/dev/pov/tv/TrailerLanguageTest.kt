@@ -37,6 +37,13 @@ class TrailerLanguageTest {
         assertEquals(listOf("mexico00000", "aggregator1"), TrailerLanguage.pick(results, choice("es-MX")))
     }
 
+    @Test fun `a TMDB video named as another country's dub or a subtitled copy doesn't fit`() {
+        val spain = choice("es-ES")
+        assertEquals(false, TrailerLanguage.fits("Casino Royale Tráiler Español Latino", spain))
+        assertEquals(false, TrailerLanguage.fits("Breaking Bad Trailer Sub- Español", spain))
+        assertEquals(true, TrailerLanguage.fits("Casino Royale Trailer Español HD", spain))
+    }
+
     @Test fun `a results page is read from its initial data, not from every video id on it`() {
         val html = """<script>var ytInitialData = {"contents":{"a":[
             {"adSlotRenderer":{"videoId":"adadadadada"}},

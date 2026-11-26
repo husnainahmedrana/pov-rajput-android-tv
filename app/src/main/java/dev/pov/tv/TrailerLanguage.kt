@@ -62,15 +62,20 @@ internal object TrailerLanguage {
         val choice = CHOICES.firstOrNull { it.code == code && code.isNotEmpty() } ?: return emptyList()
         val cacheKey = "$code:${item.type}:${item.imdbId}"
         found[cacheKey]?.takeIf { System.currentTimeMillis() - it.first < KEEP_MS }?.let { return it.second }
-        // TMDB's own (labelled by language and country) play at once. The search (a second or more) then runs in the
-        // background: TMDB often lists a single fan upload for an older title, and when that can't play, [searched]
-        // hands the player the search's picks before it falls back to English. Without TMDB's, the search is waited for.
-        val fromTmdb = if (tmdb != null) runCatching { tmdb.trailers(item.imdbId, item.type, code) }.getOrDefault(emptyList()) else emptyList()
-        val ids = if (fromTmdb.isNotEmpty()) {
-            android.util.Log.i("TrailerLanguage", "TMDB $code ${item.imdbId}: picked $fromTmdb")
+        // TMDB labels its videos by language and country, but anyone can add one: its names go through the same checks
+        // as the search's (no Latin American dub for Castilian, no subtitled copy, no reaction). A studio's own trailer
+        // there plays at once, and the search (a second or more) runs in the background: when one can't play,
+        // [searched] hands the player the search's picks before English. With only fan uploads on TMDB the search is
+        // waited for, its studio channels first, TMDB's uploads after them.
+        val fromTmdb = if (tmdb != null) runCatching { tmdb.trailers(item.imdbId, item.type, code) }.getOrDefault(emptyList())
+            .filter { fits(it.name, choice) } else emptyList()
+        val official = fromTmdb.filter { it.official }.map { it.key }
+        val uploads = fromTmdb.filterNot { it.official }.map { it.key }
+        if (fromTmdb.isNotEmpty()) android.util.Log.i("TrailerLanguage", "TMDB $code ${item.imdbId}: official $official, uploads $uploads")
+        val ids = if (official.isNotEmpty()) {
             if (searchedAt(cacheKey) == null) BACKGROUND.execute { search(cacheKey, item, choice) }
-            fromTmdb
-        } else searchedAt(cacheKey) ?: search(cacheKey, item, choice)
+            official + uploads
+        } else ((searchedAt(cacheKey) ?: search(cacheKey, item, choice)) + uploads).distinct()
         remember(found, cacheKey, ids)
         return ids
     }
@@ -143,14 +148,18 @@ internal object TrailerLanguage {
      */
     internal fun pick(results: List<Result>, choice: Choice): List<String> {
         val usable = results.filter { result ->
-            val title = " " + plain(result.title) + " "
             val channel = " " + plain(result.channel) + " "
-            result.seconds in 30..300 && choice.avoid.none { plain(it) in title } && NOT_A_TRAILER.none { it in title } &&
-                choice.otherChannels.none { plain(it) in channel }
+            result.seconds in 30..300 && fits(result.title, choice) && choice.otherChannels.none { plain(it) in channel }
         }
         val official = usable.filter { result -> choice.channels.any { plain(it) in " " + plain(result.channel) + " " } }
         val named = usable.filter { result -> choice.want.any { plain(it) in " " + plain(result.title) + " " } }
         return (official + named).map { it.id }.distinct().take(3)
+    }
+
+    /** A video [title] that isn't another country's dub, a subtitled copy or a video about the trailer. */
+    internal fun fits(title: String, choice: Choice): Boolean {
+        val text = " " + plain(title) + " "
+        return choice.avoid.none { plain(it) in text } && NOT_A_TRAILER.none { it in text }
     }
 
     /** Lower case without accents (tráiler → trailer, español → espanol); other scripts stay as they are. */

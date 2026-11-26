@@ -356,7 +356,10 @@ class TmdbCatalog internal constructor(
      * YouTube trailers of a title in [videoLanguage] (language-COUNTRY, e.g. es-ES): that country's own first (Castilian
      * before Latin American), trailers before teasers, official ones first. Empty when TMDB lists none in it.
      */
-    fun trailers(imdbId: String, type: String, videoLanguage: String): List<String> {
+    /** A YouTube video TMDB lists for a title: [official] when the studio's own channel posted it. */
+    data class Video(val key: String, val name: String, val official: Boolean)
+
+    fun trailers(imdbId: String, type: String, videoLanguage: String): List<Video> {
         if (!imdbId.matches(Regex("tt\\d{5,12}"))) return emptyList()
         val kind = if (type == "movie") "movie" else "tv"
         val id = json("/find/$imdbId?external_source=imdb_id").optJSONArray("${kind}_results")?.optJSONObject(0)
@@ -367,7 +370,8 @@ class TmdbCatalog internal constructor(
             .filter { it.optString("site") == "YouTube" && it.optString("iso_639_1") == wanted && it.optString("type") in setOf("Trailer", "Teaser") }
             .sortedWith(compareBy({ if (country.isNotEmpty() && it.optString("iso_3166_1").equals(country, true)) 0 else 1 },
                 { if (it.optString("type") == "Trailer") 0 else 1 }, { if (it.optBoolean("official")) 0 else 1 }))
-            .map { it.optString("key") }.filter { it.matches(Regex("[A-Za-z0-9_-]{11}")) }.distinct().take(3)
+            .map { Video(it.optString("key"), it.optString("name"), it.optBoolean("official")) }
+            .filter { it.key.matches(Regex("[A-Za-z0-9_-]{11}")) }.distinctBy { it.key }.take(5)
     }
 
     /** A show's whole-run credits (large for long shows), kept for the last few shows so Cast and Crew share one download. */
