@@ -8745,8 +8745,13 @@ class MainActivity : Activity() {
     private fun gridRows(card: LinearLayout, views: List<View>, columns: Int, gap: Int = 8) {
         card.clipChildren = false; card.clipToPadding = false
         views.chunked(columns).forEachIndexed { rowIndex, chunk ->
-            val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; setPadding(dp(4), 0, dp(4), 0) }
-            chunk.forEachIndexed { index, view -> line.addView(view, LinearLayout.LayoutParams(0, -2, 1f).apply { if (index > 0) leftMargin = dp(gap) }) }
+            // A row is as tall as its tallest cell, and every cell matches it. Measured without a height limit: on a short
+            // page the screen-filling scroll view hands down the whole free height, and the cells stretched to it.
+            val line = object : LinearLayout(this) {
+                override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) =
+                    super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+            }.apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; setPadding(dp(4), 0, dp(4), 0) }
+            chunk.forEachIndexed { index, view -> line.addView(view, LinearLayout.LayoutParams(0, -1, 1f).apply { if (index > 0) leftMargin = dp(gap) }) }
             repeat(columns - chunk.size) { line.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f).apply { leftMargin = dp(gap) }) }
             card.addView(line, margin(-1, -2, top = if (rowIndex == 0) 6 else gap, bottom = 0))
         }
