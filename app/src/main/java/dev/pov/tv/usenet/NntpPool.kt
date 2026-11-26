@@ -177,7 +177,18 @@ class NntpPool(
 
     private fun work() {
         var connection: NntpConnection? = null
-        val flying = ArrayDeque<Fetch>()
+        // Concurrent: a cancel on another thread (the player seeking) looks at it, see [abandon].
+        val flying = java.util.concurrent.ConcurrentLinkedDeque<Fetch>()
+        // The signed-in connection, readable from other threads, and whether it is being let go on purpose.
+        val signedIn = java.util.concurrent.atomic.AtomicReference<NntpConnection?>()
+        val abandoning = java.util.concurrent.atomic.AtomicBoolean(false)
+        // Everything this connection is fetching has been called off (a seek, a closed stream, a backup copy that lost):
+        // close it now instead of downloading articles nobody wants (5–10 s each on a slow line); it signs in again in
+        // about a second and takes the articles that are wanted.
+        val abandon = {
+            val busy = signedIn.get()
+            if (busy != null && !flying.isEmpty() && flying.all { it.cancelled } && abandoning.compareAndSet(false, true)) busy.close()
+        }
         var failures = 0
         // Diagnostics: which connection an article was on and how long it took, to tell a slow connection from a slow line.
         val number = serial.incrementAndGet()
@@ -200,6 +211,7 @@ class NntpPool(
                         if (warm == null) try { fresh.connect() } catch (error: IOException) { fresh.close(); sockets -= fresh; throw error }
                         if (closed) { fresh.close(); sockets -= fresh; return }
                         connection = fresh
+                        signedIn.set(fresh); abandoning.set(false)
                         signedInAt = System.nanoTime(); sentAt.clear()
                         kind = if (warm != null) "warm (signed in ${WarmConnections.ageSeconds(warm)} s before)" else "fresh"
                         log("connection $number ${if (warm != null) "reused $kind" else "signed in in ${(signedInAt - signInStarted) / 1_000_000} ms"}")
@@ -246,6 +258,7 @@ class NntpPool(
                     checkNotNull(connection).send("BODY <${next.messageId}>")
                     flying.addLast(next); wrote = true
                     sentAt[next] = System.nanoTime()
+                    next.onCancel = abandon
                 }
                 if (flying.isEmpty()) break                               // idle for long enough, or closed
                 val current = checkNotNull(connection)
@@ -283,14 +296,17 @@ class NntpPool(
                     }
                 } catch (error: IOException) {
                     // A dropped or confused connection: reopen it and ask again for everything that was in flight.
-                    current.close(); sockets -= current; connection = null; live.decrementAndGet()
+                    current.close(); sockets -= current; connection = null; signedIn.set(null); live.decrementAndGet()
                     if (closed) break
-                    log("connection dropped (${error.javaClass.simpleName}: ${error.message}); ${flying.size} to re-request")
+                    val deliberate = abandoning.getAndSet(false)
+                    if (deliberate) log("connection $number let go: its articles were no longer wanted; signing in again")
+                    else log("connection dropped (${error.javaClass.simpleName}: ${error.message}); ${flying.size} to re-request")
                     while (true) {
                         val fetch = flying.pollLast() ?: break
+                        if (fetch.cancelled) continue
                         if (fetch.attempts++ >= 3) fetch.fail(error) else enqueue(fetch, urgent = true)
                     }
-                    if (++failures >= 6) return
+                    if (!deliberate && ++failures >= 6) return
                 }
             }
         } finally {
@@ -313,7 +329,7 @@ class NntpPool(
         const val MAX_DEPTH = 20
         private const val REGROW_MS = 60_000L
         /** An article taking this long from request to last byte is written to the Usenet log with its connection. */
-        private const val SLOW_ARTICLE_MS = 3_000L
+        private const val SLOW_ARTICLE_MS = 6_000L
         private val serial = AtomicInteger()
     }
 

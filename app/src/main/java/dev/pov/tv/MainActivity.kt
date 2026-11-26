@@ -2410,7 +2410,8 @@ class MainActivity : Activity() {
                     navigate { detailsFor(MediaItemData(identity.imdbId, identity.type, identity.title), identity.takeIf { it.type == "series" }) }
                 } else navigate { selectedCloud() }
             })
-            if (identity != null) options += getString(R.string.t_streams) to { navigate { showSources(identity, manual = true) } }
+            if (identity != null) options += getString(R.string.t_streams) to { startOverFor = null; navigate { showSources(identity, manual = true) } }
+            if (identity != null && hasResumePoint(identity)) options += startOverOption(identity)
             options += getString(R.string.t_remove_from_continue_watching) to {
                 if (identity != null && wetrakr.connected()) {
                     load(generation, {
@@ -5086,6 +5087,8 @@ class MainActivity : Activity() {
         search?.topKey = ordered.firstOrNull()?.let(TvChoiceKeys::source)
         // The player's Streams panel offers the same links in the same order.
         StreamChoices.publish(identity, ordered)
+        // The top link only, when it is a Usenet link: its NZB downloads now (Settings → Usenet → Prefetch the top link's NZB).
+        ordered.firstOrNull()?.directUrl?.takeIf { it.isNotBlank() }?.let { top -> UsenetPlayback.prefetchNzb(top, store, cacheDir) }
         // The logos and counts filter the list: landing on one (TV) or tapping it (phone) shows only that source's links;
         // Down goes into them, and Back or the total shows every link again.
         val rowSources = HashMap<View, SourceItem>()
@@ -6204,6 +6207,10 @@ class MainActivity : Activity() {
     /** The title (identityKey) Start over was pressed for: its next playback begins at 0:00, ignoring saved progress. */
     private var startOverFor: String? = null
 
+    /** The hold-OK menu entry: the link list for [target], whose pick then plays from 0:00. */
+    private fun startOverOption(target: PlaybackIdentity): Pair<String, () -> Unit> =
+        getString(R.string.t_start_over) to { startOverFor = identityKey(target); navigate { showSources(target) } }
+
     /** Whether [identity] has a saved position, here or on the tracker, that Play would resume from. */
     private fun hasResumePoint(identity: PlaybackIdentity): Boolean {
         if ((remoteProgress[identityKey(identity)] ?: 0.0) > 0.5) return true
@@ -6624,6 +6631,12 @@ class MainActivity : Activity() {
             getString(R.string.t_signs_in_to_your_main_provider)) {
             val next = NewsProviders.WARM_CHOICES[(NewsProviders.WARM_CHOICES.indexOf(warm) + 1) % NewsProviders.WARM_CHOICES.size]
             store.put(NewsProviders.WARM_KEY, next.toString()); usenetPage("setting:" + getString(R.string.t_warm_connections))
+        }
+        // The top link's NZB downloaded while the link list is on screen, so pressing play skips that step (1–2 s).
+        val prefetch = UsenetPlayback.prefetchEnabled(store)
+        settingsRow(providerCard, getString(R.string.t_prefetch_top_nzb), if (prefetch) getString(R.string.t_on) else getString(R.string.t_off),
+            getString(R.string.t_prefetch_top_nzb_hint)) {
+            UsenetPlayback.setPrefetch(store, !prefetch); usenetPage("setting:" + getString(R.string.t_prefetch_top_nzb))
         }
         settingsRow(providerCard, getString(R.string.t_add_news_provider), "", getString(R.string.t_pick_yours_from_the_list_or)) { chooseNewsProviderPreset() }
         // Play Usenet links with (TorBox and Deepbrid are experimental): the news providers, TorBox (Pro) or Deepbrid.
@@ -9808,13 +9821,15 @@ class MainActivity : Activity() {
         when {
             playable && item.type == "movie" -> {
                 val target = saved ?: PlaybackIdentity(item.imdbId, item.type, item.title)
-                options += getString(R.string.t_play) to { navigate { showSources(target) } }
-                options += getString(R.string.t_streams) to { navigate { showSources(target, manual = true) } }
+                options += getString(R.string.t_play) to { startOverFor = null; navigate { showSources(target) } }
+                options += getString(R.string.t_streams) to { startOverFor = null; navigate { showSources(target, manual = true) } }
+                if (hasResumePoint(target)) options += startOverOption(target)
             }
             playable && saved != null && saved.type == "series" -> {
                 val number = "S${saved.season} E${saved.episode}"
-                options += getString(R.string.t_play_x, number) to { navigate { showSources(saved) } }
-                options += getString(R.string.t_streams_x, number) to { navigate { showSources(saved, manual = true) } }
+                options += getString(R.string.t_play_x, number) to { startOverFor = null; navigate { showSources(saved) } }
+                options += getString(R.string.t_streams_x, number) to { startOverFor = null; navigate { showSources(saved, manual = true) } }
+                if (hasResumePoint(saved)) options += startOverOption(saved)
             }
         }
         options += getString(R.string.t_more_info) to open
@@ -9830,8 +9845,9 @@ class MainActivity : Activity() {
     private fun episodeMenu(identity: PlaybackIdentity, number: String) {
         val tracker = weTrakrClient()
         val options = mutableListOf<Pair<String, () -> Unit>>(
-            getString(R.string.t_play) to { navigate { showSources(identity) } },
-            getString(R.string.t_streams) to { navigate { showSources(identity, manual = true) } })
+            getString(R.string.t_play) to { startOverFor = null; navigate { showSources(identity) } },
+            getString(R.string.t_streams) to { startOverFor = null; navigate { showSources(identity, manual = true) } })
+        if (hasResumePoint(identity)) options += startOverOption(identity)
         if (tracker.connected()) options += getString(R.string.t_mark_as_watched) to {
             load(generation, { tracker.markWatched(identity); mirrorHistory { it.markWatched(identity) } }) { markedWatched(identity); toast(getString(R.string.t_episode_marked_watched)) }
         }

@@ -1934,4 +1934,9 @@
     <string name="t_prefer_order_row">Zet de Voorkeur-schakelaars op volgorde, bijv. HDR en Atmos boven HEVC</string>
     <string name="t_prefer_order_hint">De Voorkeur-schakelaars die aan staan, de beste eerst. Een link die aan meer van de bovenste voldoet, staat hoger.</string>
     <string name="t_start_over">"↺  Opnieuw beginnen"</string>
+    <string name="t_prefetch_top_nzb">"NZB van de bovenste link vooraf laden"</string>
+    <string name="t_prefetch_top_nzb_hint">"Downloadt de NZB van de eerste Usenet-link terwijl de lijst open is, zodat afspelen 1–2 s sneller start. Telt als één download bij de indexer."</string>
+    <string name="t_missing_release_trying_next">"Release ontbreekt · volgende link wordt geprobeerd: %1$s"</string>
+    <string name="t_link_cant_stream_trying_next">"Deze link kan niet worden gestreamd · volgende wordt geprobeerd: %1$s"</string>
+    <string name="t_release_missing_pick_another">"Deze release staat niet meer bij je nieuwsproviders en er is geen andere link meer. Kies een andere bron."</string>
 </resources>

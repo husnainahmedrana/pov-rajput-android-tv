@@ -1934,4 +1934,9 @@
     <string name="t_prefer_order_row">Classez les interrupteurs Préférer, p. ex. HDR et Atmos avant HEVC</string>
     <string name="t_prefer_order_hint">Les interrupteurs Préférer activés, le meilleur en premier. Un lien qui en remplit davantage parmi ceux du haut est mieux classé.</string>
     <string name="t_start_over">"↺  Depuis le début"</string>
+    <string name="t_prefetch_top_nzb">"Précharger le NZB du premier lien"</string>
+    <string name="t_prefetch_top_nzb_hint">"Télécharge le NZB du premier lien Usenet pendant que la liste est ouverte, pour démarrer 1–2 s plus tôt. Compte comme un téléchargement chez l'indexeur."</string>
+    <string name="t_missing_release_trying_next">"Release manquante · essai du lien suivant : %1$s"</string>
+    <string name="t_link_cant_stream_trying_next">"Ce lien ne peut pas être lu · essai du lien suivant : %1$s"</string>
+    <string name="t_release_missing_pick_another">"Cette release n'est plus chez vos fournisseurs de news et il ne reste aucun autre lien. Choisissez une autre source."</string>
 </resources>

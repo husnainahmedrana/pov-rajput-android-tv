@@ -1934,4 +1934,9 @@
     <string name="t_prefer_order_row">Bevorzugen-Schalter ordnen, z. B. HDR und Atmos vor HEVC</string>
     <string name="t_prefer_order_hint">Die eingeschalteten Bevorzugen-Schalter, der beste zuerst. Ein Link, der mehr der oberen erfüllt, steht weiter oben.</string>
     <string name="t_start_over">"↺  Von vorne"</string>
+    <string name="t_prefetch_top_nzb">"NZB des obersten Links vorladen"</string>
+    <string name="t_prefetch_top_nzb_hint">"Lädt die NZB des ersten Usenet-Links, solange die Linkliste offen ist, damit die Wiedergabe 1–2 s schneller startet. Zählt beim Indexer als ein Abruf."</string>
+    <string name="t_missing_release_trying_next">"Release fehlt · nächster Link wird versucht: %1$s"</string>
+    <string name="t_link_cant_stream_trying_next">"Dieser Link lässt sich nicht streamen · nächster Link wird versucht: %1$s"</string>
+    <string name="t_release_missing_pick_another">"Dieses Release ist bei deinen Newsprovidern nicht mehr vorhanden, und es gibt keinen weiteren Link. Wähle eine andere Quelle."</string>
 </resources>

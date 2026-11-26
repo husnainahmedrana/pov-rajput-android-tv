@@ -786,12 +786,93 @@ class PlayerActivity : Activity() {
                 listOf(PlayerSheetChoice(getString(R.string.t_choose_another_source)) { showStreams() }))
             return
         }
+        // A Usenet release that is gone (or can't be streamed): the next link plays by itself; only when none is
+        // left does a sheet say so, plainly and without a Retry that can't help.
+        deadUsenetKind(error)?.let { kind ->
+            if (playNextLink(error, kind)) return
+            showSheet(getString(R.string.t_playback_stopped),
+                if (kind == DeadLink.MISSING) getString(R.string.t_release_missing_pick_another) else usenetReason(error) ?: failureReason(error),
+                listOf(PlayerSheetChoice(getString(R.string.t_browse_sources)) { showStreams() }))
+            return
+        }
         showSheet(getString(R.string.t_playback_stopped), getString(R.string.t_x_code_x, failureReason(error), error.errorCodeName),
             listOf(
                 PlayerSheetChoice(getString(R.string.t_retry)) { if (!stopped) { observedError = null; InAppPlaybackSession.retry() } },
                 // The title's other links open right here in the Streams panel; picking one continues from the same spot.
                 PlayerSheetChoice(getString(R.string.t_browse_sources)) { showStreams() }
             ))
+    }
+
+    private enum class DeadLink { MISSING, UNPLAYABLE }
+
+    /** Why a Usenet link can't play: its release gone from the providers, or a set the app can't stream; null otherwise. */
+    private fun deadUsenetKind(error: Throwable): DeadLink? {
+        var cause: Throwable? = error
+        var refused = false
+        while (cause != null) {
+            when (cause) {
+                is dev.pov.tv.usenet.MissingArticleException, is dev.pov.tv.usenet.ReleaseIncompleteException -> return DeadLink.MISSING
+                is dev.pov.tv.usenet.UsenetRefusedException, is dev.pov.tv.usenet.UnsupportedSetException -> {
+                    refused = true
+                    // A link refused earlier this session keeps only its reason's text.
+                    if (cause.message?.contains("no longer ha") == true) return DeadLink.MISSING
+                }
+            }
+            cause = cause.cause
+        }
+        return if (refused) DeadLink.UNPLAYABLE else null
+    }
+
+    /** The Usenet reason in viewer terms (a compressed set, a password), when there is one. */
+    private fun usenetReason(error: Throwable): String? {
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is dev.pov.tv.usenet.UsenetRefusedException || cause is dev.pov.tv.usenet.UnsupportedSetException) return cause.message?.takeIf { it.isNotBlank() }
+            cause = cause.cause
+        }
+        return null
+    }
+
+    /** Links tried by themselves after dead ones in this player, and waits for the link search to finish. */
+    private var autoNextTries = 0
+    private var linkWaits = 0
+
+    /**
+     * Plays the next link after the one that just failed as dead ([kind]), at the same spot, skipping links already
+     * found dead this session, and says so briefly. False when there is no other link (or enough have been tried).
+     */
+    private fun playNextLink(error: PlaybackException, kind: DeadLink): Boolean {
+        val media = InAppPlaybackSession.playbackIdentity ?: return false
+        if (!media.imdbId.startsWith("tt") || autoNextTries >= MAX_AUTO_NEXT || switching) return false
+        val ours = StreamChoices.key == StreamChoices.keyOf(media)
+        val links = if (ours) StreamChoices.items else null
+        if (links == null) {
+            // The title's links aren't known yet (playing from Continue Watching): find them, then try again.
+            if (!StreamChoices.has(media)) StreamChoices.searcher?.invoke(media)
+            if (linkWaits++ < LINK_WAITS && (StreamChoices.searching || !ours)) {
+                view.postDelayed({ if (!stopped && observedError === error) showPlaybackFailure(error) }, LINK_WAIT_MS)
+                return true
+            }
+            return false
+        }
+        val playingUrl = InAppPlaybackSession.sourceUrl
+        val playingName = InAppPlaybackSession.mediaName
+        val current = links.indexOfFirst { source ->
+            (source.directUrl.isNotBlank() && source.directUrl == playingUrl) ||
+                (playingName.isNotBlank() && SourceBadges.name(source).let { it.isNotBlank() && playingName.contains(it.take(40)) })
+        }
+        val rest = links.drop(current + 1).filter { source ->
+            source.directUrl != playingUrl && !(source.directUrl.isNotBlank() && UsenetPlayback.refused(source.directUrl))
+        }
+        val next = rest.firstOrNull() ?: return false
+        autoNextTries++
+        val at = player?.currentPosition ?: 0L
+        val name = SourceBadges.name(next).ifBlank { next.title }.lineSequence().firstOrNull().orEmpty().take(60)
+        dev.pov.tv.UsenetLog.i("dead link (${kind.name.lowercase()}); playing the next one by itself: $name")
+        runSwitch(media, next, at, getString(if (kind == DeadLink.MISSING) R.string.t_missing_release_trying_next else R.string.t_link_cant_stream_trying_next, name)) {
+            switcher.prepare(next, media, rest)
+        }
+        return true
     }
 
     /** What actually went wrong, from the player's error code, instead of one message for every failure. */
@@ -1651,6 +1732,9 @@ class PlayerActivity : Activity() {
         private const val CARD_FADE_MS = 200L
         private val SPEED_CYCLE = listOf(1f, 1.25f, 1.5f, 1.75f, 2f)
         private const val STREAMS_SHOWN = 60
+        /** Dead links skipped by themselves in one player before the sheet shows. */
+        private const val MAX_AUTO_NEXT = 5
+        private const val LINK_WAITS = 20; private const val LINK_WAIT_MS = 500L
         /** A seek may land up to this far past its target, on a keyframe. */
         const val SEEK_SNAP_MS = 6_000L
         /** ...or up to this far short of it, but never back past where playback was. */

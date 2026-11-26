@@ -1934,4 +1934,9 @@
     <string name="t_prefer_order_row">Rank the Prefer switches, e.g. HDR and Atmos above HEVC</string>
     <string name="t_prefer_order_hint">The Prefer switches that are on, best first. A link matching more of the top ones ranks higher.</string>
     <string name="t_start_over">"↺  Start over"</string>
+    <string name="t_prefetch_top_nzb">"Prefetch the top link's NZB"</string>
+    <string name="t_prefetch_top_nzb_hint">"Downloads the NZB of the first Usenet link while the link list is open, so pressing play starts 1–2 s sooner. Counts as one grab at the indexer."</string>
+    <string name="t_missing_release_trying_next">"Missing release · trying the next link: %1$s"</string>
+    <string name="t_link_cant_stream_trying_next">"This link can't be streamed · trying the next link: %1$s"</string>
+    <string name="t_release_missing_pick_another">"This release is no longer on your news providers, and no other link is left to try. Pick another source."</string>
 </resources>

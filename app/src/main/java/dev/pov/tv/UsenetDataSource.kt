@@ -321,7 +321,40 @@ internal object UsenetPlayback {
     }
 
     /** The NZB, from this device's small cache when it was played before (so resuming costs no grab), else from the indexer. */
+    private const val PREFETCH_KEY = "usenet.prefetch_nzb"
+    /** [address] is a Usenet link already found unplayable this session (gone, or a set the app can't stream). */
+    fun refused(address: String) = UsenetLinks.isNzb(address) && UsenetSessions.reason(sha1(address)) != null
+    fun prefetchEnabled(store: SecureStore) = store.get(PREFETCH_KEY) != "false"
+    fun setPrefetch(store: SecureStore, on: Boolean) = store.put(PREFETCH_KEY, on.toString())
+
+    /** NZBs being downloaded ahead of play, by link key: pressing play waits for one instead of grabbing it twice. */
+    private val prefetching = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.Future<*>>()
+    private val prefetcher = java.util.concurrent.Executors.newSingleThreadExecutor { work -> Thread(work, "nzb-prefetch").apply { isDaemon = true } }
+
+    /**
+     * Downloads [address]'s NZB into this device's cache now, when it is a Usenet link this app streams itself, the
+     * setting is on and it isn't cached or known to be dead already. Called for the top link of a link list: pressing
+     * play then reads the NZB from the cache (it counts as one grab at the indexer, as playing it would).
+     */
+    fun prefetchNzb(address: String, store: SecureStore, cache: java.io.File?) {
+        if (cache == null || !UsenetLinks.isNzb(address) || !prefetchEnabled(store)) return
+        if (dev.pov.tv.data.UsenetRoute.get(store) != dev.pov.tv.data.UsenetRoute.NEWS) return
+        val key = sha1(address)
+        if (UsenetSessions.reason(key) != null) return
+        val file = java.io.File(java.io.File(cache, "nzb"), "$key.nzb.gz")
+        if (file.isFile && System.currentTimeMillis() - file.lastModified() < KEEP_MS) return
+        prefetching.computeIfAbsent(key) {
+            prefetcher.submit {
+                try { nzbText(address, key, store, cache); UsenetLog.i("NZB of the top link downloaded ahead of play") }
+                catch (error: Exception) { UsenetLog.i("NZB prefetch failed: ${error.message}") }
+                finally { prefetching.remove(key) }
+            }
+        }
+    }
+
     private fun nzbText(address: String, key: String, store: SecureStore, cache: java.io.File?): String {
+        // A prefetch of this very NZB still downloading: wait for it, then read it from the cache.
+        if (Thread.currentThread().name != "nzb-prefetch") prefetching[key]?.let { pending -> runCatching { pending.get(30, java.util.concurrent.TimeUnit.SECONDS) } }
         val file = cache?.let { java.io.File(it, "nzb").apply { mkdirs() } }?.let { java.io.File(it, "$key.nzb.gz") }
         if (file != null && file.isFile && System.currentTimeMillis() - file.lastModified() < KEEP_MS) {
             try {
