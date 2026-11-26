@@ -322,8 +322,13 @@ internal object UsenetPlayback {
 
     /** The NZB, from this device's small cache when it was played before (so resuming costs no grab), else from the indexer. */
     private const val PREFETCH_KEY = "usenet.prefetch_nzb"
+    private const val PREFETCH_MAX_LIMITED_GRABS = 50
     /** [address] is a Usenet link already found unplayable this session (gone, or a set the app can't stream). */
     fun refused(address: String) = UsenetLinks.isNzb(address) && UsenetSessions.reason(sha1(address)) != null
+    /** The reason [address] was found unplayable this session, as the error the main player would have had. */
+    fun refusal(address: String): Throwable? = if (!UsenetLinks.isNzb(address)) null
+        else UsenetSessions.reason(sha1(address))?.let { why -> dev.pov.tv.usenet.UsenetRefusedException(
+            why.ifBlank { L10n.tr(R.string.t_this_usenet_link_couldn_t_be, "This Usenet link couldn't be streamed.") }) }
     fun prefetchEnabled(store: SecureStore) = store.get(PREFETCH_KEY) != "false"
     fun setPrefetch(store: SecureStore, on: Boolean) = store.put(PREFETCH_KEY, on.toString())
 
@@ -336,15 +341,22 @@ internal object UsenetPlayback {
      * setting is on and it isn't cached or known to be dead already. Called for the top link of a link list: pressing
      * play then reads the NZB from the cache (it counts as one grab at the indexer, as playing it would).
      */
+    @Volatile private var latestPrefetch = ""
     fun prefetchNzb(address: String, store: SecureStore, cache: java.io.File?) {
         if (cache == null || !UsenetLinks.isNzb(address) || !prefetchEnabled(store)) return
         if (dev.pov.tv.data.UsenetRoute.get(store) != dev.pov.tv.data.UsenetRoute.NEWS) return
+        // An indexer with a small daily grab limit isn't spent on lists the viewer only browses.
+        dev.pov.tv.data.NewznabIndexers(store).forLink(UsenetLinks.nzbAddress(address))
+            ?.takeIf { it.dailyGrabLimit in 1..PREFETCH_MAX_LIMITED_GRABS }?.let { return }
         val key = sha1(address)
+        latestPrefetch = key
         if (UsenetSessions.reason(key) != null) return
         val file = java.io.File(java.io.File(cache, "nzb"), "$key.nzb.gz")
         if (file.isFile && System.currentTimeMillis() - file.lastModified() < KEEP_MS) return
         prefetching.computeIfAbsent(key) {
             prefetcher.submit {
+                // Only the list on screen now: titles browsed past while this one waited aren't grabbed.
+                if (latestPrefetch != key) { prefetching.remove(key); return@submit }
                 try { nzbText(address, key, store, cache); UsenetLog.i("NZB of the top link downloaded ahead of play") }
                 catch (error: Exception) { UsenetLog.i("NZB prefetch failed: ${error.message}") }
                 finally { prefetching.remove(key) }

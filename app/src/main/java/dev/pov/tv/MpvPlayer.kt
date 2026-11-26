@@ -32,7 +32,11 @@ import java.util.Locale
  * subtitles itself (libass). Its tracks are offered as ordinary tracks; picking one sets mpv's aid/sid.
  */
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
-internal class MpvPlayer(context: Context) : SimpleBasePlayer(Looper.getMainLooper()) {
+internal class MpvPlayer(
+    context: Context,
+    /** Why the link itself can't be read (a Usenet release gone or unplayable), when mpv's opening fails. */
+    private val linkFailure: () -> Throwable? = { null },
+) : SimpleBasePlayer(Looper.getMainLooper()) {
     private val app = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val mpv: MPV = Engine.get(context)
@@ -42,6 +46,8 @@ internal class MpvPlayer(context: Context) : SimpleBasePlayer(Looper.getMainLoop
     private var prepared = false
     private var loading = false
     private var loaded = false
+    /** mpv started this player's file: end events before that belong to the video before (the shared mpv). */
+    private var started = false
     private var playWhenReady = false
     private var error: PlaybackException? = null
     private var trackParameters: TrackSelectionParameters = TrackSelectionParameters.DEFAULT
@@ -102,16 +108,20 @@ internal class MpvPlayer(context: Context) : SimpleBasePlayer(Looper.getMainLoop
         override fun eventProperty(property: String, value: MPVNode) = Unit
         override fun event(eventId: Int, data: MPVNode) {
             when (eventId) {
-                MPV.mpvEvent.MPV_EVENT_FILE_LOADED -> main.post { loaded = true; loading = false; addSubtitles(); refreshTracks(); invalidateState() }
+                MPV.mpvEvent.MPV_EVENT_START_FILE -> main.post { if (prepared) started = true }
+                MPV.mpvEvent.MPV_EVENT_FILE_LOADED -> main.post { if (started) { loaded = true; loading = false; addSubtitles(); refreshTracks(); invalidateState() } }
                 MPV.mpvEvent.MPV_EVENT_PLAYBACK_RESTART -> main.post {
                     waiting = false
                     if (!firstFrame) firstFrame = true
                     invalidateState()
                 }
                 MPV.mpvEvent.MPV_EVENT_END_FILE -> main.post {
-                    if (!loaded && prepared && error == null) {
-                        error = PlaybackException(L10n.tr(R.string.t_mpv_couldnt_play, "mpv couldn't play this link either. Pick another source."),
-                            null, PlaybackException.ERROR_CODE_IO_UNSPECIFIED)
+                    if (started && !loaded && prepared && error == null) {
+                        // The link's own reason (a Usenet release gone, an archive that can't stream) when there is one,
+                        // so the player screen says so and plays the next link, as with the main player.
+                        val cause = runCatching { linkFailure() }.getOrNull()
+                        error = PlaybackException(cause?.message ?: L10n.tr(R.string.t_mpv_couldnt_play, "mpv couldn't play this link either. Pick another source."),
+                            cause, PlaybackException.ERROR_CODE_IO_UNSPECIFIED)
                         loading = false
                         invalidateState()
                     }
@@ -323,7 +333,7 @@ internal class MpvPlayer(context: Context) : SimpleBasePlayer(Looper.getMainLoop
         addedSubtitles.clear()
         item = next
         startMs = if (startPositionMs == C.TIME_UNSET) 0L else startPositionMs.coerceAtLeast(0)
-        loaded = false; ended = false; firstFrame = false; reportedFirstFrame = false
+        loaded = false; ended = false; firstFrame = false; reportedFirstFrame = false; started = false
         return Futures.immediateVoidFuture()
     }
 
@@ -435,7 +445,7 @@ internal class MpvPlayer(context: Context) : SimpleBasePlayer(Looper.getMainLoop
     }
 
     override fun handleStop(): ListenableFuture<*> {
-        prepared = false; loaded = false; loading = false
+        prepared = false; loaded = false; loading = false; started = false
         mpv.command("stop")
         return Futures.immediateVoidFuture()
     }

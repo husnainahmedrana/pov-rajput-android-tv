@@ -391,7 +391,7 @@ object InAppPlaybackSession {
             mpvServer = try { LocalStreamServer(playerSources, Uri.parse(routed.url), name) { android.util.Log.i("PovMpv", it) } }
                 catch (failure: Exception) { android.util.Log.w("PovMpv", "local server failed", failure); usingMpv = false; null }
         }
-        val exo: Player = if (usingMpv) MpvPlayer(application!!) else ExoPlayer.Builder(application!!, renderers)
+        val exo: Player = if (usingMpv) MpvPlayer(application!!) { UsenetPlayback.refusal(playing) } else ExoPlayer.Builder(application!!, renderers)
             .setMediaSourceFactory(mediaSources)
             // A bigger cushion after each stall (Kodi-like) for links that only just keep up with the film's bitrate.
             .setLoadControl(RebufferGuard(ReadAheadPreferences(application!!).loadControl(usenet = dev.pov.tv.data.UsenetLinks.isNzb(playing)),

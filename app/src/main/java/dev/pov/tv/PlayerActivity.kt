@@ -821,12 +821,8 @@ class PlayerActivity : Activity() {
         error.errorCode in PlaybackException.ERROR_CODE_DECODER_INIT_FAILED..PlaybackException.ERROR_CODE_DECODING_RESOURCES_RECLAIMED ||
         error.errorCode in PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED..PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED
 
-    private var switchedToMpv = false
-
     /** Reopens the playing link with mpv, here in this same player screen, at the current spot. */
     private fun switchToMpv() {
-        if (switchedToMpv) return
-        switchedToMpv = true
         val from = InAppPlaybackSession.startIntent ?: intent
         val at = player?.currentPosition?.takeIf { it > 0 } ?: from.getLongExtra("resume", 0L)
         val next = Intent(from).putExtra("resume", at).putExtra("engine_mpv", true)

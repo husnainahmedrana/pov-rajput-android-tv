@@ -311,7 +311,8 @@ class NntpPool(
                     while (true) {
                         val fetch = flying.pollLast() ?: break
                         if (fetch.cancelled) continue
-                        if (fetch.attempts++ >= 3) fetch.fail(error) else enqueue(fetch, urgent = true)
+                        // A connection let go on purpose (a seek) isn't the article's fault: it doesn't use up a retry.
+                        if (!deliberate && fetch.attempts++ >= 3) fetch.fail(error) else enqueue(fetch, urgent = true)
                     }
                     if (!deliberate && ++failures >= 6) return
                 }
