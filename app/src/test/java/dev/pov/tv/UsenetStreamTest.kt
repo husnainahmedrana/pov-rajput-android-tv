@@ -300,6 +300,26 @@ BODY evil</segment>
         assertReadsLike(file, opened.source, 5)
     }
 
+    @Test fun `an MKV in RAR volumes has its seek index in the last volume fetched at open`() {
+        val cuesAt = 1_150_000L
+        val head = MkvIndexTest.head(cuesAt - MkvIndexTest.segmentStart())
+        val inner = head + Random(17).nextBytes(1_200_000 - head.size)
+        val server = server()
+        val volumes = rar4(inner, "Film.2024.2160p.mkv", perVolume = 200_000)
+        val names = listOf("film.rar") + (0 until volumes.size - 1).map { "film.r%02d".format(it) }
+        val nzb = Nzb(volumes.mapIndexed { index, bytes -> server.post(bytes, even(bytes.size, 30_000), names[index]) }, null)
+        val opened = UsenetMedia.open(pool(server, 3), nzb)
+        val lastVolume = volumes.size
+        // Beyond the last volume's first article (its size): the Cues articles, asked for before the player jumps there.
+        val deadline = System.currentTimeMillis() + 5_000
+        fun cuesFetched() = server.servedIds().any { it.startsWith("f$lastVolume-p") && it != "f$lastVolume-p1@test" }
+        while (!cuesFetched() && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        assertTrue("the last volume's Cues articles were fetched before the player asked", cuesFetched())
+        readAll(opened.source, 0, 4_000)
+        assertArrayEquals(inner.copyOfRange(cuesAt.toInt(), cuesAt.toInt() + 40_000), readAll(opened.source, cuesAt, 40_000))
+        assertReadsLike(inner, opened.source, 3)
+    }
+
     @Test fun `parts of uneven sizes are still found by position`() {
         val file = Random(3).nextBytes(500_000)
         val sizes = listOf(64_000) + even(file.size - 64_000 - 30_000, 50_000) + listOf(30_000)

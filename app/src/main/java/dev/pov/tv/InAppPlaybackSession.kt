@@ -122,6 +122,8 @@ object InAppPlaybackSession {
     private const val MAX_QUIET_RETRIES = 3
     private const val SOURCE_RETRY_DELAY_MS = 1_000L
     private const val MAX_SOURCE_RETRIES = 2
+    /** Quiet re-opens per video after a "stuck playing" error before it is shown. */
+    private const val MAX_STUCK_RETRIES = 3
     private const val CACHED_CONNECT_TIMEOUT_MS = 8_000
     /** Device recoveries (decoders, audio output) per video before the error is shown. */
     private const val MAX_DEVICE_RECOVERIES = 5
@@ -190,6 +192,8 @@ object InAppPlaybackSession {
     private var quietRetries = 0
     /** Quiet retries after a source error in the foreground; reset once the video is playing again. */
     private var sourceRetries = 0
+    /** Quiet re-opens after the player said it was stuck (playing, clock not moving); per video, not reset by READY. */
+    private var stuckRetries = 0
     /** The playing link comes from AIOStreams (its add-on tag), which gets longer waits and more quiet retries. */
     private val aioStreams get() = sourceAddon?.startsWith(dev.pov.tv.data.AddonBadges.AIOSTREAMS) == true
     /** Set when parallel Easynews downloads keep failing for the current video; cleared when another video starts. */
@@ -472,6 +476,18 @@ object InAppPlaybackSession {
                     handler.post { if (isCurrent(exo)) { exo.trackSelectionParameters = parameters; exo.play() } }
                     return
                 }
+                // "Player stuck playing with no progress": the player had started, then the next data came late (one
+                // slow Usenet article) and with the sound passed through to the TV its clock just stopped, still
+                // "playing", until the player gave up after 10 s. The stream itself is fine: open it again at the
+                // same spot, quietly, instead of showing an error.
+                if (error == null && stuckRetries < MAX_STUCK_RETRIES && failure.cause?.javaClass?.simpleName == "StuckPlayerException") {
+                    stuckRetries++
+                    android.util.Log.w("PovPlayer", "Player stuck with no progress; re-opening at the same spot ($stuckRetries of $MAX_STUCK_RETRIES)")
+                    if (dev.pov.tv.data.UsenetLinks.isNzb(sourceUrl)) dev.pov.tv.UsenetLog.i("player was stuck with no progress; re-opening at the same spot")
+                    exo.prepare(); exo.play()
+                    notifyChanged()
+                    return
+                }
                 val justBack = android.os.SystemClock.elapsedRealtime() - foregroundAt < QUIET_RETRY_WINDOW_MS
                 if (isNetworkFailure(failure) && error == null && quietRetries < MAX_QUIET_RETRIES && (inBackground || justBack)) {
                     // The network was cut while the app was away (or is still coming back): retry the same link quietly.
@@ -597,7 +613,7 @@ object InAppPlaybackSession {
         surfaceAttachment.cancelAll()
         handler.removeCallbacks(checkpoint)
         resumeAfterBackground = false
-        networkRetryPending = false; quietRetries = 0; sourceRetries = 0
+        networkRetryPending = false; quietRetries = 0; sourceRetries = 0; stuckRetries = 0
         volumeBoost.close()
         targetView?.get()?.let { it.player = null; it.keepScreenOn = false }
         targetView = null

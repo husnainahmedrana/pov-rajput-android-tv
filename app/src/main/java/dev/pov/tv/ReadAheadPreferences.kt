@@ -25,11 +25,20 @@ internal class ReadAheadPreferences(context: Context) {
             // A seek lands on the keyframe before its target, which has usually already played. Keeping the last
             // few seconds (from a keyframe) lets short skips play from memory instead of reloading the file.
             .setBackBuffer(BACK_BUFFER_MS, true)
-        if (read == ReadAhead.STANDARD) return builder.build()
+        // Usenet: start (and restart after a stall) with a few seconds more in hand. One slow article in the first
+        // seconds is common from far away (700 KB can take 5–10 s on one connection), and with only the usual
+        // 2–3 s buffered the picture froze at 0:02–0:03 on nearly every start; the picture now comes about 2 s
+        // later but keeps going.
+        val startMs = if (usenet) USENET_START_MS else DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS
+        val restartMs = if (usenet) USENET_START_MS else DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS
+        if (read == ReadAhead.STANDARD) {
+            if (!usenet) return builder.build()
+            return builder.setBufferDurationsMs(DefaultLoadControl.DEFAULT_MIN_BUFFER_MS, DefaultLoadControl.DEFAULT_MAX_BUFFER_MS, startMs, restartMs).build()
+        }
         val ms = read.seconds * 1000
         return builder
             // Equal min and max keep the buffer topped up instead of waiting for it to drain to 50 seconds.
-            .setBufferDurationsMs(ms, ms, DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS, DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
+            .setBufferDurationsMs(ms, ms, startMs, restartMs)
             .setTargetBufferBytes(budgetBytes(Runtime.getRuntime().maxMemory(), read, if (usenet) 3 else 2))
             .setPrioritizeTimeOverSizeThresholds(false)
             .build()
@@ -38,6 +47,8 @@ internal class ReadAheadPreferences(context: Context) {
     companion object {
         /** Ten seconds covers the keyframe gap of almost every film encode. */
         const val BACK_BUFFER_MS = 10_000
+        /** Buffered before a Usenet video starts or carries on after a stall. */
+        const val USENET_START_MS = 5_500
         /**
          * Up to half the heap: about 190 MB on the onn 4K's 384 MB, enough for over a minute of a typical 1080p file.
          * A third ([share] 3) while Usenet streams in the app: its read-ahead, the next volume and the NZB need room too.

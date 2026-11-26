@@ -1933,4 +1933,5 @@
     <string name="t_no_prefer_switches_on">Keine Bevorzugen-Schalter an</string>
     <string name="t_prefer_order_row">Bevorzugen-Schalter ordnen, z. B. HDR und Atmos vor HEVC</string>
     <string name="t_prefer_order_hint">Die eingeschalteten Bevorzugen-Schalter, der beste zuerst. Ein Link, der mehr der oberen erfüllt, steht weiter oben.</string>
+    <string name="t_start_over">"↺  Von vorne"</string>
 </resources>

@@ -220,7 +220,10 @@ internal object UsenetPlayback {
                         log = { UsenetLog.i("${provider.name}: $it") }, keepOpen = if (index == 0) minOf(warm, provider.connections) else 0)
                 })
                 try {
-                    chain.prestart(minOf(providers[0].connections, PRESTART))
+                    // All of them: one connection to a far server can carry only 1–1.5 Mbit/s, so a video starts on time only
+                    // when every connection is downloading from the first second (with 6, the rest signed in after
+                    // playback had already caught up with the download and stalled at 0:03).
+                    chain.prestart(providers[0].connections)
                     PlaybackStatus.stage(L10n.tr(R.string.t_status_getting_nzb, "Getting the NZB from the indexer"))
                     val text = nzbText(address, key, store, cache)
                     UsenetStartTimes.mark("NZB")
@@ -359,7 +362,6 @@ internal object UsenetPlayback {
     private const val KEEP_FILES = 40
     private const val SAMPLE = 24
     /** Connections to the main provider signed in while the NZB downloads. */
-    private const val PRESTART = 6
     /** How long a failed opening waits for the availability check's clearer reason. */
     private const val HEALTH_WAIT_MS = 4_000L
 }

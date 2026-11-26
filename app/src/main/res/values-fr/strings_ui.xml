@@ -1933,4 +1933,5 @@
     <string name="t_no_prefer_switches_on">Aucun interrupteur Préférer activé</string>
     <string name="t_prefer_order_row">Classez les interrupteurs Préférer, p. ex. HDR et Atmos avant HEVC</string>
     <string name="t_prefer_order_hint">Les interrupteurs Préférer activés, le meilleur en premier. Un lien qui en remplit davantage parmi ceux du haut est mieux classé.</string>
+    <string name="t_start_over">"↺  Depuis le début"</string>
 </resources>

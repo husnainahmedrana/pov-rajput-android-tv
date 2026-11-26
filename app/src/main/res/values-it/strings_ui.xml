@@ -1933,4 +1933,5 @@
     <string name="t_no_prefer_switches_on">Nessun interruttore Preferisci attivo</string>
     <string name="t_prefer_order_row">Ordina gli interruttori Preferisci, ad es. HDR e Atmos prima di HEVC</string>
     <string name="t_prefer_order_hint">Gli interruttori Preferisci attivi, il migliore per primo. Un link che soddisfa più di quelli in alto sale di più.</string>
+    <string name="t_start_over">"↺  Dall'inizio"</string>
 </resources>

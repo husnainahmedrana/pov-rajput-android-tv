@@ -19,6 +19,11 @@ interface ArticleSource : Closeable {
     fun fetch(messageId: String, urgent: Boolean = false): Fetch
     /** Moves a queued article to the front: the player has reached it before a connection did. */
     fun hurry(fetch: Fetch)
+    /**
+     * A second copy of an article the player is waiting on: from another provider when there is one (a slow article
+     * is often slow on every connection to the same servers, as they fetch it from slower storage), else as [fetch].
+     */
+    fun fetchBackup(messageId: String): Fetch = fetch(messageId, urgent = true)
 }
 
 /** One article being fetched. [await] blocks until it is decoded or has failed. */
@@ -27,6 +32,8 @@ class Fetch internal constructor(val messageId: String) {
     @Volatile private var segment: Segment? = null
     @Volatile private var failure: IOException? = null
     @Volatile internal var cancelled = false
+    /** The copy came from a backup provider (ProviderChain), not the main one: for the log. */
+    @Volatile var fromBackupProvider = false; internal set
     internal var attempts = 0
     private var listener: ((Fetch) -> Unit)? = null
     internal var onCancel: (() -> Unit)? = null
@@ -172,6 +179,11 @@ class NntpPool(
         var connection: NntpConnection? = null
         val flying = ArrayDeque<Fetch>()
         var failures = 0
+        // Diagnostics: which connection an article was on and how long it took, to tell a slow connection from a slow line.
+        val number = serial.incrementAndGet()
+        var kind = ""
+        var signedInAt = 0L
+        val sentAt = HashMap<Fetch, Long>()
         try {
             while (!closed) {
                 // Sign in BEFORE taking an article. Taking first let a worker stuck in a slow sign-in (a bad route
@@ -184,9 +196,13 @@ class NntpPool(
                         val fresh = warm ?: NntpConnection(server, open, count)
                         fresh.received = count
                         sockets += fresh
+                        val signInStarted = System.nanoTime()
                         if (warm == null) try { fresh.connect() } catch (error: IOException) { fresh.close(); sockets -= fresh; throw error }
                         if (closed) { fresh.close(); sockets -= fresh; return }
                         connection = fresh
+                        signedInAt = System.nanoTime(); sentAt.clear()
+                        kind = if (warm != null) "warm (signed in ${WarmConnections.ageSeconds(warm)} s before)" else "fresh"
+                        log("connection $number ${if (warm != null) "reused $kind" else "signed in in ${(signedInAt - signInStarted) / 1_000_000} ms"}")
                         if (live.incrementAndGet() == 1 && firstConnectedAt == 0L) firstConnectedAt = System.nanoTime()
                         failures = 0
                     } catch (error: IOException) {
@@ -221,17 +237,30 @@ class NntpPool(
                 var wrote = false
                 while (flying.size < depth) {
                     val next = take(block = flying.isEmpty()) ?: break
+                    // A copy of an article this connection is already fetching (a backup request) belongs on another
+                    // connection: here it would only wait behind the first one.
+                    if (flying.any { it.messageId == next.messageId }) {
+                        synchronized(lock) { queue.addFirst(next); lock.notify() }
+                        break
+                    }
                     checkNotNull(connection).send("BODY <${next.messageId}>")
                     flying.addLast(next); wrote = true
+                    sentAt[next] = System.nanoTime()
                 }
                 if (flying.isEmpty()) break                               // idle for long enough, or closed
                 val current = checkNotNull(connection)
                 try {
                     if (wrote) current.flush()
+                    val waitStarted = System.nanoTime()
                     val (code, text) = current.status()
                     val fetch = flying.removeFirst()
+                    val answeredAt = System.nanoTime()
                     when (code) {
-                        222 -> if (fetch.cancelled) current.skipBody() else {
+                        222 -> if (fetch.cancelled) {
+                            current.skipBody()
+                            val total = (System.nanoTime() - (sentAt.remove(fetch) ?: waitStarted)) / 1_000_000
+                            if (total >= SLOW_ARTICLE_MS) log("slow article (no longer wanted, still downloaded): $total ms on connection $number")
+                        } else {
                             val segment = try { current.body() }
                                 catch (error: BadArticleException) { fetch.fail(error); continue }   // read whole: the connection is fine
                                 catch (error: IOException) { flying.addFirst(fetch); throw error }
@@ -240,7 +269,14 @@ class NntpPool(
                                     log("article failed its checksum; fetching again")
                                     enqueue(fetch, urgent = true)
                                 } else fetch.fail(IOException(L10n.tr(R.string.t_the_article_failed_its_checksum_after, "The article failed its checksum after retrying.")))
-                            } else { bytes.addAndGet(segment.size.toLong()); fetch.complete(segment) }
+                            } else {
+                                bytes.addAndGet(segment.size.toLong()); fetch.complete(segment)
+                                val now = System.nanoTime()
+                                val sent = sentAt.remove(fetch) ?: waitStarted
+                                val total = (now - sent) / 1_000_000
+                                if (total >= SLOW_ARTICLE_MS) log("slow article: ${total} ms on connection $number ($kind, signed in ${(now - signedInAt) / 1_000_000_000} s ago) · " +
+                                    "answer after ${(answeredAt - sent) / 1_000_000} ms, body ${segment.size / 1024} KB in ${(now - answeredAt) / 1_000_000} ms · ${flying.size} more in flight · ${if (fetch.cancelled) "cancelled" else "wanted"}")
+                            }
                         }
                         430, 423, 420 -> fetch.fail(MissingArticleException(fetch.messageId))
                         else -> { flying.addFirst(fetch); throw IOException("The news server answered $code $text") }
@@ -276,6 +312,9 @@ class NntpPool(
         /** Most requests one connection keeps in flight (Settings → Usenet → provider → Pipeline depth). */
         const val MAX_DEPTH = 20
         private const val REGROW_MS = 60_000L
+        /** An article taking this long from request to last byte is written to the Usenet log with its connection. */
+        private const val SLOW_ARTICLE_MS = 3_000L
+        private val serial = AtomicInteger()
     }
 
     private fun failAll(error: IOException) {
@@ -320,7 +359,7 @@ class ProviderChain(private val pools: List<NntpPool>) : ArticleSource {
         inner.listen { ended ->
             val segment = ended.result
             when {
-                segment != null -> { current.remove(outer); if (index > 0) rescued.incrementAndGet(); outer.complete(segment) }
+                segment != null -> { current.remove(outer); if (index > 0) { rescued.incrementAndGet(); outer.fromBackupProvider = true }; outer.complete(segment) }
                 index + 1 < pools.size && !outer.cancelled -> ask(outer, index + 1, urgent = true)
                 else -> { current.remove(outer); outer.fail(ended.error ?: IOException(L10n.tr(R.string.t_the_article_couldn_t_be_fetched, "The article couldn't be fetched."))) }
             }
@@ -329,8 +368,25 @@ class ProviderChain(private val pools: List<NntpPool>) : ArticleSource {
 
     override fun hurry(fetch: Fetch) { current[fetch]?.let { (pool, inner) -> pool.hurry(inner) } }
     override fun close() { pools.forEach { it.close() } }
-    /** Signs in [count] connections to the main provider now (see [NntpPool.prestart]); backups stay closed until needed. */
-    fun prestart(count: Int) = pools[0].prestart(count)
+
+    /** Asked of the first backup provider (then any after it); the main provider is still fetching the first copy. */
+    override fun fetchBackup(messageId: String): Fetch {
+        if (pools.size < 2) return fetch(messageId, urgent = true)
+        val outer = Fetch(messageId)
+        outer.onCancel = { current.remove(outer)?.second?.cancel() }
+        ask(outer, 1, urgent = true)
+        return outer
+    }
+
+    /**
+     * Signs in [count] connections to the main provider now (see [NntpPool.prestart]), and a couple to the first
+     * backup provider, so a backup request for a slow article doesn't wait for a sign-in.
+     */
+    fun prestart(count: Int) {
+        pools[0].prestart(count)
+        if (pools.size > 1) pools[1].prestart(minOf(BACKUP_PRESTART, pools[1].connections))
+    }
+    private companion object { const val BACKUP_PRESTART = 2 }
     /** When the main provider's first connection was signed in, 0 until then. */
     val firstConnectedAt: Long get() = pools[0].firstConnectedAt
 }
@@ -362,7 +418,7 @@ object WarmConnections {
                 try {
                     val connection = NntpConnection(server)
                     try { connection.connect() } catch (error: IOException) { connection.close(); throw error }
-                    synchronized(this) { held += Held(key, connection, now()) }
+                    synchronized(this) { held += Held(key, connection, now()); signedIn[connection] = now() }
                 } catch (_: Exception) {
                     // No warm connection then: the pool signs in as usual.
                 } finally { synchronized(this) { opening[key] = ((opening[key] ?: 1) - 1).coerceAtLeast(0) } }
@@ -372,6 +428,10 @@ object WarmConnections {
         Thread({ try { Thread.sleep(KEEP_MS + 1_000) } catch (_: InterruptedException) {}; synchronized(this) { expire() } }, "nntp-warm-expiry")
             .apply { isDaemon = true }.start()
     }
+
+    /** How long ago [connection] was signed in, for the log; 0 when it isn't (or no longer) known here. */
+    private val signedIn = java.util.WeakHashMap<NntpConnection, Long>()
+    internal fun ageSeconds(connection: NntpConnection): Long = synchronized(this) { signedIn[connection]?.let { (now() - it) / 1000 } ?: 0 }
 
     internal fun take(server: NntpServer): NntpConnection? = synchronized(this) {
         expire()

@@ -57,7 +57,10 @@ class UsenetStream(
     fun prepare() {
         if (prepared) return
         require(segments.isNotEmpty()) { "The NZB lists no articles." }
-        val first = await(0)
+        // The first article on two connections at once: whichever arrives first is used. Nothing plays before it,
+        // and the connection that takes it is often one signed in ahead of time, whose first answer after sitting
+        // idle comes 1.7–2.3 s late (fresh ones answer in 0.2 s); one extra article is cheap next to that.
+        val first = await(0, hedgeMs = 0)
         synchronized(lock) {
             if (prepared) return
             if (first.begin != 0L || first.fileSize <= 0 || first.size <= 0) throw IOException(L10n.tr(R.string.t_the_first_article_doesn_t_describe, "The first article doesn't describe the file."))
@@ -150,38 +153,62 @@ class UsenetStream(
     private fun schedule(index: Int) {
         synchronized(lock) {
             if (index == scheduled || closed) return
+            // The first read of a stream is often only a peek (the player reads a video's first bytes, then jumps to
+            // its seek index at the end): a full window there filled every connection with articles nobody read yet
+            // and the seek index waited behind them (12–28 s on a slow line). Only that first read starts small;
+            // anywhere after, the whole window is asked at once: one connection to a far server is slow (1–1.5
+            // Mbit/s), so playback keeps up only with every connection downloading.
+            val ahead = if (scheduled < 0) minOf(window, START_WINDOW) else window
             scheduled = index
             val keep = (index - 1)..(index + window)
             val stale = slots.keys.filter { it !in keep && it !in pinned && !(pinEnds && (it <= 1 || it >= last - 2)) }
             for (key in stale) slots.remove(key)?.cancel()
-            for (next in index + 1..minOf(last, index + window)) if (next !in slots) slots[next] = pool.fetch(segments[next].messageId)
+            for (next in index + 1..minOf(last, index + ahead)) if (next !in slots) slots[next] = pool.fetch(segments[next].messageId)
         }
     }
 
-    private fun await(index: Int): Segment {
+    /** [hedgeMs]: how long the reader waits before a backup request goes out (0: at once, for the first article). */
+    private fun await(index: Int, hedgeMs: Long = HEDGE_MS): Segment {
         val started = System.nanoTime()
         val deadline = started + AWAIT_MS * 1_000_000
         var asked = started
+        // A second request for the same article on another connection, made when the reader has waited [hedgeMs]:
+        // one connection on a lossy line can crawl (700 KB in 11 s while its neighbours take 2 s), and whichever
+        // copy arrives first is used. The first request is kept, not cancelled: it may be nearly done.
+        var backup: Fetch? = null
+        var hedged = false
         while (true) {
             if (closed) throw IOException(L10n.tr(R.string.t_the_stream_is_closed, "The stream is closed."))
+            backup?.let { spare ->
+                spare.result?.let { segment ->
+                    synchronized(lock) { slots[index]?.takeIf { it !== spare && !it.done }?.cancel(); slots[index] = spare }
+                    log("article ${index + 1} came first from the backup request" + if (spare.fromBackupProvider) " (backup provider)" else "")
+                    return segment
+                }
+                if (spare.done) backup = null                      // the backup failed: carry on with the first
+            }
             // An article that hasn't come for a while is usually stuck on one slow or half-dead connection: ask for
             // it again at the front of the queue, so a free connection fetches it, instead of waiting out the timeout.
             if (System.nanoTime() - asked > STALL_MS * 1_000_000) {
                 asked = System.nanoTime()
                 synchronized(lock) { slots.remove(index)?.takeIf { !it.done }?.let { stale ->
-                    log("article ${index + 1} stalled for ${STALL_MS / 1000} s; asking again"); stale.cancel() } }
+                    log("article ${index + 1} of ${segments.size}${if (name.isNotEmpty()) " ($name)" else ""} stalled for ${STALL_MS / 1000} s; asking again"); stale.cancel() } }
             }
             val fetch = synchronized(lock) {
                 val known = slots[index]
                 if (known != null && !known.cancelled) { if (!known.done) pool.hurry(known); known }
                 else pool.fetch(segments[index].messageId, urgent = true).also { slots[index] = it }
             }
+            if (!hedged && !fetch.done && System.nanoTime() - started >= hedgeMs * 1_000_000) {
+                hedged = true                                      // one backup per wait
+                backup = pool.fetchBackup(segments[index].messageId)
+            }
             val segment = try { fetch.await(400) } catch (error: IOException) {
                 synchronized(lock) { if (slots[index] === fetch) slots.remove(index) }
                 throw error
             }
-            if (segment != null) return segment
-            if (System.nanoTime() > deadline) throw SlowArticleException()
+            if (segment != null) { backup?.takeIf { !it.done }?.cancel(); return segment }
+            if (System.nanoTime() > deadline) { backup?.cancel(); throw SlowArticleException() }
         }
     }
 
@@ -189,7 +216,7 @@ class UsenetStream(
         synchronized(lock) { closed = true; slots.values.forEach { it.cancel() }; slots.clear(); pinned.clear() }
     }
 
-    private companion object { const val AWAIT_MS = 60_000L; const val STALL_MS = 12_000L; const val MAX_PINNED = 16 }
+    private companion object { const val AWAIT_MS = 60_000L; const val STALL_MS = 12_000L; const val HEDGE_MS = 3_500L; const val MAX_PINNED = 16; const val START_WINDOW = 4 }
 }
 
 /** The availability check found articles of this release gone from every provider: choose another link. */

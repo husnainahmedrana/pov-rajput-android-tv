@@ -3731,14 +3731,24 @@ class MainActivity : Activity() {
         fun play(label: String, width: Int, action: () -> Unit) = actions.addView(
             if (flix) primaryButton(label, action) else button(label, action).apply { gravity = Gravity.CENTER }, margin(width, 44, right = 12))
         // Streams sits beside Play: the full link list for picking by hand, never auto-played even with Auto-play on.
-        fun streams(target: PlaybackIdentity) = actions.addView(button(getString(R.string.t_streams)) { navigate { showSources(target, manual = true) } }
+        fun streams(target: PlaybackIdentity) = actions.addView(button(getString(R.string.t_streams)) { startOverFor = null; navigate { showSources(target, manual = true) } }
             .apply { gravity = Gravity.CENTER; tag = "details-streams" }, margin(140, 44, right = 12))
+        // Start over: shown only when Play would resume; the next link picked for this title plays from 0:00.
+        fun startOver(target: PlaybackIdentity) {
+            if (!hasResumePoint(target)) return
+            actions.addView(button(getString(R.string.t_start_over)) { startOverFor = identityKey(target); navigate { showSources(target) } }
+                .apply { gravity = Gravity.CENTER; tag = "details-start-over" }, margin(200, 44, right = 12))
+        }
         if (result.type == "movie") {
             val target = savedFor(result)?.identity ?: identity
-            play(getString(R.string.t_play), 130) { navigate { showSources(target) } }
+            play(getString(R.string.t_play), 130) { startOverFor = null; navigate { showSources(target) } }
             streams(target)
+            startOver(target)
         }
-        if (episode != null) { play(getString(R.string.t_play_s_x_e_x, episode.season, episode.episode), 180) { navigate { showSources(episode) } }; streams(episode) }
+        if (episode != null) {
+            play(getString(R.string.t_play_s_x_e_x, episode.season, episode.episode), 180) { startOverFor = null; navigate { showSources(episode) } }
+            streams(episode); startOver(episode)
+        }
         else if (flix) playTarget(result)?.let { (target, _) ->
             // On a show page both follow the episode focused in the row below (see episodeFocused).
             episodeTarget = target; episodeActions = actions
@@ -6191,23 +6201,39 @@ class MainActivity : Activity() {
     /** Set while a link picked in the player's Streams panel is being prepared: the new link continues from here. */
     private var switchResumeMs: Long? = null
 
+    /** The title (identityKey) Start over was pressed for: its next playback begins at 0:00, ignoring saved progress. */
+    private var startOverFor: String? = null
+
+    /** Whether [identity] has a saved position, here or on the tracker, that Play would resume from. */
+    private fun hasResumePoint(identity: PlaybackIdentity): Boolean {
+        if ((remoteProgress[identityKey(identity)] ?: 0.0) > 0.5) return true
+        return history.recent().any { recent ->
+            recent.identity?.let { it.imdbId == identity.imdbId && it.season == identity.season && it.episode == identity.episode } == true &&
+                recent.position > 30_000 && recent.duration > 0 && recent.position < recent.duration * 0.95
+        }
+    }
+
     private fun play(url: String, title: String, identity: PlaybackIdentity?, key: String, debridService: String? = null, resumeImmediately: Boolean = false,
                      headers: Map<String, String> = emptyMap()) {
         if (launchingPlayer) return
         if (Uri.parse(url).scheme !in setOf("https", "http")) { toast(getString(R.string.t_this_stream_did_not_return_a)); return }
         // Settings → Playback → Play with: another app on this device (Kodi, Dune HD Media Center, VLC…) plays it.
         val request = generation
+        // Start over: this playback begins at 0:00 (the saved position is replaced as soon as it plays).
+        val fromStart = identity != null && startOverFor == identityKey(identity) && switchResumeMs == null
+        val resumeAt = if (fromStart) 0L else switchResumeMs ?: history.resume(key)
         if (ExternalPlayer.enabled(this)) {
             externalCancelled = false
             val overlay = ExternalOpeningOverlay(this, accent, title, ExternalPlayer.label(this), identity?.imdbId.orEmpty())
             if (ExternalPlayer.launch(this, url, headers, title, playingMedia?.first.orEmpty(),
-                switchResumeMs ?: history.resume(key), debridService, playingOrigin, playingSubtitles, key, identity,
+                resumeAt, debridService, playingOrigin, playingSubtitles, key, identity,
                 identity?.let { AutoplayLimit.runtimeMinutes(cachedDetails(MediaItemData(it.imdbId, it.type, it.title))?.runtime) }?.let { it * 60_000L },
                 // A full-screen "opening" card from the moment the link is picked until the other app opens; Back cancels.
                 status = { line, percent -> if (line.isEmpty()) overlay.dismiss() else overlay.show(line, percent) },
                 cancelled = { externalCancelled || request != generation },
                 failed = { error -> overlay.dismiss(); if (request == generation) showError(error) })) {
             playingMedia = null; playingSourceText = ""; switchResumeMs = null; playingAddon = null; playingOrigin = ""; playingSubtitles = emptyList()
+            if (fromStart) startOverFor = null
             // Seek previews belong to the built-in player only: none are made for another app, and old ones are let go.
             BuiltInSeekPreviews.clear()
             externalOverlay = overlay
@@ -6217,10 +6243,11 @@ class MainActivity : Activity() {
         }
         ExternalPlayer.stop(this)                                     // the built-in player takes over from another app
         launchingPlayer = true; playerShown = true
-        val remotePercent = identity?.let { remoteProgress[identityKey(it)] } ?: 0.0
+        val remotePercent = if (fromStart) 0.0 else identity?.let { remoteProgress[identityKey(it)] } ?: 0.0
+        if (fromStart) startOverFor = null
         val start = {
             val intent = Intent(this, PlayerActivity::class.java).putExtra("url", url).putExtra("title", title)
-                .putExtra("identity", identity?.toJson()?.toString()).putExtra("key", key).putExtra("resume", switchResumeMs ?: history.resume(key)).putExtra("resume_percent", remotePercent)
+                .putExtra("identity", identity?.toJson()?.toString()).putExtra("key", key).putExtra("resume", resumeAt).putExtra("resume_percent", remotePercent)
                 .putExtra("debrid_service", PlaybackDebrid.normalize(debridService)).putExtra("cached_playback", resumeImmediately)
                 .putExtra("playback_account", LastPlayedLinks(store).scope(PlaybackDebrid.normalize(debridService)))
                 .putExtra("media_name", playingMedia?.first.orEmpty()).putExtra("media_size", playingMedia?.second ?: 0L)

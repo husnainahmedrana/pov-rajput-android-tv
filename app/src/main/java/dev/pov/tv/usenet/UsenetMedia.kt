@@ -209,6 +209,12 @@ object UsenetMedia {
                         ready: UsenetStream? = null): Opened {
         val first = ready ?: stream(volumes[0], true)
         val opened = ArrayList<UsenetStream>().apply { add(first) }
+        // Ask for the second and last volumes' first articles together with the first one's, instead of one after
+        // another: the second proves the order, and the last (shorter) one must know its own size before the seek
+        // index in it (an MKV's Cues are at the end) can be fetched ahead of the player.
+        val early = HashMap<Int, UsenetStream>()
+        if (volumes.size >= 2) early[1] = stream(volumes[1], false).also { opened += it; it.begin() }
+        if (volumes.size >= 3) early[volumes.lastIndex] = stream(volumes[volumes.lastIndex], true).also { opened += it; it.begin() }
         try {
             first.prepare()
             val entries = Rar.entries(first)
@@ -223,8 +229,7 @@ object UsenetMedia {
             var left = entry.unpackedSize - pieces[0].length
             if (left > 0) {
                 if (!entry.splitAfter || volumes.size < 2) throw UnsupportedSetException(L10n.tr(R.string.t_the_set_is_incomplete, "The set is incomplete."))
-                val second = stream(volumes[1], false)
-                opened += second
+                val second = early[1] ?: stream(volumes[1], false).also { opened += it }
                 second.prepare()
                 val next = Rar.entries(second, limit = 1).firstOrNull()
                 if (next == null || !next.splitBefore || next.name != entry.name) { if (!trusted) throw OutOfOrderException(); throw UnsupportedSetException(L10n.tr(R.string.t_the_set_s_parts_don_t, "The set's parts don't follow one another.")) }
@@ -235,7 +240,7 @@ object UsenetMedia {
                     if (index >= volumes.size) throw UnsupportedSetException(L10n.tr(R.string.t_the_set_is_incomplete_x_parts, "The set is incomplete: %1\$s parts listed, more are needed.", volumes.size))
                     val length = minOf(next.packedSize, left)
                     val lastPiece = left <= next.packedSize
-                    val volume = if (index == 1) second else stream(volumes[index], lastPiece).also { opened += it }
+                    val volume = if (index == 1) second else early[index] ?: stream(volumes[index], lastPiece).also { opened += it }
                     // Middle volumes are all alike: knowing one, the rest can be read from anywhere without fetching
                     // their first article. The last (shorter) one, or any that looks different, learns its own size.
                     if (index > 1 && !lastPiece && volumes[index].segments.size == volumes[1].segments.size) volume.assumeLike(second)
@@ -243,6 +248,12 @@ object UsenetMedia {
                     left -= length; index++
                 }
             }
+            // Volumes asked for early but not part of the video (a set listing extra parts) are let go.
+            val used = pieces.mapTo(HashSet()) { it.volume }
+            early.values.filter { it !in used }.forEach { it.close(); opened -= it }
+            // The last piece's volume learns its size now (its first article was asked for at the start), so the
+            // seek index prefetch below reaches it; an unprepared volume would skip the prefetch.
+            if (pieces.size > 1) pieces.last().volume.prepare()
             log("RAR set: ${entry.name} · ${entry.unpackedSize} bytes in ${pieces.size} of ${volumes.size} parts")
             return warmIndex(Opened(VolumeSet(entry.unpackedSize, pieces), entry.name, if (pieces.size == 1) "RAR" else "RAR · ${pieces.size} parts"), log)
         } catch (error: Exception) {
