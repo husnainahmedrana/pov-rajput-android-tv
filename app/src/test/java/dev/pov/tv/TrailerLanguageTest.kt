@@ -44,6 +44,20 @@ class TrailerLanguageTest {
         assertEquals(true, TrailerLanguage.fits("Casino Royale Trailer Español HD", spain))
     }
 
+    @Test fun `a studio channel's trailer for another title far down the results is not taken`() {
+        val results = listOf(
+            TrailerLanguage.Result("english0000", "How I Met Your Mother | Trailer", 114, "Henry Page"),
+            TrailerLanguage.Result("subtitled00", "How I Met Your Mother - trailer (sub español)", 114, "EdGedeon64"),
+            TrailerLanguage.Result("other000000", "Cómo conocí a tu madre trailer HD", 61, "Muviteca"),
+            TrailerLanguage.Result("spain000000", "Cómo conocí a vuestra madre (2005 - 2014) [Tráiler ESPAÑOL ESPAÑA]", 54, "Susana López"),
+            TrailerLanguage.Result("latam000000", "HIMYM: La película | Tráiler Oficial", 114, "How I Met Your Mother Latinoamérica"),
+            TrailerLanguage.Result("spinoff0000", "Trailer Como Conocí a Vuestro Padre en Español", 99, "somosseries"),
+            TrailerLanguage.Result("netflix0000", "Hermanastras (EN ESPAÑOL) | Tráiler oficial | Netflix España", 157, "Netflix España"),
+            TrailerLanguage.Result("named000000", "How I Met Your Mother: tráiler en castellano", 90, "Someone"),
+        )
+        assertEquals(listOf("spain000000", "named000000"), TrailerLanguage.pick(results, choice("es-ES"), "How I Met Your Mother"))
+    }
+
     @Test fun `a results page is read from its initial data, not from every video id on it`() {
         val html = """<script>var ytInitialData = {"contents":{"a":[
             {"adSlotRenderer":{"videoId":"adadadadada"}},

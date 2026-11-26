@@ -69,7 +69,7 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
             val source = runCatching { resolver.resolve(id, highQuality()) }.getOrNull()
             handler.post {
                 if (ticket != serial || id != playingId || !permitted()) return@post
-                if (source == null) next(ticket) else play(source, ticket)
+                if (source == null) { android.util.Log.i("TrailerLanguage", "trailer $id: no stream found, next"); next(ticket) } else play(source, ticket)
             }
         }
     }
@@ -123,7 +123,13 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
                 container.animate().alpha(1f).setDuration(450).start()
                 playingChanged(true)
             }
-            override fun onPlayerError(error: PlaybackException) { if (ticket == serial && player === exo) next(ticket) }
+            override fun onPlayerError(error: PlaybackException) {
+                if (ticket != serial || player !== exo) return
+                // Which trailer failed and why (a 403 is YouTube refusing the stream link, a connect error the network).
+                val cause = generateSequence(error as Throwable) { it.cause }.last()
+                android.util.Log.i("TrailerLanguage", "trailer $playingId failed: ${error.errorCodeName}, ${cause.javaClass.simpleName}: ${cause.message?.take(120)}; next")
+                next(ticket)
+            }
             override fun onPlaybackStateChanged(state: Int) {
                 if (ticket == serial && player === exo && state == Player.STATE_ENDED) fail("ended")
             }
@@ -146,7 +152,7 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
             ids = (ids.take(index + 1) + extra + ids.drop(index + 1)).distinct() } }
         if (index + 1 < ids.size && permitted()) { index++; load(ticket) } else fail("unavailable")
     }
-    private val timeout = Runnable { next(serial) }
+    private val timeout = Runnable { android.util.Log.i("TrailerLanguage", "trailer $playingId didn't start in time, next"); next(serial) }
     private val visibilityCheck = object : Runnable {
         override fun run() {
             if (!permitted() || bounds() == null) { stop(); return }

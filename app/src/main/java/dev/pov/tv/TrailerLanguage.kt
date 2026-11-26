@@ -104,7 +104,7 @@ internal object TrailerLanguage {
         val html = Net.raw(address, headers = headers)
         // Now and then YouTube answers with a page that holds no result list: ask once more.
         val found = results(html).ifEmpty { results(Net.raw(address, headers = headers)) }
-        return pick(found, choice).also { android.util.Log.i("TrailerLanguage", "\"$query\": ${found.size} results, picked $it") }
+        return pick(found, choice, item.title).also { android.util.Log.i("TrailerLanguage", "\"$query\": ${found.size} results, picked $it") }
     }
 
     private const val BROWSER = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -146,15 +146,26 @@ internal object TrailerLanguage {
      * The results that are a trailer in [choice]'s language: the country's own studio channels first, then uploads whose
      * titles name the language; up to three, otherwise in YouTube's order.
      */
-    internal fun pick(results: List<Result>, choice: Choice): List<String> {
-        val usable = results.filter { result ->
+    internal fun pick(results: List<Result>, choice: Choice, name: String = ""): List<String> {
+        // About this title: it names it (as the catalog does, usually in English), or YouTube ranks it among the first
+        // few for the search (where the local title, as "Cómo conocí a vuestra madre", ranks it). A studio channel of
+        // the right country further down is usually another title's trailer.
+        val named = words(name)
+        val usable = results.filterIndexed { rank, result ->
             val channel = " " + plain(result.channel) + " "
-            result.seconds in 30..300 && fits(result.title, choice) && choice.otherChannels.none { plain(it) in channel }
+            (named.isBlank() || rank < RELEVANT_RANK || " $named " in " ${words(result.title)} ") &&
+                result.seconds in 30..300 && fits(result.title, choice) && choice.otherChannels.none { plain(it) in channel }
         }
         val official = usable.filter { result -> choice.channels.any { plain(it) in " " + plain(result.channel) + " " } }
-        val named = usable.filter { result -> choice.want.any { plain(it) in " " + plain(result.title) + " " } }
-        return (official + named).map { it.id }.distinct().take(3)
+        val inLanguage = usable.filter { result -> choice.want.any { plain(it) in " " + plain(result.title) + " " } }
+        return (official + inLanguage).map { it.id }.distinct().take(3)
     }
+
+    /** Search results up to this place are taken to be about the title even when they name it differently. */
+    private const val RELEVANT_RANK = 5
+
+    /** Letters and digits only, single-spaced ("Spider-Man: Brand New Day" → "spider man brand new day"). */
+    private fun words(text: String): String = plain(text).replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
 
     /** A video [title] that isn't another country's dub, a subtitled copy or a video about the trailer. */
     internal fun fits(title: String, choice: Choice): Boolean {
