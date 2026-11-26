@@ -13,22 +13,28 @@ import java.util.concurrent.ConcurrentHashMap
  * trailer follows in case the chosen one can't play, and plays alone when no other is found.
  */
 internal object TrailerLanguage {
-    /** [code] as TMDB writes it (language-COUNTRY); [search] is how a trailer in that language is called on YouTube. */
-    data class Choice(val code: String, val label: String, val search: String)
+    /**
+     * [code] as TMDB writes it (language-COUNTRY); [search] is how a trailer in that language is called on YouTube.
+     * A search result is kept only when its title (without accents, lower case) has one of [want] and none of [avoid].
+     */
+    data class Choice(val code: String, val label: String, val search: String, val want: List<String> = emptyList(), val avoid: List<String> = emptyList())
 
+    private val SUBTITLED = listOf("subtitul", " sub ", " sub-", "(sub", "[sub", " subs ", "vose", "vostfr", "legendad", "untertitel", "sottotitol", "ondertitel")
     val CHOICES = listOf(
         Choice("", "", ""),
-        Choice("es-ES", "Español (España)", "tráiler castellano"),
-        Choice("es-MX", "Español (Latinoamérica)", "tráiler español latino"),
-        Choice("fr-FR", "Français", "bande annonce VF"),
-        Choice("de-DE", "Deutsch", "trailer deutsch"),
-        Choice("it-IT", "Italiano", "trailer italiano"),
-        Choice("nl-NL", "Nederlands", "trailer nederlands"),
-        Choice("pt-BR", "Português (Brasil)", "trailer dublado"),
-        Choice("pt-PT", "Português (Portugal)", "trailer português"),
-        Choice("hi-IN", "हिन्दी", "trailer hindi"),
-        Choice("ur-PK", "اردو", "trailer urdu"),
+        Choice("es-ES", "Español (España)", "tráiler castellano", listOf("castellano", "espanol", "espana"), listOf("latino", "latinoamerica", "mexico") + SUBTITLED),
+        Choice("es-MX", "Español (Latinoamérica)", "tráiler español latino", listOf("latino", "espanol"), listOf("castellano", "espana") + SUBTITLED),
+        Choice("fr-FR", "Français", "bande annonce VF", listOf(" vf", "vf ", "francais", "french"), listOf("quebec") + SUBTITLED),
+        Choice("de-DE", "Deutsch", "trailer deutsch", listOf("deutsch", "german"), SUBTITLED),
+        Choice("it-IT", "Italiano", "trailer italiano", listOf("italiano", " ita ", " ita)", "(ita"), SUBTITLED),
+        Choice("nl-NL", "Nederlands", "trailer nederlands", listOf("nederlands", "dutch", "vlaams"), emptyList()),
+        Choice("pt-BR", "Português (Brasil)", "trailer dublado", listOf("dublado", "portugues", "brasil"), listOf("portugal") + SUBTITLED),
+        Choice("pt-PT", "Português (Portugal)", "trailer português", listOf("portugal", "portugues", "pt-pt"), listOf("dublado", "brasil") + SUBTITLED),
+        Choice("hi-IN", "हिन्दी", "trailer hindi", listOf("hindi", "हिन्दी", "हिंदी"), emptyList()),
+        Choice("ur-PK", "اردو", "trailer urdu", listOf("urdu", "اردو"), emptyList()),
     )
+    /** Videos about a trailer rather than the trailer. */
+    private val NOT_A_TRAILER = listOf("reaction", "reaccion", "review", "resena", "explained", "explicado", "breakdown", "analisis", "easter egg", "parodia", "parody", "fan made", "fanmade", "#shorts")
 
     private const val PREFS = "pov_hero_trailers"
     private const val KEY = "language"
@@ -43,7 +49,6 @@ internal object TrailerLanguage {
 
     private val found = ConcurrentHashMap<String, Pair<Long, List<String>>>()
     private const val KEEP_MS = 6L * 60 * 60 * 1000
-    private val VIDEO_ID = Regex("\"videoId\":\"([A-Za-z0-9_-]{11})\"")
 
     /** Trailers of [item] in [code]'s language, best first (network: off the main thread); empty when none is found. */
     fun videos(item: MediaItemData, code: String, tmdb: TmdbCatalog?): List<String> {
@@ -63,6 +68,48 @@ internal object TrailerLanguage {
         val language = choice.code.substringBefore('-')
         val html = Net.raw("https://www.youtube.com/results?search_query=${Net.encode(query)}&hl=$language",
             headers = mapOf("Accept-Language" to "${choice.code},$language;q=0.9"))
-        return VIDEO_ID.findAll(html).map { it.groupValues[1] }.distinct().take(3).toList()
+        return pick(results(html), choice)
     }
+
+    /** A search result: its video id, title and length in seconds (0 when YouTube gave none, as for a live stream). */
+    data class Result(val id: String, val title: String, val seconds: Int)
+
+    /** The videos of a YouTube results page, in order (its ytInitialData; ads, shorts shelves and channels skipped). */
+    internal fun results(html: String): List<Result> {
+        val start = html.indexOf("var ytInitialData = ").takeIf { it >= 0 } ?: return emptyList()
+        val end = html.indexOf(";</script>", start).takeIf { it > 0 } ?: return emptyList()
+        val data = runCatching { org.json.JSONObject(html.substring(start + "var ytInitialData = ".length, end)) }.getOrNull() ?: return emptyList()
+        val found = mutableListOf<Result>()
+        fun walk(value: Any?) {
+            when (value) {
+                is org.json.JSONObject -> {
+                    value.optJSONObject("videoRenderer")?.let { video ->
+                        val runs = video.optJSONObject("title")?.optJSONArray("runs")
+                        val title = (0 until (runs?.length() ?: 0)).joinToString("") { runs!!.optJSONObject(it)?.optString("text").orEmpty() }
+                        val length = video.optJSONObject("lengthText")?.optString("simpleText").orEmpty()
+                        val seconds = length.split(':').fold(0) { total, part -> total * 60 + (part.trim().toIntOrNull() ?: return@let) }
+                        val id = video.optString("videoId")
+                        if (id.matches(Regex("[A-Za-z0-9_-]{11}"))) found += Result(id, title, seconds)
+                        return
+                    }
+                    if (value.has("reelShelfRenderer") || value.has("adSlotRenderer")) return
+                    value.keys().forEach { walk(value.opt(it)) }
+                }
+                is org.json.JSONArray -> for (i in 0 until value.length()) walk(value.opt(i))
+            }
+        }
+        walk(data)
+        return found
+    }
+
+    /** The results that are a trailer in [choice]'s language, by their titles: up to three, in YouTube's order. */
+    internal fun pick(results: List<Result>, choice: Choice): List<String> = results.filter { result ->
+        val title = " " + plain(result.title) + " "
+        result.seconds in 30..300 && choice.want.any { plain(it) in title } && choice.avoid.none { plain(it) in title } &&
+            NOT_A_TRAILER.none { it in title }
+    }.map { it.id }.distinct().take(3)
+
+    /** Lower case without accents (tráiler → trailer, español → espanol); other scripts stay as they are. */
+    private fun plain(text: String): String = java.text.Normalizer.normalize(text.lowercase(), java.text.Normalizer.Form.NFD)
+        .replace(Regex("\\p{Mn}+"), "").replace('\u00a0', ' ')
 }
