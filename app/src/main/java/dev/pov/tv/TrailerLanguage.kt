@@ -62,25 +62,43 @@ internal object TrailerLanguage {
         val choice = CHOICES.firstOrNull { it.code == code && code.isNotEmpty() } ?: return emptyList()
         val cacheKey = "$code:${item.type}:${item.imdbId}"
         found[cacheKey]?.takeIf { System.currentTimeMillis() - it.first < KEEP_MS }?.let { return it.second }
-        // TMDB's own (labelled by language and country) first, then the search's: TMDB often lists a single fan upload
-        // for an older title, and when that one can't play the next should still be in the chosen language.
+        // TMDB's own (labelled by language and country) play at once. The search (a second or more) then runs in the
+        // background: TMDB often lists a single fan upload for an older title, and when that can't play, [searched]
+        // hands the player the search's picks before it falls back to English. Without TMDB's, the search is waited for.
         val fromTmdb = if (tmdb != null) runCatching { tmdb.trailers(item.imdbId, item.type, code) }.getOrDefault(emptyList()) else emptyList()
-        if (fromTmdb.isNotEmpty()) android.util.Log.i("TrailerLanguage", "TMDB $code ${item.imdbId}: picked $fromTmdb")
-        val ids = (fromTmdb + runCatching { youtube(item, choice) }.getOrDefault(emptyList())).distinct().take(5)
-        found[cacheKey] = System.currentTimeMillis() to ids
-        while (found.size > 128) found.keys.firstOrNull()?.let(found::remove)
+        val ids = if (fromTmdb.isNotEmpty()) {
+            android.util.Log.i("TrailerLanguage", "TMDB $code ${item.imdbId}: picked $fromTmdb")
+            if (searchedAt(cacheKey) == null) BACKGROUND.execute { search(cacheKey, item, choice) }
+            fromTmdb
+        } else searchedAt(cacheKey) ?: search(cacheKey, item, choice)
+        remember(found, cacheKey, ids)
         return ids
+    }
+
+    /** What the background search found for [item] so far (no network): empty until it has finished. */
+    fun searched(item: MediaItemData, code: String): List<String> = searchedAt("$code:${item.type}:${item.imdbId}").orEmpty()
+
+    private val searches = ConcurrentHashMap<String, Pair<Long, List<String>>>()
+    private val BACKGROUND = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "trailer-search").apply { isDaemon = true } }
+    private fun searchedAt(key: String) = searches[key]?.takeIf { System.currentTimeMillis() - it.first < KEEP_MS }?.second
+    private fun search(key: String, item: MediaItemData, choice: Choice): List<String> =
+        runCatching { youtube(item, choice) }.getOrDefault(emptyList()).also { remember(searches, key, it) }
+    private fun remember(cache: ConcurrentHashMap<String, Pair<Long, List<String>>>, key: String, ids: List<String>) {
+        cache[key] = System.currentTimeMillis() to ids
+        while (cache.size > 128) cache.keys.firstOrNull()?.let(cache::remove)
     }
 
     /** YouTube's own search, for viewers without a TMDB key: the first results for the title and the trailer's local name. */
     private fun youtube(item: MediaItemData, choice: Choice): List<String> {
         val query = listOf(item.title, item.year.take(4), choice.search).filter { it.isNotBlank() }.joinToString(" ")
         val language = choice.code.substringBefore('-')
-        val html = Net.raw("https://www.youtube.com/results?search_query=${Net.encode(query)}&hl=$language&gl=${choice.code.substringAfter('-')}",
-            // YouTube sends anything that isn't a browser to its mobile site (a redirect, no results), and visitors in
-            // Europe to its cookie question first: a desktop browser's name, and the cookie that says it was answered.
-            headers = mapOf("Accept-Language" to "${choice.code},$language;q=0.9", "User-Agent" to BROWSER, "Accept" to "text/html", "Cookie" to "SOCS=CAI"))
-        val found = results(html)
+        val address = "https://www.youtube.com/results?search_query=${Net.encode(query)}&hl=$language&gl=${choice.code.substringAfter('-')}"
+        // YouTube sends anything that isn't a browser to its mobile site (a redirect, no results), and visitors in
+        // Europe to its cookie question first: a desktop browser's name, and the cookie that says it was answered.
+        val headers = mapOf("Accept-Language" to "${choice.code},$language;q=0.9", "User-Agent" to BROWSER, "Accept" to "text/html", "Cookie" to "SOCS=CAI")
+        val html = Net.raw(address, headers = headers)
+        // Now and then YouTube answers with a page that holds no result list: ask once more.
+        val found = results(html).ifEmpty { results(Net.raw(address, headers = headers)) }
         return pick(found, choice).also { android.util.Log.i("TrailerLanguage", "\"$query\": ${found.size} results, picked $it") }
     }
 

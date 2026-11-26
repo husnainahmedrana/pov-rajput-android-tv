@@ -26,7 +26,10 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
     private val worker: Executor, private val fetch: (MediaItemData) -> List<String>,
     private val bounds: () -> Rect?, private val permitted: () -> Boolean, private val backdropColor: Int,
     private val soundEnabled: () -> Boolean, private val playingChanged: (Boolean) -> Unit, private val fillScreen: () -> Boolean,
-    private val highQuality: () -> Boolean = { true }) {
+    private val highQuality: () -> Boolean = { true },
+    /** More trailers found after [fetch] answered (no network), tried before the rest when one can't play. */
+    private val later: (MediaItemData) -> List<String> = { emptyList() }) {
+    private var item: MediaItemData? = null
     private val handler = Handler(Looper.getMainLooper())
     private val resolver = NativeTrailerSource()
     private var serial = 0
@@ -42,7 +45,7 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
     fun select(item: MediaItemData) {
         val selected = "${item.type}:${item.imdbId}"
         if (selected == key && status != "idle") return
-        stop(); key = selected; status = "waiting"
+        stop(); key = selected; status = "waiting"; this.item = item
         val ticket = serial
         handler.postDelayed({
             if (ticket != serial) return@postDelayed
@@ -139,6 +142,8 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
     }
     private fun next(ticket: Int) {
         handler.removeCallbacks(timeout); disposePlayer()
+        item?.let { current -> runCatching { later(current) }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { extra ->
+            ids = (ids.take(index + 1) + extra + ids.drop(index + 1)).distinct() } }
         if (index + 1 < ids.size && permitted()) { index++; load(ticket) } else fail("unavailable")
     }
     private val timeout = Runnable { next(serial) }
