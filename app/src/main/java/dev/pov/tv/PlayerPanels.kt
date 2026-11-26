@@ -240,13 +240,17 @@ internal object PlayerPanels {
                 if (line.isNotBlank()) { details.text = line; details.visibility = View.VISIBLE }
             }
             val tmdb = PlayerShowInfo.tmdb?.invoke()
-            if (tmdb == null) { p.ui { peopleNote.text = L10n.tr(R.string.t_add_a_tmdb_key_in_settings, "Add a TMDB key in Settings to see the cast.") }; return@worker }
-            val people: List<TmdbCatalog.CastMember>
+            var people: List<TmdbCatalog.CastMember> = emptyList()
             var runtime = 0
-            if (series) {
-                val credits = runCatching { tmdb.episodeCredits(identity.imdbId, identity.season, identity.episode) }.getOrNull()
-                people = credits?.people.orEmpty(); runtime = credits?.runtimeMinutes ?: 0
-            } else people = runCatching { tmdb.cast(identity.imdbId, "movie", 30) }.getOrDefault(emptyList())
+            if (tmdb != null) {
+                if (series) {
+                    val credits = runCatching { tmdb.episodeCredits(identity.imdbId, identity.season, identity.episode) }.getOrNull()
+                    people = credits?.people.orEmpty(); runtime = credits?.runtimeMinutes ?: 0
+                } else people = runCatching { tmdb.cast(identity.imdbId, "movie", 30) }.getOrDefault(emptyList())
+            }
+            // Without a TMDB key (or when it lists no one), the same free sources as the title page: TVmaze for shows
+            // (their main cast), Wikidata for films and any show TVmaze doesn't know.
+            if (people.isEmpty()) people = runCatching { dev.pov.tv.data.FreeCast().cast(identity.imdbId, if (series) "series" else "movie") }.getOrDefault(emptyList())
             p.ui {
                 if (series && runtime > 0) {
                     details.text = meta("$runtime min", date(episode?.released.orEmpty())); details.visibility = View.VISIBLE

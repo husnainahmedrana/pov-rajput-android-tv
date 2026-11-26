@@ -1955,7 +1955,13 @@ class MainActivity : Activity() {
     /** Hero trailers: Cinemeta's for films and shows, Kitsu's own for anime (which has no IMDb id there). */
     private fun heroTrailerVideos(item: MediaItemData): List<String> =
         if (item.imdbId.startsWith(KITSU_ITEM)) listOfNotNull(animeFeatures[item.imdbId]?.youtubeId?.takeIf { it.isNotBlank() })
-        else trailerCatalog.videos(item)
+        else {
+            // Settings → Trailers → Trailer language: that language's trailers first, the English one after them.
+            val english = trailerCatalog.videos(item)
+            val code = TrailerLanguage.get(this)
+            if (code.isEmpty()) english
+            else (TrailerLanguage.videos(item, code, store.get(TMDB_KEY).takeIf { it.isNotBlank() }?.let { TmdbCatalog(this, it, tmdbRegion()) }) + english).distinct()
+        }
 
     private fun showFeature(item: MediaItemData) {
         scheduleHeroTrailer(item)
@@ -8052,6 +8058,13 @@ class MainActivity : Activity() {
                 Tile("trailer_hq", getString(R.string.t_high_quality_2), getString(R.string.t_vp9_when_the_tv_can), heroTrailerHighQuality(), enabled = on) { value -> save("high_quality", value) },
                 Tile("trailer_fill", getString(R.string.t_fill_screen), getString(R.string.t_zoom_to_remove_bars), heroTrailerFillEnabled(), enabled = on) { value -> save("fill_screen", value) },
             ), columns = if (DeviceLayout.phone) 2 else 4)
+            settingsRow(playback, getString(R.string.t_trailer_language), TrailerLanguage.label(this), getString(R.string.t_trailer_language_hint)) {
+                val choices = TrailerLanguage.CHOICES
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_trailer_language))
+                    .setSingleChoiceItems(choices.map { TrailerLanguage.label(this, it.code) }.toTypedArray(), choices.indexOfFirst { it.code == TrailerLanguage.get(this) }) { dialog, index ->
+                        TrailerLanguage.set(this, choices[index].code); heroTrailer?.stop(); dialog.dismiss(); refreshSettings()
+                    }.setNegativeButton(getString(R.string.t_cancel), null).show()
+            }
             playback.addView(text(getString(R.string.t_the_rotating_top_recommendations_show_backdrop), 11, muted),
                 margin(-1, -2, bottom = 8).apply { leftMargin = dp(10); rightMargin = dp(10) })
             }

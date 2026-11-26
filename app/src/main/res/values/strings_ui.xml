@@ -1947,4 +1947,7 @@
     <string name="t_mpv_couldnt_play">"mpv couldn\'t play this link either. Pick another source."</string>
     <string name="t_switching_to_mpv">"This file\'s format isn\'t supported by the main player · playing it with mpv"</string>
     <string name="t_the_set_holds_another_archive">"This set holds another archive inside (%1$s), which can't be streamed."</string>
+    <string name="t_trailer_language">"Trailer language"</string>
+    <string name="t_trailer_language_hint">"Trailers in this language when one exists, else the English one. With a TMDB key they come from TMDB; without one, from YouTube\'s search."</string>
+    <string name="t_trailer_language_auto">"Automatic · English"</string>
 </resources>

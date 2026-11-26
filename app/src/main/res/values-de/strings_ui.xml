@@ -1947,4 +1947,7 @@
     <string name="t_mpv_couldnt_play">"Auch mpv konnte diesen Link nicht abspielen. Wähle eine andere Quelle."</string>
     <string name="t_switching_to_mpv">"Das Format dieser Datei wird vom Hauptplayer nicht unterstützt · Wiedergabe mit mpv"</string>
     <string name="t_the_set_holds_another_archive">"Dieses Set enthält ein weiteres Archiv (%1$s), das nicht gestreamt werden kann."</string>
+    <string name="t_trailer_language">"Trailer-Sprache"</string>
+    <string name="t_trailer_language_hint">"Trailer in dieser Sprache, wenn es einen gibt, sonst der englische. Mit einem TMDB-Schlüssel von TMDB, ohne über die YouTube-Suche."</string>
+    <string name="t_trailer_language_auto">"Automatisch · Englisch"</string>
 </resources>

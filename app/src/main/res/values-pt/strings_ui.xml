@@ -1947,4 +1947,7 @@
     <string name="t_mpv_couldnt_play">"O mpv também não conseguiu reproduzir este link. Escolha outra fonte."</string>
     <string name="t_switching_to_mpv">"O player principal não suporta o formato deste arquivo · reproduzindo com mpv"</string>
     <string name="t_the_set_holds_another_archive">"Este conjunto contém outro arquivo compactado (%1$s), que não pode ser reproduzido por streaming."</string>
+    <string name="t_trailer_language">"Idioma dos trailers"</string>
+    <string name="t_trailer_language_hint">"Trailers neste idioma quando existirem, senão o em inglês. Com uma chave TMDB vêm do TMDB; sem ela, da pesquisa do YouTube."</string>
+    <string name="t_trailer_language_auto">"Automático · inglês"</string>
 </resources>

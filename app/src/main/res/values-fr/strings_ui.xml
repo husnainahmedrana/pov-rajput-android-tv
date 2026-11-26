@@ -1947,4 +1947,7 @@
     <string name="t_mpv_couldnt_play">"mpv n\'a pas pu lire ce lien non plus. Choisissez une autre source."</string>
     <string name="t_switching_to_mpv">"Le lecteur principal ne prend pas en charge ce format · lecture avec mpv"</string>
     <string name="t_the_set_holds_another_archive">"Ce set contient une autre archive (%1$s), impossible à lire en streaming."</string>
+    <string name="t_trailer_language">"Langue des bandes-annonces"</string>
+    <string name="t_trailer_language_hint">"Bandes-annonces dans cette langue quand il y en a, sinon l\'anglaise. Avec une clé TMDB, elles viennent de TMDB ; sans, de la recherche YouTube."</string>
+    <string name="t_trailer_language_auto">"Automatique · anglais"</string>
 </resources>

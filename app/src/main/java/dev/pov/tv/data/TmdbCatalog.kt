@@ -352,15 +352,33 @@ class TmdbCatalog internal constructor(
         return json("/$type/$id/external_ids").optString("imdb_id").takeIf { it.matches(Regex("tt\\d{5,12}")) } ?: "-"
     }
 
+    /**
+     * YouTube trailers of a title in [videoLanguage] (language-COUNTRY, e.g. es-ES): that country's own first (Castilian
+     * before Latin American), trailers before teasers, official ones first. Empty when TMDB lists none in it.
+     */
+    fun trailers(imdbId: String, type: String, videoLanguage: String): List<String> {
+        if (!imdbId.matches(Regex("tt\\d{5,12}"))) return emptyList()
+        val kind = if (type == "movie") "movie" else "tv"
+        val id = json("/find/$imdbId?external_source=imdb_id").optJSONArray("${kind}_results")?.optJSONObject(0)
+            ?.optLong("id", -1)?.takeIf { it > 0 } ?: return emptyList()
+        val (wanted, country) = videoLanguage.split('-', limit = 2).let { it[0] to it.getOrElse(1) { "" } }
+        val results = json("/$kind/$id/videos?include_video_language=$wanted", languageOverride = videoLanguage).optJSONArray("results") ?: return emptyList()
+        return (0 until results.length()).mapNotNull { results.optJSONObject(it) }
+            .filter { it.optString("site") == "YouTube" && it.optString("iso_639_1") == wanted && it.optString("type") in setOf("Trailer", "Teaser") }
+            .sortedWith(compareBy({ if (country.isNotEmpty() && it.optString("iso_3166_1").equals(country, true)) 0 else 1 },
+                { if (it.optString("type") == "Trailer") 0 else 1 }, { if (it.optBoolean("official")) 0 else 1 }))
+            .map { it.optString("key") }.filter { it.matches(Regex("[A-Za-z0-9_-]{11}")) }.distinct().take(3)
+    }
+
     /** A show's whole-run credits (large for long shows), kept for the last few shows so Cast and Crew share one download. */
     private fun aggregateCredits(id: Long): JSONObject = synchronized(AGGREGATE_CREDITS) { AGGREGATE_CREDITS[id] }
         ?: json("/tv/$id/aggregate_credits", english = true).also { credits -> synchronized(AGGREGATE_CREDITS) { AGGREGATE_CREDITS[id] = credits } }
 
     /** [english]: cast and crew always come in English, whatever the metadata language (names stay consistent and searchable). */
-    private fun json(path: String, english: Boolean = false): JSONObject {
+    private fun json(path: String, english: Boolean = false, languageOverride: String? = null): JSONObject {
         val bearer = key.startsWith("eyJ")
         val separator = if ('?' in path) '&' else '?'
-        val url = "$BASE$path${separator}language=${if (english) "en-US" else language}" + if (bearer) "" else "&api_key=$key"
+        val url = "$BASE$path${separator}language=${languageOverride ?: if (english) "en-US" else language}" + if (bearer) "" else "&api_key=$key"
         val raw = get(url, if (bearer) mapOf("Authorization" to "Bearer $key") else emptyMap())
         return try { JSONObject(raw) } catch (_: Exception) { throw IllegalStateException(L10n.tr(R.string.t_tmdb_returned_an_unreadable_response, "TMDB returned an unreadable response.")) }
     }

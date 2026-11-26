@@ -315,6 +315,9 @@ class NntpPool(
                         if (!deliberate && fetch.attempts++ >= 3) fetch.fail(error) else enqueue(fetch, urgent = true)
                     }
                     if (!deliberate && ++failures >= 6) return
+                    // Let go on purpose: give the server a moment to count the old connection as closed before signing in
+                    // again, or an account used up to its connection limit is refused one for a while.
+                    if (deliberate) try { Thread.sleep(LET_GO_RECONNECT_DELAY_MS) } catch (_: InterruptedException) { return }
                 }
             }
         } finally {
@@ -338,6 +341,8 @@ class NntpPool(
         private const val REGROW_MS = 60_000L
         /** An article taking this long from request to last byte is written to the Usenet log with its connection. */
         private const val SLOW_ARTICLE_MS = 6_000L
+        /** Pause between letting a connection go on purpose and signing it in again. */
+        private const val LET_GO_RECONNECT_DELAY_MS = 300L
         private val serial = AtomicInteger()
     }
 
