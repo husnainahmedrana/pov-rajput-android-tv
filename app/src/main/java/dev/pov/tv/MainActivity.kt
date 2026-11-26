@@ -7521,7 +7521,7 @@ class MainActivity : Activity() {
             val home = settingsGroup(getString(R.string.t_home_appearance), "home")
             settingsRow(home, getString(R.string.t_language), AppLanguage.label(this, getString(R.string.t_device_language)), getString(R.string.t_the_language_of_menus_and_settings)) { chooseLanguage() }
             if (DeviceLayout.tv) {
-                settingsRow(home, getString(R.string.t_trailers), if (!heroTrailersEnabled()) getString(R.string.t_off) else listOf(getString(R.string.t_on), if (heroTrailerSoundEnabled()) getString(R.string.t_sound_on) else "muted", if (heroTrailerHighQuality()) getString(R.string.t_high_quality) else getString(R.string.t_standard_quality)).joinToString(" · "),
+                settingsRow(home, getString(R.string.t_trailers), if (!heroTrailersEnabled()) getString(R.string.t_off) else listOf(getString(R.string.t_on), if (heroTrailerSoundEnabled()) getString(R.string.t_sound_on) else "muted", if (heroTrailerHighQuality()) getString(R.string.t_high_quality) else getString(R.string.t_standard_quality)).plus(listOfNotNull(TrailerLanguage.get(this).takeIf { it.isNotEmpty() }?.let { TrailerLanguage.label(this, it) })).joinToString(" · "),
                     getString(R.string.t_trailers_on_details_pages_and_focused)) { navigate { playbackPage("trailers") } }
                 settingsToggle(home, getString(R.string.t_tv_home_continue_watching), getString(R.string.t_show_resume_cards_on_supported_tv), TvContinueWatching.enabled(this)) { enabled ->
                     TvContinueWatching.setEnabled(this,enabled)
@@ -8052,12 +8052,6 @@ class MainActivity : Activity() {
             val prefs = getSharedPreferences("pov_hero_trailers", 0)
             val on = heroTrailersEnabled()
             fun save(key: String, value: Boolean, redraw: Boolean = false) { prefs.edit().putBoolean(key, value).apply(); heroTrailer?.stop(); if (redraw) refreshSettings() }
-            tileGrid(playback, listOf(
-                Tile("trailers", getString(R.string.t_trailers), getString(R.string.t_details_pages_and_home_posters), on) { value -> save("enabled", value, redraw = true) },
-                Tile("trailer_sound", getString(R.string.t_trailer_sound), getString(R.string.t_muted_when_off), heroTrailerSoundEnabled(), enabled = on) { value -> save("sound", value) },
-                Tile("trailer_hq", getString(R.string.t_high_quality_2), getString(R.string.t_vp9_when_the_tv_can), heroTrailerHighQuality(), enabled = on) { value -> save("high_quality", value) },
-                Tile("trailer_fill", getString(R.string.t_fill_screen), getString(R.string.t_zoom_to_remove_bars), heroTrailerFillEnabled(), enabled = on) { value -> save("fill_screen", value) },
-            ), columns = if (DeviceLayout.phone) 2 else 4)
             settingsRow(playback, getString(R.string.t_trailer_language), TrailerLanguage.label(this), getString(R.string.t_trailer_language_hint)) {
                 val choices = TrailerLanguage.CHOICES
                 AlertDialog.Builder(this).setTitle(getString(R.string.t_trailer_language))
@@ -8065,6 +8059,12 @@ class MainActivity : Activity() {
                         TrailerLanguage.set(this, choices[index].code); heroTrailer?.stop(); dialog.dismiss(); refreshSettings()
                     }.setNegativeButton(getString(R.string.t_cancel), null).show()
             }
+            tileGrid(playback, listOf(
+                Tile("trailers", getString(R.string.t_trailers), getString(R.string.t_details_pages_and_home_posters), on) { value -> save("enabled", value, redraw = true) },
+                Tile("trailer_sound", getString(R.string.t_trailer_sound), getString(R.string.t_muted_when_off), heroTrailerSoundEnabled(), enabled = on) { value -> save("sound", value) },
+                Tile("trailer_hq", getString(R.string.t_high_quality_2), getString(R.string.t_vp9_when_the_tv_can), heroTrailerHighQuality(), enabled = on) { value -> save("high_quality", value) },
+                Tile("trailer_fill", getString(R.string.t_fill_screen), getString(R.string.t_zoom_to_remove_bars), heroTrailerFillEnabled(), enabled = on) { value -> save("fill_screen", value) },
+            ), columns = if (DeviceLayout.phone) 2 else 4)
             playback.addView(text(getString(R.string.t_the_rotating_top_recommendations_show_backdrop), 11, muted),
                 margin(-1, -2, bottom = 8).apply { leftMargin = dp(10); rightMargin = dp(10) })
             }
