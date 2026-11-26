@@ -29,6 +29,12 @@ internal class RebufferGuard(
      * a slow line, about 15 s for 5.5 s of video) no longer waits for all of it. Null: the delegate alone decides.
      */
     private val quickStartMs: Long? = null,
+    /**
+     * Whether the quick start applies to this video: only a heavy one (4K), where the line's speed is what keeps the
+     * start buffer from filling. On a light file a slow start means slow articles, and starting early then froze the
+     * picture at 0:03; there the full start buffer is waited for.
+     */
+    private val quickStartIf: () -> Boolean = { true },
 ) : LoadControl {
     private val stalls = ArrayDeque<Long>()
     private var wasRebuffering = false
@@ -41,7 +47,9 @@ internal class RebufferGuard(
             val quick = quickStartMs ?: return false
             val now = SystemClock.elapsedRealtime()
             if (waitingSince == 0L) waitingSince = now
-            if (now - waitingSince >= quick && parameters.bufferedDurationUs >= QUICK_MIN_US) { waitingSince = 0L; return true }
+            if (now - waitingSince >= quick && parameters.bufferedDurationUs >= QUICK_MIN_US && runCatching(quickStartIf).getOrDefault(false)) {
+                waitingSince = 0L; return true
+            }
             return false
         }
         waitingSince = 0L

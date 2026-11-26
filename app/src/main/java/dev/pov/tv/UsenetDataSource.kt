@@ -569,6 +569,8 @@ internal class UsenetDataSource(private val session: UsenetSessions.Session) : B
     private var remaining = 0L
     private var opened = false
     private var spec: DataSpec? = null
+    /** Opened by the seek previews (they mark their reads as not needing full speed): only peeks. */
+    private val peeking: Boolean get() = spec?.isFlagSet(DataSpec.FLAG_MIGHT_NOT_USE_FULL_NETWORK_SPEED) == true
     private var openedAt = 0L
     private var firstRead = false
     private var readSinceOpen = 0L
@@ -589,7 +591,7 @@ internal class UsenetDataSource(private val session: UsenetSessions.Session) : B
         position = dataSpec.position
         // Where the player reads, and how long the first bytes there take: shows what a slow start waited for.
         openedAt = System.nanoTime(); firstRead = true
-        UsenetLog.i("player reads at %.1f%% (byte %d of %d)".format(position * 100.0 / maxOf(1L, size), position, size))
+        if (!peeking) UsenetLog.i("player reads at %.1f%% (byte %d of %d)".format(position * 100.0 / maxOf(1L, size), position, size))
         remaining = if (dataSpec.length != C.LENGTH_UNSET.toLong()) minOf(dataSpec.length, size - position) else size - position
         opened = true
         transferStarted(dataSpec)
@@ -607,6 +609,8 @@ internal class UsenetDataSource(private val session: UsenetSessions.Session) : B
             return delivered(count)
         }
         val fill = wanted < SMALL_READ
+        // Seek-preview reads are peeks: the stream then leaves the player's read-ahead alone.
+        dev.pov.tv.usenet.PeekReads.active = peeking
         val watch = ReadWatch.start(position)
         val count = try {
             if (!fill) session.source.read(position, buffer, offset, wanted)

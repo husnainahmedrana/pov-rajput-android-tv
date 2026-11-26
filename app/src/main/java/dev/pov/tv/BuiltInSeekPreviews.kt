@@ -418,7 +418,10 @@ internal class AbortableSources(private val upstream: DataSource.Factory) : Data
         val inner = upstream.createDataSource()
         return object : DataSource {
             override fun addTransferListener(transferListener: TransferListener) = inner.addTransferListener(transferListener)
-            override fun open(dataSpec: DataSpec): Long = guarded { open += inner; inner.open(dataSpec) }
+            // Marked as reads that needn't run at full speed: on Usenet they are peeks that leave the player's
+            // read-ahead alone.
+            override fun open(dataSpec: DataSpec): Long = guarded { open += inner
+                inner.open(dataSpec.buildUpon().setFlags(dataSpec.flags or DataSpec.FLAG_MIGHT_NOT_USE_FULL_NETWORK_SPEED).build()) }
             override fun read(buffer: ByteArray, offset: Int, length: Int): Int = guarded { inner.read(buffer, offset, length) }
             override fun getUri(): Uri? = inner.uri
             override fun getResponseHeaders(): Map<String, List<String>> = inner.responseHeaders

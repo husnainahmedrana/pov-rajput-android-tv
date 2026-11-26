@@ -138,7 +138,7 @@ class UsenetStream(
                     index = (index + maxOf(1L, (position - end) / partSize + 1).toInt()).coerceAtMost(last)
                 }
                 else -> {
-                    schedule(index)
+                    if (PeekReads.active) peekAhead(index) else schedule(index)
                     synchronized(lock) { if (pinned.isNotEmpty()) pinned.remove(index) }
                     val count = minOf(length.toLong(), end - position).toInt()
                     System.arraycopy(segment.data, (position - segment.begin).toInt(), target, offset, count)
@@ -149,15 +149,24 @@ class UsenetStream(
         throw IOException(L10n.tr(R.string.t_the_file_s_articles_don_t, "The file's articles don't line up; position %1\$s can't be found.", position))
     }
 
+    /** A peek at [index]: the next couple of articles too, leaving the player's read-ahead as it is. */
+    private fun peekAhead(index: Int) {
+        synchronized(lock) {
+            if (closed) return
+            for (next in index + 1..minOf(last, index + START_WINDOW)) if (next !in slots) slots[next] = pool.fetch(segments[next].messageId)
+        }
+    }
+
     /** Keeps the articles after [index] downloading and lets go of those far from it. */
     private fun schedule(index: Int) {
         synchronized(lock) {
             if (index == scheduled || closed) return
-            // A read at a new place (the first one, a jump to the seek index, a seek, a seek preview's keyframe) is
-            // often only a peek: a full window there filled every connection with articles nobody read, and what
-            // was wanted waited behind them. Start small there; reading on to the next article means playback, and
-            // the whole window follows at once (one connection to a far server is slow, so playback needs them all).
-            val ahead = if (scheduled < 0 || index != scheduled + 1) minOf(window, START_WINDOW) else window
+            // The first read of a stream is often only a peek (the player reads a video's first bytes, then jumps to
+            // its seek index): a full window there filled every connection with articles nobody read, and what was
+            // wanted waited behind them, so it starts small. A jump by the player itself (a resume, a seek) is
+            // followed by playback: the whole window at once, as one connection to a far server is slow. Seek-preview
+            // peeks don't come here ([peekAhead]).
+            val ahead = if (scheduled < 0) minOf(window, START_WINDOW) else window
             scheduled = index
             val keep = (index - 1)..(index + window)
             val stale = slots.keys.filter { it !in keep && it !in pinned && !(pinEnds && (it <= 1 || it >= last - 2)) }
@@ -216,6 +225,17 @@ class UsenetStream(
     }
 
     private companion object { const val AWAIT_MS = 60_000L; const val STALL_MS = 12_000L; const val HEDGE_MS = 3_500L; const val MAX_PINNED = 16; const val START_WINDOW = 2 }
+}
+
+/**
+ * Reads on this thread are only peeks (seek-preview keyframes): they fetch what they need and a couple of articles
+ * after it, but never move or cancel the player's own read-ahead. Set by the data source for each read.
+ */
+object PeekReads {
+    private val local = ThreadLocal<Boolean>()
+    var active: Boolean
+        get() = local.get() == true
+        set(value) = local.set(value)
 }
 
 /** The availability check found articles of this release gone from every provider: choose another link. */

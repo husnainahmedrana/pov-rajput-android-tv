@@ -126,6 +126,8 @@ object InAppPlaybackSession {
     private const val MAX_QUIET_RETRIES = 3
     private const val SOURCE_RETRY_DELAY_MS = 1_000L
     private const val MAX_SOURCE_RETRIES = 2
+    /** Above this average bitrate a Usenet video counts as heavy for the quick start (see RebufferGuard). */
+    private const val HEAVY_BITS_PER_SECOND = 12_000_000L
     /** Quiet re-opens per video after a "stuck playing" error before it is shown. */
     private const val MAX_STUCK_RETRIES = 3
     private const val CACHED_CONNECT_TIMEOUT_MS = 8_000
@@ -395,7 +397,8 @@ object InAppPlaybackSession {
             .setMediaSourceFactory(mediaSources)
             // A bigger cushion after each stall (Kodi-like) for links that only just keep up with the film's bitrate.
             .setLoadControl(RebufferGuard(ReadAheadPreferences(application!!).loadControl(usenet = dev.pov.tv.data.UsenetLinks.isNzb(playing)),
-                quickStartMs = RebufferGuard.USENET_QUICK_START_MS.takeIf { dev.pov.tv.data.UsenetLinks.isNzb(playing) }))
+                quickStartMs = RebufferGuard.USENET_QUICK_START_MS.takeIf { dev.pov.tv.data.UsenetLinks.isNzb(playing) },
+                quickStartIf = ::heavyVideo))
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
             .setHandleAudioBecomingNoisy(true)
             .setSeekBackIncrementMs(10_000).setSeekForwardIncrementMs(10_000).build()
@@ -671,6 +674,18 @@ object InAppPlaybackSession {
             .putExtra("resume", exo.currentPosition).putExtra("resume_percent", remotePercent)
             .putExtra("playWhenReady", exo.playWhenReady)
             .also { value -> identity?.let { value.putExtra("identity", it.toJson().toString()) } }
+    }
+
+    /**
+     * A heavy video for the line (4K and the like): over [HEAVY_BITS_PER_SECOND] on average from its size and length,
+     * or, when the size isn't known, a picture about 4K tall. Read on the player's own thread while it buffers.
+     */
+    private fun heavyVideo(): Boolean {
+        val current = player ?: return false
+        val durationMs = runCatching { current.duration }.getOrDefault(C.TIME_UNSET)
+        val size = mediaSize ?: 0L
+        if (size > 0 && durationMs > 0) return size * 8_000L / durationMs > HEAVY_BITS_PER_SECOND
+        return ((current as? ExoPlayer)?.videoFormat?.height ?: 0) >= 2000
     }
 
     internal fun setVolumeBoostGain(db: Int): VolumeBoostState {
