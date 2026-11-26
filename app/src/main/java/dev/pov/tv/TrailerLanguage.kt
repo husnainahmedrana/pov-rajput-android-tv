@@ -74,9 +74,14 @@ internal object TrailerLanguage {
         val query = listOf(item.title, item.year.take(4), choice.search).filter { it.isNotBlank() }.joinToString(" ")
         val language = choice.code.substringBefore('-')
         val html = Net.raw("https://www.youtube.com/results?search_query=${Net.encode(query)}&hl=$language&gl=${choice.code.substringAfter('-')}",
-            headers = mapOf("Accept-Language" to "${choice.code},$language;q=0.9"))
-        return pick(results(html), choice)
+            // YouTube sends anything that isn't a browser to its mobile site (a redirect, no results), and visitors in
+            // Europe to its cookie question first: a desktop browser's name, and the cookie that says it was answered.
+            headers = mapOf("Accept-Language" to "${choice.code},$language;q=0.9", "User-Agent" to BROWSER, "Accept" to "text/html", "Cookie" to "SOCS=CAI"))
+        val found = results(html)
+        return pick(found, choice).also { android.util.Log.i("TrailerLanguage", "\"$query\": ${found.size} results, picked $it") }
     }
+
+    private const val BROWSER = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
     /** A search result: its video id, title and length in seconds (0 when YouTube gave none, as for a live stream). */
     data class Result(val id: String, val title: String, val seconds: Int, val channel: String = "")
