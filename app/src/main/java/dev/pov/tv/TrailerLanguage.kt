@@ -9,7 +9,7 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * The language of the trailers that play by themselves on title pages and Home (Settings → Trailers → Trailer
  * language). Automatic keeps Cinemeta's (English) trailers. Another language asks TMDB for that language's trailers
- * when the viewer has a TMDB key, else searches YouTube for "‹title› ‹year› ‹trailer in that language›"; the English
+ * when the viewer has a TMDB key, then searches YouTube for "‹title› ‹year› ‹trailer in that language›"; the English
  * trailer follows in case the chosen one can't play, and plays alone when no other is found.
  */
 internal object TrailerLanguage {
@@ -62,8 +62,11 @@ internal object TrailerLanguage {
         val choice = CHOICES.firstOrNull { it.code == code && code.isNotEmpty() } ?: return emptyList()
         val cacheKey = "$code:${item.type}:${item.imdbId}"
         found[cacheKey]?.takeIf { System.currentTimeMillis() - it.first < KEEP_MS }?.let { return it.second }
+        // TMDB's own (labelled by language and country) first, then the search's: TMDB often lists a single fan upload
+        // for an older title, and when that one can't play the next should still be in the chosen language.
         val fromTmdb = if (tmdb != null) runCatching { tmdb.trailers(item.imdbId, item.type, code) }.getOrDefault(emptyList()) else emptyList()
-        val ids = fromTmdb.ifEmpty { runCatching { youtube(item, choice) }.getOrDefault(emptyList()) }
+        if (fromTmdb.isNotEmpty()) android.util.Log.i("TrailerLanguage", "TMDB $code ${item.imdbId}: picked $fromTmdb")
+        val ids = (fromTmdb + runCatching { youtube(item, choice) }.getOrDefault(emptyList())).distinct().take(5)
         found[cacheKey] = System.currentTimeMillis() to ids
         while (found.size > 128) found.keys.firstOrNull()?.let(found::remove)
         return ids
