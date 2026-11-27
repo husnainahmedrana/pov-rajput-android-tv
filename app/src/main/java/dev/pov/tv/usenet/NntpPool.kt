@@ -201,7 +201,6 @@ class NntpPool(
         val number = serial.incrementAndGet()
         var kind = ""
         var signedInAt = 0L
-        val sentAt = HashMap<Fetch, Long>()
         try {
             while (!closed) {
                 // Sign in BEFORE taking an article. Taking first let a worker stuck in a slow sign-in (a bad route
@@ -219,7 +218,7 @@ class NntpPool(
                         if (closed) { fresh.close(); sockets -= fresh; return }
                         connection = fresh
                         signedIn.set(fresh); abandoning.set(false)
-                        signedInAt = System.nanoTime(); sentAt.clear()
+                        signedInAt = System.nanoTime()
                         kind = if (warm != null) "warm (signed in ${WarmConnections.ageSeconds(warm)} s before)" else "fresh"
                         log("connection $number ${if (warm != null) "reused $kind" else "signed in in ${(signedInAt - signInStarted) / 1_000_000} ms"}")
                         if (live.incrementAndGet() == 1 && firstConnectedAt == 0L) firstConnectedAt = System.nanoTime()
@@ -264,22 +263,17 @@ class NntpPool(
                     }
                     checkNotNull(connection).send("BODY <${next.messageId}>")
                     flying.addLast(next); wrote = true
-                    sentAt[next] = System.nanoTime()
                     next.onCancel = abandon
                 }
                 if (flying.isEmpty()) break                               // idle for long enough, or closed
                 val current = checkNotNull(connection)
                 try {
                     if (wrote) current.flush()
-                    val waitStarted = System.nanoTime()
                     val (code, text) = current.status()
                     val fetch = flying.removeFirst()
-                    val answeredAt = System.nanoTime()
                     when (code) {
                         222 -> if (fetch.cancelled) {
                             current.skipBody()
-                            val total = (System.nanoTime() - (sentAt.remove(fetch) ?: waitStarted)) / 1_000_000
-                            if (total >= SLOW_ARTICLE_MS) log("slow article (no longer wanted, still downloaded): $total ms on connection $number")
                         } else {
                             val segment = try { current.body() }
                                 catch (error: BadArticleException) { fetch.fail(error); continue }   // read whole: the connection is fine
@@ -291,11 +285,6 @@ class NntpPool(
                                 } else fetch.fail(IOException(L10n.tr(R.string.t_the_article_failed_its_checksum_after, "The article failed its checksum after retrying.")))
                             } else {
                                 bytes.addAndGet(segment.size.toLong()); fetch.complete(segment)
-                                val now = System.nanoTime()
-                                val sent = sentAt.remove(fetch) ?: waitStarted
-                                val total = (now - sent) / 1_000_000
-                                if (total >= SLOW_ARTICLE_MS) log("slow article: ${total} ms on connection $number ($kind, signed in ${(now - signedInAt) / 1_000_000_000} s ago) · " +
-                                    "answer after ${(answeredAt - sent) / 1_000_000} ms, body ${segment.size / 1024} KB in ${(now - answeredAt) / 1_000_000} ms · ${flying.size} more in flight · ${if (fetch.cancelled) "cancelled" else "wanted"}")
                             }
                         }
                         430, 423, 420 -> fetch.fail(MissingArticleException(fetch.messageId))
@@ -339,8 +328,6 @@ class NntpPool(
         /** Most requests one connection keeps in flight (Settings → Usenet → provider → Pipeline depth). */
         const val MAX_DEPTH = 20
         private const val REGROW_MS = 60_000L
-        /** An article taking this long from request to last byte is written to the Usenet log with its connection. */
-        private const val SLOW_ARTICLE_MS = 6_000L
         /** Pause between letting a connection go on purpose and signing it in again. */
         private const val LET_GO_RECONNECT_DELAY_MS = 300L
         private val serial = AtomicInteger()

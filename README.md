@@ -185,6 +185,7 @@ Pushes to `main`, pull requests and manual runs build APKs after unit tests and 
 - **[Seekr](https://seekr.tv)** — ready-made seek preview thumbnails, with your own free key from [seekr.tv/join](https://seekr.tv/join). If it works well for you, consider [supporting Seekr](https://buymeacoffee.com/seekrtvdev).
 - **[OpenSubtitles](https://www.opensubtitles.org/)** — subtitles found online when a video has none in your language (via its free Stremio add-on), plus **[Wyzie Subs](https://sub.wyzie.io/)** with your own key.
 - **[FFmpeg](https://ffmpeg.org/)** and **[Jellyfin](https://github.com/jellyfin/jellyfin-androidx-media)** — software audio decoding through Jellyfin's prebuilt Media3 FFmpeg decoder.
+- **[mpv](https://mpv.io/)** and **[Abdallah Mehiz](https://github.com/abdallahmehiz/mpv-android)** — the second player engine, through his mpv Android library.
 - **[Jackett](https://github.com/Jackett/Jackett)** and **[Prowlarr](https://prowlarr.com/)** — the self-hosted indexer managers behind the Torznab sources; their logos mark their links.
 - **Cinemeta**, **Kitsu**, **Android Open Source Project / AndroidX Media3** and **JetBrains / Kotlin**.
 

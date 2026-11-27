@@ -8,6 +8,8 @@ The new Android application source is provided under GNU GPL version 3. The acco
 
 AndroidX Media3 - Android Open Source Project, Apache License 2.0. https://github.com/androidx/media
 Kotlin standard library - JetBrains, Apache License 2.0. https://github.com/JetBrains/kotlin
+mpv - the mpv developers, LGPL version 2.1 or later. https://mpv.io/ . Packaged for Android as the mpv Android library by Abdallah Mehiz, MIT License. https://github.com/abdallahmehiz/mpv-android
+FFmpeg - the FFmpeg developers, LGPL version 2.1 or later (used by mpv and by the Jellyfin Media3 FFmpeg decoder). https://ffmpeg.org/
 
 Catalog metadata and artwork are supplied at runtime by Cinemeta / their respective rights holders. https://github.com/Stremio/stremio-addons
 Anime discovery metadata and artwork: Kitsu, https://kitsu.app/ and https://hummingbird-me.github.io/api-docs/ . Exact IMDb mapping fallback: Anime Kitsu, an independent metadata service by TheBeastLT, https://github.com/TheBeastLT/stremio-kitsu-anime . No provider source code or full mapping database is incorporated. These services and original artwork rights remain with their respective owners; this app is independent of them.
