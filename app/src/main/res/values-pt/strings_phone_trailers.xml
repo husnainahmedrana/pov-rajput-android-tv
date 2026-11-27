@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="t_trailer_full_screen">Ecrã inteiro</string>
+    <string name="t_trailers_phone_settings">Trailers nas páginas dos títulos: som, qualidade e idioma. Toque no botão de ecrã inteiro ou rode o telemóvel para ver em ecrã inteiro.</string>
+    <string name="t_trailers_phone_page">Trailers nas páginas dos títulos, em ecrã inteiro ao rodar o telemóvel.</string>
+</resources>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="t_trailer_full_screen">Vollbild</string>
+    <string name="t_trailers_phone_settings">Trailer auf Titelseiten: Ton, Qualität und Trailersprache. Tippe auf die Vollbild-Taste oder drehe dein Handy für Vollbild.</string>
+    <string name="t_trailers_phone_page">Trailer auf Titelseiten, im Vollbild, wenn du dein Handy drehst.</string>
+</resources>

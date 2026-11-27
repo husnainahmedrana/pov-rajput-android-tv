@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="t_trailer_full_screen">Pantalla completa</string>
+    <string name="t_trailers_phone_settings">Tráileres en las páginas de títulos: sonido, calidad e idioma. Toca el botón de pantalla completa o gira el móvil para verlos a pantalla completa.</string>
+    <string name="t_trailers_phone_page">Tráileres en las páginas de títulos, a pantalla completa al girar el móvil.</string>
+</resources>

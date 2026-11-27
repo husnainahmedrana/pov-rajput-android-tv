@@ -30,7 +30,9 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
     /** More trailers found after [fetch] answered (no network), tried before the rest when one can't play. */
     private val later: (MediaItemData) -> List<String> = { emptyList() },
     /** The trailer language chosen in Settings (empty: the video's default audio). */
-    private val audioLanguage: () -> String = { "" }) {
+    private val audioLanguage: () -> String = { "" },
+    /** A trailer played to its end. */
+    private val finished: () -> Unit = {}) {
     private var item: MediaItemData? = null
     private val handler = Handler(Looper.getMainLooper())
     private val resolver = NativeTrailerSource()
@@ -39,9 +41,13 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
     private var player: ExoPlayer? = null
     private var layer: FrameLayout? = null
     private var refreshFraming: (() -> Unit)? = null
+    private var pageVideo: TextureView? = null
+    private var fullscreenVideo: TextureView? = null
     private var ids = emptyList<String>()
     private var index = 0
     var status = "idle"; private set
+    /** Shown full screen (phone title page): fitted whole instead of cropped, and never stopped for being off screen. */
+    var fullscreen = false; private set
     var playingId = ""; private set
     val frame: Rect? get() = layer?.let { Rect(it.left, it.top, it.right, it.bottom) }
     fun select(item: MediaItemData) {
@@ -116,7 +122,7 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
         exo.setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), sound)
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, !sound).build()
         exo.addListener(object : Player.Listener {
-            override fun onVideoSizeChanged(videoSize: VideoSize) { crop(videoSize) }
+            override fun onVideoSizeChanged(videoSize: VideoSize) { crop(videoSize); fullscreenVideo?.let(::fit) }
             override fun onRenderedFirstFrame() {
                 if (ticket != serial || player !== exo) return
                 if (!permitted()) { stop(); return }
@@ -133,10 +139,11 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
                 next(ticket)
             }
             override fun onPlaybackStateChanged(state: Int) {
-                if (ticket == serial && player === exo && state == Player.STATE_ENDED) fail("ended")
+                if (ticket == serial && player === exo && state == Player.STATE_ENDED) { fail("ended"); finished() }
             }
         })
         exo.setVideoTextureView(video)
+        pageVideo = video
         val videoSource = DefaultMediaSourceFactory(TrailerDataSourceFactory(source)).createMediaSource(MediaItem.fromUri(source.url))
         val audio = source.audio
         if (sound && audio != null) {
@@ -157,7 +164,7 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
     private val timeout = Runnable { android.util.Log.i("TrailerLanguage", "trailer $playingId didn't start in time, next"); next(serial) }
     private val visibilityCheck = object : Runnable {
         override fun run() {
-            if (!permitted() || bounds() == null) { stop(); return }
+            if (!fullscreen && (!permitted() || bounds() == null)) { stop(); return }
             handler.postDelayed(this, 250)
         }
     }
@@ -166,6 +173,41 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
         disposePlayer(); playingId = ""; status = reason
     }
     fun updateFraming() { refreshFraming?.invoke() }
+
+    /** Moves the playing trailer into [target] (full screen). False when nothing is playing. */
+    fun enterFullscreen(target: FrameLayout): Boolean {
+        val exo = player ?: return false
+        if (status != "playing") return false
+        val view = TextureView(activity).apply { isFocusable = false; isClickable = false }
+        target.addView(view, 0, FrameLayout.LayoutParams(-1, -1))
+        fullscreen = true
+        fullscreenVideo = view
+        exo.setVideoTextureView(view)
+        view.addOnLayoutChangeListener(fitFullscreen)
+        return true
+    }
+
+    /** Gives the picture back to the trailer on the page. */
+    fun exitFullscreen() {
+        if (!fullscreen) return
+        fullscreen = false
+        val view = fullscreenVideo; fullscreenVideo = null
+        view?.removeOnLayoutChangeListener(fitFullscreen)
+        player?.let { exo -> pageVideo?.let(exo::setVideoTextureView) }
+        (view?.parent as? ViewGroup)?.removeView(view)
+        handler.post { refreshFraming?.invoke() }
+    }
+
+    /** The whole picture, letterboxed, in the full-screen view. */
+    private val fitFullscreen = android.view.View.OnLayoutChangeListener { view, _, _, _, _, _, _, _, _ -> handler.post { fit(view as TextureView) } }
+    private fun fit(view: TextureView) {
+        val size = player?.videoSize ?: return
+        if (view.width == 0 || view.height == 0 || size.height == 0) return
+        val aspect = size.width * size.pixelWidthHeightRatio / size.height
+        val viewAspect = view.width.toFloat() / view.height
+        view.setTransform(Matrix().apply { setScale(minOf(1f, aspect / viewAspect), minOf(1f, viewAspect / aspect), view.width / 2f, view.height / 2f) })
+        view.invalidate()
+    }
     fun setUnobstructed(clear: Boolean) {
         val current = layer ?: return
         for (i in 0 until current.childCount) {
@@ -176,11 +218,14 @@ internal class HeroTrailerPreview(private val activity: Activity, private val ho
         }
     }
     private fun disposePlayer() {
+        fullscreenVideo?.let { view -> view.removeOnLayoutChangeListener(fitFullscreen); (view.parent as? ViewGroup)?.removeView(view) }
+        fullscreenVideo = null; pageVideo = null
         playingChanged(false)
         player?.release(); player = null; refreshFraming = null
         layer?.let { it.animate().cancel(); (it.parent as? ViewGroup)?.removeView(it) }; layer = null
     }
     fun stop() {
+        fullscreen = false
         serial++; handler.removeCallbacksAndMessages(null); disposePlayer()
         key = ""; ids = emptyList(); playingId = ""; status = "idle"
     }

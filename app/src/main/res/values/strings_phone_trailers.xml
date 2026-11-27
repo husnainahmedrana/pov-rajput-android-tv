@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="t_trailer_full_screen">Full screen</string>
+    <string name="t_trailers_phone_settings">Trailers on title pages: sound, quality and trailer language. Tap the full-screen button or turn your phone to watch full screen.</string>
+    <string name="t_trailers_phone_page">Trailers on title pages, full screen when you turn your phone.</string>
+</resources>

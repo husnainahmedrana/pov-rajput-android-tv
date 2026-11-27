@@ -42,7 +42,25 @@ internal class DetailsTrailerChrome(private val eligible: () -> Boolean,
         if (hidden) { revealKeys += code; restore() }
         return code in revealKeys
     }
+    private var touchReveal = false
+
+    /** Touch (phone): a tap while the page is hidden brings it back and is used up; any touch keeps it shown. */
+    fun touch(event: android.view.MotionEvent): Boolean {
+        when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                touchReveal = false
+                if (!playing || !eligible()) { restore(); return false }
+                handler.removeCallbacks(idle)
+                if (hidden) { touchReveal = true; restore(); return true }
+                return false
+            }
+            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                val used = touchReveal; touchReveal = false; arm(); return used
+            }
+        }
+        return touchReveal
+    }
     fun stop() {
-        playing = false; held.clear(); revealKeys.clear(); restore()
+        playing = false; held.clear(); revealKeys.clear(); touchReveal = false; restore()
     }
 }

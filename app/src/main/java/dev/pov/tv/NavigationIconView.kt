@@ -67,6 +67,10 @@ class NavigationIconView(context: Context, private val key: String, color: Int) 
                 canvas.drawCircle(12f, 8f, 4f, ink)
                 canvas.drawArc(4f, 14f, 20f, 30f, 180f, 180f, false, ink)
             }
+            "more" -> {
+                ink.style = Paint.Style.FILL
+                listOf(5f, 12f, 19f).forEach { x -> canvas.drawCircle(x, 12f, 1.9f, ink) }
+            }
             else -> canvas.drawCircle(12f, 12f, 8f, ink)
         }
         canvas.restoreToCount(saved)

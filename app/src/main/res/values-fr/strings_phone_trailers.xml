@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="t_trailer_full_screen">Plein écran</string>
+    <string name="t_trailers_phone_settings">Bandes-annonces sur les pages des titres : son, qualité et langue. Touchez le bouton plein écran ou tournez votre téléphone pour les voir en plein écran.</string>
+    <string name="t_trailers_phone_page">Bandes-annonces sur les pages des titres, en plein écran quand vous tournez votre téléphone.</string>
+</resources>

@@ -180,14 +180,14 @@ class MainActivity : Activity() {
     private var railExpanded = false
     private var railAnimator: ValueAnimator? = null
     private val railLabels = mutableListOf<View>()
-    private val detailsTrailerChrome by lazy { DetailsTrailerChrome({ !featurePage && trailerPermitted() }, ::hideDetailsTrailerChrome, ::showDetailsTrailerChrome) }
+    private val detailsTrailerChrome by lazy { DetailsTrailerChrome({ DeviceLayout.tv && !featurePage && trailerPermitted() }, ::hideDetailsTrailerChrome, ::showDetailsTrailerChrome) }
     private val fadedTrailerViews = java.util.IdentityHashMap<View, Float>()
     private var trailerBackdropY = 0f
     private var trailerFadeGeneration = -1
     private var homeTrailerFocus: View? = null
     private var heroTrailer: HeroTrailerPreview? = null
     private val trailerCatalog = HeroTrailerCatalog()
-    private fun heroTrailersEnabled() = DeviceLayout.tv && getSharedPreferences("pov_hero_trailers", 0).getBoolean("enabled", true)
+    private fun heroTrailersEnabled() = getSharedPreferences("pov_hero_trailers", 0).getBoolean("enabled", true)
     private fun heroTrailerFillEnabled() = getSharedPreferences("pov_hero_trailers", 0).getBoolean("fill_screen", true)
     private fun heroTrailerHighQuality() = getSharedPreferences("pov_hero_trailers", 0).getBoolean("high_quality", true)
     private fun heroTrailerSoundEnabled() = getSharedPreferences("pov_hero_trailers", 0).getBoolean("sound", true)
@@ -195,6 +195,86 @@ class MainActivity : Activity() {
     private val featureHandler = Handler(Looper.getMainLooper())
     private val rotationHandler = Handler(Looper.getMainLooper())
     private var heroRotation: Runnable? = null
+
+    /** Phone title page: the trailer shown full screen in landscape (null when it isn't). */
+    private var trailerFullscreen: FrameLayout? = null
+    private var trailerSavedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+    /** The phone has been sideways since full screen began: turning it upright again ends full screen. */
+    private var trailerSeenSideways = false
+    private var trailerFullscreenButton: View? = null
+    private val trailerTilt by lazy {
+        object : android.view.OrientationEventListener(this) {
+            override fun onOrientationChanged(orientation: Int) { trailerTiltChanged(orientation) }
+        }
+    }
+
+    private fun detailsTrailerPlaying() = DeviceLayout.phone && flix && !featurePage && heroTrailer?.status == "playing"
+
+    /** Turning the phone sideways while a title page's trailer plays shows it full screen; upright again ends it. */
+    private fun trailerTiltChanged(orientation: Int) {
+        if (orientation == android.view.OrientationEventListener.ORIENTATION_UNKNOWN) return
+        val sideways = orientation in 60..120 || orientation in 240..300
+        val upright = orientation <= 25 || orientation >= 335
+        if (trailerFullscreen == null) { if (sideways && detailsTrailerPlaying()) enterTrailerFullscreen() }
+        else if (sideways) trailerSeenSideways = true
+        else if (upright && trailerSeenSideways) exitTrailerFullscreen()
+    }
+
+    private fun enterTrailerFullscreen() {
+        if (trailerFullscreen != null || !detailsTrailerPlaying()) return
+        val root = window.decorView as? FrameLayout ?: return
+        val box = FrameLayout(this).apply { setBackgroundColor(Color.BLACK); isClickable = true; elevation = dp(40).toFloat() }
+        root.addView(box, FrameLayout.LayoutParams(-1, -1))
+        if (heroTrailer?.enterFullscreen(box) != true) { root.removeView(box); return }
+        // A Back button on screen as well, for gesture navigation.
+        box.addView(TextView(this).apply {
+            text = "\u2190"; textSize = 22f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x66000000) }
+            contentDescription = getString(R.string.t_back); isClickable = true
+            setOnClickListener { exitTrailerFullscreen() }
+        }, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.START).apply { topMargin = dp(16); leftMargin = dp(16) })
+        trailerFullscreen = box
+        trailerSeenSideways = false
+        trailerSavedOrientation = requestedOrientation
+        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        systemBars(false)
+    }
+
+    private fun exitTrailerFullscreen() {
+        val box = trailerFullscreen ?: return
+        trailerFullscreen = null
+        heroTrailer?.exitFullscreen()
+        (box.parent as? ViewGroup)?.removeView(box)
+        requestedOrientation = trailerSavedOrientation
+        systemBars(true)
+    }
+
+    private fun systemBars(show: Boolean) {
+        if (android.os.Build.VERSION.SDK_INT >= 30) window.insetsController?.let { controller ->
+            if (show) controller.show(android.view.WindowInsets.Type.systemBars())
+            else { controller.hide(android.view.WindowInsets.Type.systemBars()); controller.systemBarsBehavior = android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE }
+        } else @Suppress("DEPRECATION") {
+            window.decorView.systemUiVisibility = if (show) View.SYSTEM_UI_FLAG_VISIBLE
+                else View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        }
+    }
+
+    /** Phone title page: a full-screen button on the trailer while it plays. */
+    private fun showTrailerFullscreenButton(show: Boolean) {
+        trailerFullscreenButton?.let { (it.parent as? ViewGroup)?.removeView(it) }; trailerFullscreenButton = null
+        if (!show || !DeviceLayout.phone || featurePage) return
+        val frame = trailerHero() ?: return
+        val size = dp(40)
+        val button = FullscreenIconView(this).apply {
+            contentDescription = getString(R.string.t_trailer_full_screen)
+            setOnClickListener { enterTrailerFullscreen() }
+        }
+        val top = (heroBackdrop.height - size - dp(10)).coerceAtLeast(dp(10))
+        frame.addView(button, FrameLayout.LayoutParams(size, size, Gravity.TOP or Gravity.END).apply { topMargin = top; rightMargin = dp(12) })
+        trailerFullscreenButton = button
+    }
+    /** Moves the Home feature along by the given number of titles (the phone's swipe and trailer end). */
+    private var featureMove: ((Int) -> Unit)? = null
 
     // The app's own language (Settings → Language); "Device language" leaves the context as it is.
     override fun attachBaseContext(newBase: android.content.Context) {
@@ -379,6 +459,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume(); resumed = true; launchingPlayer = false
+        if (DeviceLayout.phone && trailerTilt.canDetectOrientation()) trailerTilt.enable()
         resumedAt = android.os.SystemClock.elapsedRealtime(); touchedSinceResume = false
         ExternalPlayer.appVisible = true
         TorBoxUsenetPlayback.refresh(store, DebridServices.connected(store))
@@ -446,6 +527,7 @@ class MainActivity : Activity() {
         heroTrailer?.stop()
         detailsTrailerChrome.stop()
         resumed = false; miniFrame?.setTag(R.id.pov_mini_shown, false); ExternalPlayer.appVisible = false
+        if (DeviceLayout.phone) { trailerTilt.disable(); exitTrailerFullscreen() }
         super.onPause()
     }
     override fun onStart() {
@@ -467,6 +549,8 @@ class MainActivity : Activity() {
     }
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        // A full-screen trailer keeps playing through the brief focus loss of turning the screen and hiding the bars.
+        if (trailerFullscreen != null) return
         if (!hasFocus) heroTrailer?.stop() else if (::body.isInitialized) refreshHeroTrailer()
     }
     override fun onDestroy() {
@@ -604,6 +688,8 @@ class MainActivity : Activity() {
     }
     override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
         touchedSinceResume = true
+        // The details page faded away for its trailer: a tap brings it back (and isn't passed on as a click).
+        if (trailerFullscreen == null && detailsTrailerChrome.touch(event)) return true
         // A tap during the auto-play countdown stops it (the tapped link, if any, still opens).
         if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN && autoplayCountdown != null && cancelAutoplayCountdown()) toast(getString(R.string.t_auto_play_stopped_choose_a_link))
         return super.dispatchTouchEvent(event)
@@ -615,6 +701,10 @@ class MainActivity : Activity() {
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         touchedSinceResume = true
+        if (trailerFullscreen != null && (event.keyCode == KeyEvent.KEYCODE_BACK || event.keyCode == KeyEvent.KEYCODE_ESCAPE)) {
+            if (event.action == KeyEvent.ACTION_UP) exitTrailerFullscreen()
+            return true
+        }
         val back = event.keyCode == KeyEvent.KEYCODE_BACK || event.keyCode == KeyEvent.KEYCODE_ESCAPE
         externalOverlay?.takeIf { it.showing }?.let { overlay ->
             if (back && event.action == KeyEvent.ACTION_DOWN) { externalCancelled = true; overlay.dismiss(); externalOverlay = null; swallowBackUp = true }
@@ -779,9 +869,10 @@ class MainActivity : Activity() {
             statusScrim?.alpha = (y / dp(40).toFloat()).coerceIn(0f, 1f)
             // On the phone the banner and its copy scroll away with the page.
             // The link list's art stays put behind the list.
-            if (flix && DeviceLayout.tv) featureHero()?.translationY = y.toFloat() else if (!sourcesPage) heroBackdrop.translationY = -y.toFloat()
-            heroTrailer?.stop()
-            body.postDelayed({ refreshHeroTrailer() }, 400)
+            if (flix && DeviceLayout.tv) featureHero()?.translationY = y.toFloat() else if (!sourcesPage) placePhoneBanner(y)
+            // The phone's trailer scrolls with the banner and stops by itself once it is off screen.
+            if (DeviceLayout.tv) heroTrailer?.stop()
+            body.removeCallbacks(trailerAfterScroll); body.postDelayed(trailerAfterScroll, 400)
             body.invalidate()
         }
         val layout = theme.layout
@@ -792,9 +883,16 @@ class MainActivity : Activity() {
             if (layout.navigation == NavigationPlacement.BOTTOM_BAR) bottomMargin = dp(BOTTOM_BAR_HEIGHT)
         })
         if (layout.navigation == NavigationPlacement.BOTTOM_BAR) {
-            val bar = LinearLayout(this).apply { setBackgroundColor(PHONE_BAR_COLOR); elevation = dp(4).toFloat() }
-            shellRoot.addView(bar, FrameLayout.LayoutParams(-1, dp(BOTTOM_BAR_HEIGHT), Gravity.BOTTOM))
-            destinations().forEach { target -> bar.addView(bottomNavigation(target), LinearLayout.LayoutParams(0, -1, 1f)) }
+            // A floating pill: five tabs, the current one a brand-coloured pill with its name, the rest icons only.
+            val bar = LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL; setPadding(dp(6), 0, dp(6), 0); elevation = dp(12).toFloat()
+                background = GradientDrawable().apply { cornerRadius = dp(PILL_BAR_HEIGHT / 2).toFloat(); setColor(0xF2161616.toInt()); setStroke(dp(1), 0x1FFFFFFF) }
+            }
+            shellRoot.addView(bar, FrameLayout.LayoutParams(-1, dp(PILL_BAR_HEIGHT), Gravity.BOTTOM).apply {
+                leftMargin = dp(14); rightMargin = dp(14); bottomMargin = dp(BOTTOM_BAR_HEIGHT - PILL_BAR_HEIGHT - 2)
+            })
+            pillBar = bar
+            phoneTabs().forEach { tab -> bar.addView(pillTab(tab), LinearLayout.LayoutParams(0, -1, 1f)) }
         } else if (layout.navigation == NavigationPlacement.LEFT_RAIL) {
             val rail = column().apply {
                 setPadding(dp(12), dp(22), dp(1), dp(13))
@@ -922,7 +1020,111 @@ class MainActivity : Activity() {
         return cell
     }
 
+    /** The phone's floating tab bar, and the Movies | Shows | Anime switch over the Browse pages. */
+    private var pillBar: LinearLayout? = null
+    private var browseSwitch: LinearLayout? = null
+
+    private class PhoneTab(val key: String, val label: String, val icon: String, val open: () -> Unit)
+
+    private fun phoneTabs(): List<PhoneTab> = listOf(
+        PhoneTab("home", getString(R.string.t_home), "home") { openTab("home") },
+        PhoneTab("search", getString(R.string.t_search), "search") { openTab("search") },
+        PhoneTab("browse", getString(R.string.t_browse), "movie") { openTab(getSharedPreferences("pov_ui", 0).getString("browse_tab", "movie") ?: "movie") },
+        PhoneTab("library", getString(R.string.t_library), "library") { openTab("library") },
+        PhoneTab("more", getString(R.string.t_more), "more") { showMoreSheet() })
+
+    private fun openTab(key: String) { destinations().firstOrNull { it.key == key }?.let(::openDestination) }
+
+    /** Which of the five tabs the page on screen belongs to. */
+    private fun activeTab() = when (destination) { in BROWSE_KEYS -> "browse"; "wetrakr", "settings" -> "more"; else -> destination }
+
+    private fun pillTab(tab: PhoneTab): View {
+        val cell = LinearLayout(this).apply {
+            gravity = Gravity.CENTER; isClickable = true; tag = "nav:${tab.key}"; contentDescription = tab.label
+        }
+        val pill = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, dp(14), 0) }
+        val icon = NavigationIconView(this, tab.icon, muted)
+        pill.addView(icon, margin(21, 21))
+        val label = text(tab.label, 13, Color.WHITE, true).apply { maxLines = 1 }
+        pill.addView(label, margin(-2, -2).apply { leftMargin = dp(7) })
+        cell.addView(pill, LinearLayout.LayoutParams(-2, dp(40)))
+        fun paint() {
+            val on = activeTab() == tab.key
+            pill.background = if (on) rounded(accent, 20) else null
+            icon.tint = if (on) Color.WHITE else muted
+            label.visibility = if (on) View.VISIBLE else View.GONE
+            (cell.layoutParams as? LinearLayout.LayoutParams)?.let { if (it.weight != (if (on) 2.2f else 1f)) { it.weight = if (on) 2.2f else 1f; cell.layoutParams = it } }
+        }
+        cell.setOnFocusChangeListener { _, _ -> paint() }
+        cell.setOnClickListener { tab.open() }
+        navigationViews[tab.key] = cell
+        cell.post { paint() }
+        return cell
+    }
+
+    /** More: the tracker and Settings, in a sheet over the tab bar. */
+    private fun showMoreSheet() {
+        val dialog = android.app.Dialog(this)
+        val list = column().apply {
+            setPadding(dp(8), dp(10), dp(8), dp(10))
+            background = rounded(0xFF1A1A1A.toInt(), 22)
+        }
+        listOf("wetrakr" to wetrakr.name, "settings" to getString(R.string.t_settings)).forEach { (key, name) ->
+            val row = LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(16), 0); isClickable = true
+                background = android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x33FFFFFF), null, rounded(Color.WHITE, 14))
+                setOnClickListener { dialog.dismiss(); openTab(key) }
+            }
+            row.addView(NavigationIconView(this, key, if (destination == key) accent else ink), margin(22, 22))
+            row.addView(text(name, 16, if (destination == key) accent else ink, destination == key), margin(-2, -2).apply { leftMargin = dp(16) })
+            list.addView(row, margin(-1, 52))
+        }
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.setContentView(list)
+        dialog.window?.let { window ->
+            window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+            window.setGravity(Gravity.BOTTOM)
+            window.setLayout(resources.displayMetrics.widthPixels - dp(28), -2)
+            window.attributes = window.attributes.apply { y = dp(BOTTOM_BAR_HEIGHT + 6) }
+        }
+        dialog.show()
+    }
+
+    /** Phone Browse pages: a Movies | Shows | Anime switch at the top. */
+    private fun updateBrowseSwitch() {
+        if (theme.layout.navigation != NavigationPlacement.BOTTOM_BAR || !::shellRoot.isInitialized) return
+        val show = destination in BROWSE_KEYS && backStack.isEmpty()
+        if (!show) { browseSwitch?.visibility = View.GONE; return }
+        val switch = browseSwitch ?: LinearLayout(this).apply {
+            setPadding(dp(4), dp(4), dp(4), dp(4)); elevation = dp(8).toFloat()
+            background = rounded(0xD9161616.toInt(), 20)
+            listOf("movie" to getString(R.string.t_movies), "series" to getString(R.string.t_shows), "anime" to getString(R.string.t_anime)).forEach { (key, name) ->
+                addView(text(name, 13, Color.WHITE, true).apply {
+                    tag = key; gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), 0); isClickable = true
+                    setOnClickListener {
+                        if (destination == key) return@setOnClickListener
+                        getSharedPreferences("pov_ui", 0).edit().putString("browse_tab", key).apply()
+                        openTab(key)
+                    }
+                }, LinearLayout.LayoutParams(-2, dp(32)))
+            }
+            shellRoot.addView(this, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = systemTop + dp(8) })
+            browseSwitch = this
+        }
+        for (i in 0 until switch.childCount) {
+            val segment = switch.getChildAt(i) as TextView
+            val on = segment.tag == destination
+            segment.background = if (on) rounded(accent, 16) else null
+            segment.setTextColor(if (on) Color.WHITE else muted)
+        }
+        (switch.layoutParams as? FrameLayout.LayoutParams)?.let { if (it.topMargin != systemTop + dp(8)) { it.topMargin = systemTop + dp(8); switch.layoutParams = it } }
+        switch.visibility = View.VISIBLE
+        switch.bringToFront()
+    }
+
     private fun refreshNavigation() {
+        pillBar?.let { android.transition.TransitionManager.beginDelayedTransition(it, android.transition.ChangeBounds().setDuration(180)) }
+        updateBrowseSwitch()
         // Rebuilding a nav cell's state does not steal focus from remote navigation.
         navigationViews.values.forEach { view -> view.onFocusChangeListener?.onFocusChange(view, view.hasFocus()) }
     }
@@ -1002,6 +1204,8 @@ class MainActivity : Activity() {
         }
     }
     private fun page(title: String, subtitle: String = ""): Int {
+        clearPickedTile(); exitTrailerFullscreen(); showTrailerFullscreenButton(false)
+        body.post { updateBrowseSwitch() }
         // Leaving the link list stops its auto-play countdown; the list re-rendering itself keeps it.
         if (!renderingSearch) cancelAutoplayCountdown()
         homeTrailerFocus = null
@@ -1670,7 +1874,7 @@ class MainActivity : Activity() {
                               extra: Pair<String, () -> Unit>? = null) {
         val layout = theme.layout
         val height = if (!showAction) 250 else if (compact) COMPACT_HERO_HEIGHT else layout.heroHeightDp
-        val frame = (if (showAction && DeviceLayout.tv) LayoutBoundaryFrame(this) else FrameLayout(this)).apply { clipChildren = false; tag = "featured-hero"; setTag(R.id.pov_feature_item, item) }
+        val frame = (if (showAction && DeviceLayout.tv) LayoutBoundaryFrame(this) else if (showAction && DeviceLayout.phone) HeroSwipeFrame(this) else FrameLayout(this)).apply { clipChildren = false; tag = "featured-hero"; setTag(R.id.pov_feature_item, item) }
         placeBackdrop(home = showAction)
         heroBackdrop.visibility = View.VISIBLE
         image(backdropArt, backdropFor(item), feature = true)
@@ -1776,25 +1980,38 @@ class MainActivity : Activity() {
     private fun rotateFeature(frame: FrameLayout, rotation: List<MediaItemData>) {
         heroRotation?.let(rotationHandler::removeCallbacks)
         var index = rotation.indexOfFirst { it.imdbId == (frame.getTag(R.id.pov_feature_item) as? MediaItemData)?.imdbId }.coerceAtLeast(0)
-        val step = object : Runnable {
-            override fun run() {
-                if (heroRotation !== this || isDestroyed) return
-                rotationHandler.postDelayed(this, FEATURE_INTERVAL_MS)
-                val focus = currentFocus
-                val inShelves = focus != null && within(focus, body) && !within(focus, frame)
-                if (!resumed || !flix || featureHero() !== frame || inShelves) return
-                index = (index + 1) % rotation.size
+        lateinit var step: Runnable
+        /** Shows the title [by] places along (swipe, the end of its trailer, or the timer). */
+        fun move(by: Int) {
+                if (heroRotation !== step || isDestroyed || !resumed || !flix || featureHero() !== frame) return
+                rotationHandler.removeCallbacks(step); rotationHandler.postDelayed(step, FEATURE_INTERVAL_MS)
+                index = ((index + by) % rotation.size + rotation.size) % rotation.size
+                clearPickedTile()
                 val next = rotation[index]
                 homeTrailerFocus = null
                 rotation[(index + 1) % rotation.size].let { prefetch(backdropFor(it), backdrop = true); prefetch(logoFor(it)) }
                 frame.setTag(R.id.pov_feature_item, next)
                 (frame.findViewWithTag<LinearLayout>("feature-actions")?.getChildAt(0) as? TextView)?.text = playLabel(next)
                 val copy = frame.findViewWithTag<View>("feature-copy")
+                heroTrailer?.stop()
                 copy.animate().alpha(0f).setDuration(180).withEndAction {
                     showFeature(next); copy.animate().alpha(1f).setDuration(260).start()
                 }.start()
+        }
+        step = object : Runnable {
+            override fun run() {
+                if (heroRotation !== this || isDestroyed) return
+                rotationHandler.postDelayed(this, FEATURE_INTERVAL_MS)
+                val focus = currentFocus
+                val inShelves = focus != null && within(focus, body) && !within(focus, frame)
+                if (!resumed || !flix || featureHero() !== frame || inShelves) return
+                // Phone: the title waits while its trailer loads or plays; the trailer's end moves it on.
+                if (DeviceLayout.phone && heroTrailer?.status in PHONE_TRAILER_BUSY) return
+                move(1)
             }
         }
+        featureMove = ::move
+        (frame as? HeroSwipeFrame)?.onSwipe = { by -> move(by) }
         heroRotation = step
         rotation.getOrNull(1)?.let { prefetch(backdropFor(it), backdrop = true); prefetch(logoFor(it)) }
         rotationHandler.postDelayed(step, FEATURE_INTERVAL_MS)
@@ -1850,10 +2067,44 @@ class MainActivity : Activity() {
      * Home's backdrop sits in the top-right 70% of the screen, its baked-in shading fading into the page,
      * leaving the left and lower area darker for the copy and rows; details pages keep it full-screen.
      */
+    /** The phone's Home banner is pinned as a slim strip at the top (see [placePhoneBanner]). */
+    private var phoneBannerPinned = false
+
+    /**
+     * Phone, scrolled to [y]. Home with trailers on: the banner shrinks to a slim strip of its middle, pinned at the
+     * top, so the trailer keeps playing while the rows slide beneath it; a tap on the strip goes back to the top.
+     * Elsewhere the banner scrolls away with the page.
+     */
+    private fun placePhoneBanner(y: Int) {
+        val full = heroBackdrop.height
+        if (!PHONE_HOME_TRAILERS || !DeviceLayout.phone || !flix || !featurePage || !heroTrailersEnabled() || full == 0) { resetPhoneBanner(); heroBackdrop.translationY = -y.toFloat(); return }
+        val slim = (full * PHONE_SLIM_BANNER).toInt()
+        val shown = (full - y).coerceIn(slim, full)
+        val top = (full - shown) / 2
+        heroBackdrop.clipBounds = if (shown < full) android.graphics.Rect(0, top, heroBackdrop.width, top + shown) else null
+        // While it shrinks, the strip slides down below the status bar (whose scrim fades in as the page scrolls).
+        val progress = if (full > slim) (full - shown).toFloat() / (full - slim) else 1f
+        heroBackdrop.translationY = -top + systemTop * progress
+        val pinned = shown == slim
+        if (pinned == phoneBannerPinned) return
+        phoneBannerPinned = pinned
+        // Pinned, the strip sits above the rows (which then pass beneath it) and a tap on it scrolls back up.
+        heroBackdrop.translationZ = if (pinned) dp(4).toFloat() else 0f
+        if (pinned) heroBackdrop.setOnClickListener { scroller.smoothScrollTo(0, 0) }
+        else { heroBackdrop.setOnClickListener(null); heroBackdrop.isClickable = false }
+    }
+
+    private fun resetPhoneBanner() {
+        if (!::heroBackdrop.isInitialized) return
+        heroBackdrop.clipBounds = null; heroBackdrop.translationZ = 0f
+        if (phoneBannerPinned) { phoneBannerPinned = false; heroBackdrop.setOnClickListener(null); heroBackdrop.isClickable = false }
+    }
+
     private fun placeBackdrop(home: Boolean) {
         if (!flix) return
         val params = heroBackdrop.layoutParams as FrameLayout.LayoutParams
         if (DeviceLayout.phone) {
+            resetPhoneBanner()
             // The link list's art fills the phone; other pages use the banner.
             val height = if (sourcesPage) -1 else dp(DeviceLayout.PHONE_SHORT_SIDE) * 9 / 16
             if (params.width != -1 || params.height != height) {
@@ -1996,18 +2247,20 @@ class MainActivity : Activity() {
 
     /** Native video shares the backdrop layer beneath Home or details copy and controls. */
     private fun trailerArea(): android.graphics.Rect? {
-        if (!flix || !DeviceLayout.tv || !::heroBackdrop.isInitialized) return null
+        if (!flix || !::heroBackdrop.isInitialized) return null
         if (trailerHero() == null || !heroBackdrop.isShown || heroBackdrop.width == 0 || heroBackdrop.height == 0) return null
         if (!heroBackdrop.getGlobalVisibleRect(android.graphics.Rect())) return null
-        if (featurePage) {
+        if (featurePage && DeviceLayout.tv) {
             // One wide moving hero, weighted to the right and kept near the visible shelf line.
             val height = minOf(dp(FLIX_ROW_LINE + 32), heroBackdrop.height)
             return android.graphics.Rect(0, 0, heroBackdrop.width, height)
         }
         return android.graphics.Rect(0, 0, heroBackdrop.width, heroBackdrop.height)
     }
-    private fun trailerPermitted() = heroTrailersEnabled() && (!featurePage || (homeTrailerFocus != null && currentFocus === homeTrailerFocus)) && resumed && hasWindowFocus() && trailerHero() != null && flix &&
+    private fun trailerPermitted() = trailerFullscreen != null || heroTrailersEnabled() && (if (DeviceLayout.phone) !featurePage else (!featurePage || (homeTrailerFocus != null && currentFocus === homeTrailerFocus))) && resumed && hasWindowFocus() && trailerHero() != null && flix &&
         !InAppPlaybackSession.hasActive() && !isDestroyed && splash == null && navigationViews.values.none { it.hasFocus() }
+
+    private val trailerAfterScroll = Runnable { refreshHeroTrailer() }
 
     private fun refreshHeroTrailer() {
         if (!trailerPermitted()) { heroTrailer?.stop(); return }
@@ -2016,6 +2269,10 @@ class MainActivity : Activity() {
     }
     private fun onHeroTrailerPlaying(playing: Boolean) {
         detailsTrailerChrome.playbackChanged(playing)
+        if (DeviceLayout.phone) {
+            if (!playing) exitTrailerFullscreen()
+            showTrailerFullscreenButton(playing && !featurePage)
+        }
         if (!::backdropArt.isInitialized) return
         backdropArt.animate().cancel()
         if (featurePage && playing) backdropArt.animate().alpha(0f).setDuration(450).start()
@@ -2025,7 +2282,8 @@ class MainActivity : Activity() {
         if (!trailerPermitted()) { heroTrailer?.stop(); return }
         if (heroTrailer == null) heroTrailer = HeroTrailerPreview(this, heroBackdrop, worker, ::heroTrailerVideos, ::trailerArea, ::trailerPermitted, bg, ::heroTrailerSoundEnabled, ::onHeroTrailerPlaying, ::heroTrailerFillEnabled, ::heroTrailerHighQuality,
             { item -> TrailerLanguage.get(this).takeIf { it.isNotEmpty() }?.let { TrailerLanguage.searched(item, it) }.orEmpty() },
-            { TrailerLanguage.get(this) })
+            { TrailerLanguage.get(this) },
+            { if (DeviceLayout.phone && featurePage) featureMove?.invoke(1) })
         heroTrailer?.select(item)
     }
 
@@ -2411,7 +2669,7 @@ class MainActivity : Activity() {
             view.animate().scaleX(if (focused) 1.07f else 1f).scaleY(if (focused) 1.07f else 1f).setDuration(140).start()
             if (focused) scheduleFeature(item)
         }
-        frame.setOnClickListener { navigate { details(item) } }
+        frame.setOnClickListener { phoneTrailerPick(frame, item) { navigate { details(item) } } }
         frame.setOnLongClickListener { titleMenu(item) { navigate { details(item) } }; true }
         return frame.pressable(4)
     }
@@ -2664,6 +2922,7 @@ class MainActivity : Activity() {
             if (restoreFocus) navigationViews[destination]?.requestFocus()
             return
         }
+        if (pillBar != null) return
         val host = navigationViews["home"]?.parent as? LinearLayout ?: return
         val navigationIndexes = (0 until host.childCount).filter { (host.getChildAt(it).tag as? String)?.startsWith("nav:") == true }
         if (navigationIndexes.isEmpty()) return
@@ -2676,7 +2935,8 @@ class MainActivity : Activity() {
         host.addView(cell, if (DeviceLayout.tv) navigationIndexes.first() else navigationIndexes.last() + 1, params)
     }
 
-    private fun contentBottomPadding() = dp(if (!publicPreview && InAppPlaybackSession.hasActive()) (if (DeviceLayout.phone) 120 else 184) else 24)
+    private fun contentBottomPadding() = dp((if (!publicPreview && InAppPlaybackSession.hasActive()) (if (DeviceLayout.phone) 120 else 184) else 24) +
+        (if (pillBar != null) BOTTOM_BAR_HEIGHT else 0))
 
 
     private fun animePage(type: String = "series", query: String = "", skip: Int = 0) {
@@ -3481,6 +3741,14 @@ class MainActivity : Activity() {
         }
     }
     private companion object {
+        /** Phone Home: trailer states during which the feature doesn't move on by itself. */
+        private val PHONE_TRAILER_BUSY = setOf("waiting", "metadata", "loading", "playing")
+        /** The pages behind the phone's Browse tab. */
+        private val BROWSE_KEYS = setOf("movie", "series", "anime")
+        /** Trailers in the phone's Home banner (pinned strip, tap-to-pick posters): off, the user didn't like the strip. */
+        private const val PHONE_HOME_TRAILERS = false
+        /** Phone Home: the pinned banner strip's height, as a share of the full banner. */
+        private const val PHONE_SLIM_BANNER = 0.42f
         private const val QR_DP = 110; const val WARM_BACKDROPS = 6; const val HIDE_UNCACHED = "sources.hide_uncached"; const val BACKDROP_FADE_MS = 220; const val VOICE_REQUEST = 701; const val PLAYBACK_REQUEST = 702; const val MIC_REQUEST = 703; const val FLIX_ROW_LINE = 236; const val FLIX_SHELF_FOOT = 48; const val FEATURE_INTERVAL_MS = 5_000L; const val AUTOPLAY_FIRST = "sources.autoplay_first"; const val AUTOPLAY_MAX_GB = "sources.autoplay_max_gb"; const val AUTOPLAY_MAX_GB_EPISODE = "sources.autoplay_max_gb_episode"; const val AUTOPLAY_MAX_MBPS = "sources.autoplay_max_mbps"; const val AUTOPLAY_LIMIT_ON = "sources.autoplay_limit_on"; const val BACKDROP_WIDTH = 1280; const val CONTINUE_CACHE = "wetrakr.continue_cache"
         const val TMDB_KEY = "tmdb.key"; const val POSTER_QUALITY = "settings.poster_quality"; const val TMDB_REGION = "tmdb.region"
         const val TVDB_KEY = "tvdb.key"; const val TVDB_SHOWS = "tvdb.shows"
@@ -3537,7 +3805,7 @@ class MainActivity : Activity() {
         const val ROW_FEATURED_MOVIES = "featured:movie"; const val ROW_FEATURED_SHOWS = "featured:series"
         const val RESUME_CARD_WIDTH = 300; const val RESUME_CARDS = "home.resume_cards"
         const val SYNOPSIS_MORE_CHARS = 220; const val CONTINUE_LIMIT = 30
-        const val PHONE_INLINE_VALUE = 18; const val BOTTOM_BAR_HEIGHT = 56; const val PHONE_BAR_COLOR = 0xFF0B0B0B.toInt()
+        const val PHONE_INLINE_VALUE = 18; const val BOTTOM_BAR_HEIGHT = 74; const val PILL_BAR_HEIGHT = 58; const val PHONE_BAR_COLOR = 0xFF0B0B0B.toInt()
         /** Where the phone's feature copy starts: over the foot of the 225-unit banner. */
         const val PHONE_COPY_TOP = 150
         /** A landscape screen (car, tablet) starts the feature copy higher, so the shorter banner still frames it. */
@@ -7605,9 +7873,9 @@ class MainActivity : Activity() {
                 "home" -> {
             val home = settingsGroup(getString(R.string.t_home_appearance), "home")
             settingsRow(home, getString(R.string.t_language), AppLanguage.label(this, getString(R.string.t_device_language)), getString(R.string.t_the_language_of_menus_and_settings)) { chooseLanguage() }
+            settingsRow(home, getString(R.string.t_trailers), if (!heroTrailersEnabled()) getString(R.string.t_off) else listOf(getString(R.string.t_on), if (heroTrailerSoundEnabled()) getString(R.string.t_sound_on) else "muted", if (heroTrailerHighQuality()) getString(R.string.t_high_quality) else getString(R.string.t_standard_quality)).plus(listOfNotNull(TrailerLanguage.get(this).takeIf { it.isNotEmpty() }?.let { TrailerLanguage.label(this, it) })).joinToString(" · "),
+                    getString(if (DeviceLayout.phone) R.string.t_trailers_phone_settings else R.string.t_trailers_on_details_pages_and_focused)) { navigate { playbackPage("trailers") } }
             if (DeviceLayout.tv) {
-                settingsRow(home, getString(R.string.t_trailers), if (!heroTrailersEnabled()) getString(R.string.t_off) else listOf(getString(R.string.t_on), if (heroTrailerSoundEnabled()) getString(R.string.t_sound_on) else "muted", if (heroTrailerHighQuality()) getString(R.string.t_high_quality) else getString(R.string.t_standard_quality)).plus(listOfNotNull(TrailerLanguage.get(this).takeIf { it.isNotEmpty() }?.let { TrailerLanguage.label(this, it) })).joinToString(" · "),
-                    getString(R.string.t_trailers_on_details_pages_and_focused)) { navigate { playbackPage("trailers") } }
                 settingsToggle(home, getString(R.string.t_tv_home_continue_watching), getString(R.string.t_show_resume_cards_on_supported_tv), TvContinueWatching.enabled(this)) { enabled ->
                     TvContinueWatching.setEnabled(this,enabled)
                 }
@@ -8122,7 +8390,7 @@ class MainActivity : Activity() {
             "words:prefer" -> getString(R.string.t_your_words_to_prefer) to getString(R.string.t_links_with_these_words_move_up)
             "words:hide" -> getString(R.string.t_your_words_to_hide) to getString(R.string.t_links_with_any_of_these_words)
             "groups" -> getString(R.string.t_trusted_release_groups) to getString(R.string.t_lists_of_well_known_release_groups)
-            "trailers" -> getString(R.string.t_trailers) to getString(R.string.t_trailers_on_details_pages_and_when)
+            "trailers" -> getString(R.string.t_trailers) to getString(if (DeviceLayout.phone) R.string.t_trailers_phone_page else R.string.t_trailers_on_details_pages_and_when)
             else -> if (section.startsWith("group:")) (LinkRules.groupSet(section.removePrefix("group:"))?.label ?: getString(R.string.t_release_groups)) to
                 (if (LinkRules.GROUP_SETS.any { it.id == section.removePrefix("group:") }) getString(R.string.t_trusted_release_groups_best_first_links)
                 else getString(R.string.t_links_from_groups_that_are_on))
@@ -9643,7 +9911,33 @@ class MainActivity : Activity() {
             }
         }
     }
-    private fun card(item: MediaItemData): View = tile(item) { navigate { details(item) } }
+    private fun card(item: MediaItemData): View = tile(item) { navigate { details(item) } }.also { view ->
+        if (DeviceLayout.phone) view.setOnClickListener { phoneTrailerPick(view, item) { navigate { details(item) } } }
+    }
+
+    /** Phone, a page with a feature banner: the poster whose trailer plays there (a second tap opens it). */
+    private var pickedTile: java.lang.ref.WeakReference<View>? = null
+    private var pickedForeground: android.graphics.drawable.Drawable? = null
+
+    /**
+     * Phone: the first tap on a poster picks it (outlined) and plays its trailer in the banner at the top; a second
+     * tap opens it. Without a banner or with trailers off, a tap opens it straight away.
+     */
+    private fun phoneTrailerPick(view: View, item: MediaItemData, open: () -> Unit) {
+        if (!PHONE_HOME_TRAILERS || !DeviceLayout.phone || !flix || !featurePage || !heroTrailersEnabled() || featureHero() == null) { open(); return }
+        if (pickedTile?.get() === view) { clearPickedTile(); open(); return }
+        clearPickedTile()
+        pickedForeground = view.foreground
+        val ring = FocusRingDrawable(accent, dp(theme.layout.cornerRadiusDp).toFloat(), true, dp(1).toFloat())
+        view.foreground = view.foreground?.let { android.graphics.drawable.LayerDrawable(arrayOf(it, ring)) } ?: ring
+        pickedTile = java.lang.ref.WeakReference(view)
+        scheduleFeature(item)
+    }
+
+    private fun clearPickedTile() {
+        pickedTile?.get()?.foreground = pickedForeground
+        pickedTile = null; pickedForeground = null
+    }
 
     /** Phones have no focus highlight, so tappable surfaces show a ripple instead. */
     private fun <T : View> T.pressable(radius: Int): T = apply {
