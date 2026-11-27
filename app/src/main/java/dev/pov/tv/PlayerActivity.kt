@@ -218,6 +218,7 @@ class PlayerActivity : Activity() {
         // Started after onStart (seek previews were made first): the screen attaches to the new player now, or it
         // would play sound only, with no picture and no working controls.
         view.useController = !stillLoading()
+        if (savedInstanceState == null) armStartTimeout()
         if (!stopped) {
             InAppPlaybackSession.attachPlayerView(view)
             updateControls()
@@ -561,6 +562,7 @@ class PlayerActivity : Activity() {
         if (state == Player.STATE_READY) {
             if (!everReady) UsenetStartTimes.firstPicture()?.let { if (BuildConfig.USENET_TIMES) Toast.makeText(this, it, Toast.LENGTH_LONG).show() }
             everReady = true; controlsAfterLoading()
+            linkShowedPicture = true; splashHandler.removeCallbacks(startTimeout)
         }
         // A failure before the first picture: the controls (Retry, Streams) are needed after all.
         if (InAppPlaybackSession.error != null) controlsAfterLoading()
@@ -801,16 +803,19 @@ class PlayerActivity : Activity() {
         }
         // A Usenet release that is gone (or can't be streamed): the next link plays by itself; only when none is
         // left does a sheet say so, plainly and without a Retry that can't help.
+        val fallback = PlaybackFallback.enabled(this)
         deadUsenetKind(error)?.let { kind ->
-            if (playNextLink(error, kind)) return
+            if (fallback && playNextLink(error, kind)) return
             showSheet(getString(R.string.t_playback_stopped),
                 if (kind == DeadLink.MISSING) getString(R.string.t_release_missing_pick_another) else usenetReason(error) ?: failureReason(error),
                 listOf(PlayerSheetChoice(getString(R.string.t_browse_sources)) { showStreams() }))
             return
         }
+        // Settings → Playback → Automatic fallback: any other failure (network, server, timeout) goes to the next link too.
+        if (fallback && playNextLink(error, DeadLink.FAILED)) return
         showSheet(getString(R.string.t_playback_stopped), getString(R.string.t_x_code_x, failureReason(error), error.errorCodeName),
             listOf(
-                PlayerSheetChoice(getString(R.string.t_retry)) { if (!stopped) { observedError = null; InAppPlaybackSession.retry() } },
+                PlayerSheetChoice(getString(R.string.t_retry)) { if (!stopped) { observedError = null; InAppPlaybackSession.retry(); armStartTimeout() } },
                 // The title's other links open right here in the Streams panel; picking one continues from the same spot.
                 PlayerSheetChoice(getString(R.string.t_browse_sources)) { showStreams() }
             ))
@@ -831,10 +836,40 @@ class PlayerActivity : Activity() {
         observedError = null
         if (!InAppPlaybackSession.start(this, next)) { Toast.makeText(this, getString(R.string.t_mpv_couldnt_play), Toast.LENGTH_LONG).show(); return }
         InAppPlaybackSession.attachPlayerView(view)
+        armStartTimeout()
         updateControls()
     }
 
-    private enum class DeadLink { MISSING, UNPLAYABLE }
+    private enum class DeadLink { MISSING, UNPLAYABLE, FAILED, TIMEOUT }
+
+    /** The playing link has shown its first picture (the start timeout no longer applies to it). */
+    private var linkShowedPicture = false
+
+    /** Start timeout (Settings → Playback, Off by default): no picture in time → the next link, like a failure. */
+    private val startTimeout = Runnable { startTimedOut() }
+
+    /** Starts the start-timeout clock for the link that is starting now. */
+    private fun armStartTimeout() {
+        splashHandler.removeCallbacks(startTimeout)
+        linkShowedPicture = false
+        val seconds = PlaybackFallback.timeoutSeconds(this)
+        if (seconds <= 0 || !PlaybackFallback.enabled(this)) return
+        splashHandler.postDelayed(startTimeout, seconds * 1_000L)
+    }
+
+    private fun startTimedOut() {
+        if (stopped || isFinishing || isDestroyed || linkShowedPicture || InAppPlaybackSession.error != null) return
+        // Seek previews still being made on the loading screen, a sheet open, or a link switch already on its way:
+        // look again shortly instead of cutting in.
+        if (previewPrep != null || switching || activeDialog?.isShowing == true) { splashHandler.postDelayed(startTimeout, 2_000); return }
+        if (player?.playbackState == Player.STATE_READY) { linkShowedPicture = true; return }
+        val error = PlaybackException(getString(R.string.t_the_link_took_too_long_to), null, PlaybackException.ERROR_CODE_TIMEOUT)
+        dev.pov.tv.UsenetLog.i("start timeout (${PlaybackFallback.timeoutSeconds(this)} s): no picture yet")
+        // A link tried from the link list goes back there, which moves on to the next cached link itself.
+        if (cachedLinkAttempt) { showPlaybackFailure(error); return }
+        observedError = error
+        if (!playNextLink(error, DeadLink.TIMEOUT)) showPlaybackFailure(error)
+    }
 
     /** Why a Usenet link can't play: its release gone from the providers, or a set the app can't stream; null otherwise. */
     private fun deadUsenetKind(error: Throwable): DeadLink? {
@@ -892,15 +927,23 @@ class PlayerActivity : Activity() {
             (source.directUrl.isNotBlank() && source.directUrl == playingUrl) ||
                 (playingName.isNotBlank() && SourceBadges.name(source).let { it.isNotBlank() && playingName.contains(it.take(40)) })
         }
+        links.getOrNull(current)?.let { PlaybackFallback.failed += TvChoiceKeys.source(it) }
         val rest = links.drop(current + 1).filter { source ->
-            source.directUrl != playingUrl && !(source.directUrl.isNotBlank() && UsenetPlayback.refused(source.directUrl))
+            source.directUrl != playingUrl && !(source.directUrl.isNotBlank() && UsenetPlayback.refused(source.directUrl)) &&
+                TvChoiceKeys.source(source) !in PlaybackFallback.failed
         }
         val next = rest.firstOrNull() ?: return false
         autoNextTries++
         val at = player?.currentPosition ?: 0L
         val name = SourceBadges.name(next).ifBlank { next.title }.lineSequence().firstOrNull().orEmpty().take(60)
         dev.pov.tv.UsenetLog.i("dead link (${kind.name.lowercase()}); playing the next one by itself: $name")
-        runSwitch(media, next, at, getString(if (kind == DeadLink.MISSING) R.string.t_missing_release_trying_next else R.string.t_link_cant_stream_trying_next, name)) {
+        val message = when (kind) {
+            DeadLink.MISSING -> getString(R.string.t_missing_release_trying_next, name)
+            DeadLink.UNPLAYABLE -> getString(R.string.t_link_cant_stream_trying_next, name)
+            DeadLink.FAILED -> getString(R.string.t_stream_failed_trying_next, name)
+            DeadLink.TIMEOUT -> getString(R.string.t_start_timeout_trying_next, PlaybackFallback.timeoutSeconds(this).toString(), name)
+        }
+        runSwitch(media, next, at, message) {
             switcher.prepare(next, media, rest)
         }
         return true
@@ -1240,6 +1283,7 @@ class PlayerActivity : Activity() {
             Toast.makeText(this, getString(R.string.t_this_link_did_not_return_a), Toast.LENGTH_LONG).show(); return
         }
         InAppPlaybackSession.attachPlayerView(view)
+        armStartTimeout()
         updateControls()
     }
 
@@ -1747,7 +1791,7 @@ class PlayerActivity : Activity() {
     }
 
     override fun onDestroy() {
-        splashHandler.removeCallbacks(showSplashLater); splashPulse?.cancel()
+        splashHandler.removeCallbacks(showSplashLater); splashHandler.removeCallbacks(startTimeout); splashPulse?.cancel()
         controls.release()
         InAppPlaybackSession.removeListener(sessionListener)
         uiScope.cancel()

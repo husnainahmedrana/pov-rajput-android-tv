@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="t_auto_fallback">Automatischer Wechsel</string>
+    <string name="t_auto_fallback_hint">Wenn ein Link fehlschlägt oder nicht innerhalb der Startzeit startet, wird automatisch der nächste Link deiner Liste abgespielt. Fehlgeschlagene Links werden bis zum Schließen der App übersprungen.</string>
+    <string name="t_start_timeout">Startzeitlimit</string>
+    <string name="t_start_timeout_hint">Bei aktivem automatischem Wechsel: Ein Link ohne Bild innerhalb dieser Zeit wird zugunsten des nächsten übersprungen. Aus wartet so lange wie nötig.</string>
+    <string name="t_stream_failed_trying_next">Stream nicht verfügbar · nächster Link wird versucht: %1$s</string>
+    <string name="t_start_timeout_trying_next">Nicht innerhalb von %1$s s gestartet · nächster Link wird versucht: %2$s</string>
+</resources>

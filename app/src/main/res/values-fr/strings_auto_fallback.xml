@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="t_auto_fallback">Repli automatique</string>
+    <string name="t_auto_fallback_hint">Si un lien échoue ou ne démarre pas dans le délai de démarrage, le lien suivant de votre liste est lu automatiquement. Les liens en échec sont ignorés jusqu\'à la fermeture de l\'app.</string>
+    <string name="t_start_timeout">Délai de démarrage</string>
+    <string name="t_start_timeout_hint">Avec le repli automatique : un lien sans image dans ce délai est remplacé par le suivant. Désactivé attend aussi longtemps que nécessaire.</string>
+    <string name="t_stream_failed_trying_next">Flux indisponible · essai du lien suivant : %1$s</string>
+    <string name="t_start_timeout_trying_next">Pas démarré en %1$s s · essai du lien suivant : %2$s</string>
+</resources>

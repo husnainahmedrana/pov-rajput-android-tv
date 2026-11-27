@@ -8,5 +8,6 @@
     <string name="bk_kept">Die Einstellungen dieses Geräts sind jetzt in deinem Konto.</string>
     <string name="bk_loading">Einstellungen des anderen Geräts werden geladen…</string>
     <string name="bk_loaded">Einstellungen vom anderen Gerät geladen.</string>
+    <string name="bk_synced">Synchronisiert: Einstellungen geladen, die du auf deinem anderen Gerät geändert hast.</string>
     <string name="bk_newer_elsewhere">Ein anderes Gerät hat neuere Einstellungen gespeichert. Lade sie oder behalte zuerst die dieses Geräts.</string>
 </resources>

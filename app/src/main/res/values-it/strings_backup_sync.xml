@@ -8,5 +8,6 @@
     <string name="bk_kept">Le impostazioni di questo dispositivo sono ora nel tuo account.</string>
     <string name="bk_loading">Caricamento delle impostazioni dell\'altro dispositivo…</string>
     <string name="bk_loaded">Impostazioni dell\'altro dispositivo caricate.</string>
+    <string name="bk_synced">Sincronizzato: caricate le impostazioni che hai cambiato sull\'altro dispositivo.</string>
     <string name="bk_newer_elsewhere">Un altro dispositivo ha salvato impostazioni più recenti. Caricale o tieni prima quelle di questo.</string>
 </resources>

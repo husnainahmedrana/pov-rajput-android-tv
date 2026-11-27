@@ -217,6 +217,9 @@ class MainActivity : Activity() {
         if (DeviceLayout.tv) window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         else { window.statusBarColor = 0xFF141414.toInt(); window.navigationBarColor = PHONE_BAR_COLOR }
         store = SecureStore(this)
+        // Same account on several devices: settings another device changed last load now, before anything reads them,
+        // so they are in use from the first screen without a restart.
+        if (savedInstanceState == null && !publicPreview && !sourcePreview) syncAtStart()
         runCatching { PosterServices.reload(store) }; runCatching { loadPosterQuality() }
         // Debrid API calls of the services ticked under MediaFlow Proxy go through the viewer's server.
         MediaFlowProxy.install(store)
@@ -247,6 +250,7 @@ class MainActivity : Activity() {
         if (!publicPreview) refreshWatched()
         shell(); if (sourcePreview) sourceChoiceAudit() else home(); body.post { openLauncherResume(intent); openAddonLink(intent) }; if (!publicPreview) { retrySync(); checkStartupUpdate() }
         window.decorView.viewTreeObserver.addOnGlobalFocusChangeListener(contentFocusChanged)
+        if (!publicPreview) watchSettings(true)
         // A restore reopens the app; say what happened once it is back.
         store.get(ACCOUNT_NOTICE).takeIf { it.isNotBlank() }?.let { notice -> store.remove(ACCOUNT_NOTICE); body.postDelayed({ toast(notice) }, 1_800) }
     }
@@ -274,40 +278,108 @@ class MainActivity : Activity() {
 
     private var backupCheckedAt = 0L
     private var backupAskedFor = 0L
+    /** When the app last came to the front, and whether a key or tap came since (a reload then would interrupt). */
+    private var resumedAt = 0L
+    private var touchedSinceResume = false
+
+    /**
+     * Cold start, signed in with automatic backup on: reads the account's backup (at most [START_SYNC_MS], so an
+     * offline or slow start isn't held up) and, when another device changed its settings last, loads them in place.
+     */
+    private fun syncAtStart() {
+        val account = cloud
+        if (!account.signedIn || !account.autoBackup) return
+        val began = android.os.SystemClock.elapsedRealtime()
+        val task = java.util.concurrent.FutureTask { account.fetch() }
+        Thread(task, "pov-sync-start").start()
+        val remote = try { task.get(START_SYNC_MS, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: Exception) { null }
+        var loaded = false
+        if (remote != null) {
+            backupCheckedAt = android.os.SystemClock.elapsedRealtime()
+            if (runCatching { account.remoteWins(remote) }.getOrDefault(false)) {
+                loaded = runCatching { account.load(remote) }.isSuccess
+                if (loaded) store.put(ACCOUNT_NOTICE, getString(R.string.bk_synced))
+            }
+        }
+        android.util.Log.i("PovSync", "start sync ${android.os.SystemClock.elapsedRealtime() - began} ms, " +
+            (if (remote == null) "no answer" else if (loaded) "loaded newer settings" else "up to date"))
+    }
 
     /**
      * Same account on several devices: when another one saved newer settings, offer to load them here. Checked on
-     * launch and when the app comes back, at most every 5 minutes, never during playback; each newer backup is
+     * launch and when the app comes back, at most every 30 seconds, never during playback; each newer backup is
      * offered once per app session (Back leaves it for the next launch).
      */
     private fun checkNewerBackup() {
         if (publicPreview || !::store.isInitialized) return
         val account = cloud
         val now = android.os.SystemClock.elapsedRealtime()
-        if (!account.signedIn || (backupCheckedAt != 0L && now - backupCheckedAt < 5 * 60_000)) return
+        if (!account.signedIn || (backupCheckedAt != 0L && now - backupCheckedAt < RESUME_CHECK_MS)) return
         backupCheckedAt = now
         worker.execute {
             val remote = try { account.fetch() } catch (_: Exception) { return@execute }
             if (!account.newerElsewhere(remote) || remote.updated == backupAskedFor) return@execute
             val changedHere = runCatching { account.changedHere() }.getOrDefault(false)
+            val auto = account.autoBackup
+            val wins = auto && runCatching { account.remoteWins(remote) }.getOrDefault(false)
             runOnUiThread {
                 if (isDestroyed || isFinishing || !resumed || InAppPlaybackSession.hasActive() || launchingPlayer) { backupCheckedAt = 0L; return@runOnUiThread }
+                if (auto) {
+                    // Automatic sync, the last change wins. This device changed something later: its own backup
+                    // replaces the other one when it goes to the background.
+                    if (!wins) return@runOnUiThread
+                    // Just back in the app, nothing pressed yet: load now. Otherwise the next return (or start) loads them.
+                    if (!touchedSinceResume && android.os.SystemClock.elapsedRealtime() - resumedAt < RESUME_SYNC_MS) {
+                        backupAskedFor = remote.updated; accountDialogs.loadNewer(remote)
+                    } else backupCheckedAt = 0L
+                    return@runOnUiThread
+                }
                 backupAskedFor = remote.updated
                 accountDialogs.newerBackup(remote, changedHere)
             }
         }
     }
 
-    /** Automatic backup when the app goes to the background; nothing is sent when nothing changed. */
+    /** Backups run one at a time, so two never race over which device's settings are newer. */
+    private val backupRunner = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val backupSoon = Runnable { backupInBackground() }
+
+    /**
+     * A setting changed (in any screen): it is backed up a few seconds later, while the app is still open, so the
+     * other devices get it straight away instead of only after this one goes to the background. Quick changes in a
+     * row are sent together; live watch progress isn't watched here (it goes when the app goes to the background).
+     */
+    private val settingsChanged = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key != null && BackupSnapshot.excluded(key)) return@OnSharedPreferenceChangeListener
+        mainHandler.removeCallbacks(backupSoon); mainHandler.postDelayed(backupSoon, LIVE_BACKUP_MS)
+    }
+    private val watchedSettingFiles = BackupSnapshot.SETTINGS_FILES.filter { it != "playback" } + "pov_accounts_encrypted"
+
+    private fun watchSettings(on: Boolean) = watchedSettingFiles.forEach { file ->
+        getSharedPreferences(file, MODE_PRIVATE).let {
+            if (on) it.registerOnSharedPreferenceChangeListener(settingsChanged) else it.unregisterOnSharedPreferenceChangeListener(settingsChanged)
+        }
+    }
+
+    /** Automatic backup when the app goes to the background or a setting changed; nothing is sent when nothing changed. */
     private fun backupInBackground() {
         if (publicPreview || !::store.isInitialized) return
         val account = cloud
         if (!account.signedIn || !account.autoBackup) return
-        Thread({ try { account.backup() } catch (_: Exception) { /* Tried again next time the app goes to the background. */ } }, "pov-backup").start()
+        mainHandler.removeCallbacks(backupSoon)
+        backupRunner.execute {
+            try { account.markChangedHere(); account.backup() }
+            catch (newer: CloudAccount.NewerElsewhere) {
+                // The last change wins: changes made here after the other device saved replace its backup.
+                try { if (!account.remoteWins(newer.remote)) account.backup(overwrite = true) } catch (_: Exception) {}
+            } catch (_: Exception) { /* Tried again after the next change, or when the app goes to the background. */ }
+        }
     }
 
     override fun onResume() {
         super.onResume(); resumed = true; launchingPlayer = false
+        resumedAt = android.os.SystemClock.elapsedRealtime(); touchedSinceResume = false
         ExternalPlayer.appVisible = true
         TorBoxUsenetPlayback.refresh(store, DebridServices.connected(store))
         // Episodes and films finished in the player: ✓ at once, then the tracker's history is read again (twice, as
@@ -398,6 +470,7 @@ class MainActivity : Activity() {
         if (!hasFocus) heroTrailer?.stop() else if (::body.isInitialized) refreshHeroTrailer()
     }
     override fun onDestroy() {
+        if (!publicPreview && ::store.isInitialized) watchSettings(false)
         heroTrailer?.stop(); heroTrailer = null
         detailsTrailerChrome.stop()
         window.decorView.viewTreeObserver.takeIf { it.isAlive }?.removeOnGlobalFocusChangeListener(contentFocusChanged)
@@ -530,6 +603,7 @@ class MainActivity : Activity() {
         if (flix) body.post { if (!focusController.first()) wantsContentFocus = true }
     }
     override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        touchedSinceResume = true
         // A tap during the auto-play countdown stops it (the tapped link, if any, still opens).
         if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN && autoplayCountdown != null && cancelAutoplayCountdown()) toast(getString(R.string.t_auto_play_stopped_choose_a_link))
         return super.dispatchTouchEvent(event)
@@ -540,6 +614,7 @@ class MainActivity : Activity() {
     @Volatile private var externalCancelled = false
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        touchedSinceResume = true
         val back = event.keyCode == KeyEvent.KEYCODE_BACK || event.keyCode == KeyEvent.KEYCODE_ESCAPE
         externalOverlay?.takeIf { it.showing }?.let { overlay ->
             if (back && event.action == KeyEvent.ACTION_DOWN) { externalCancelled = true; overlay.dismiss(); externalOverlay = null; swallowBackUp = true }
@@ -3431,6 +3506,14 @@ class MainActivity : Activity() {
         const val PERSON_COLUMN_TITLES = 10
         /** Shown once after a restore restarts the app. Never part of a backup (account.* is excluded). */
         const val ACCOUNT_NOTICE = "account.notice"
+        /** Longest a cold start waits for the account's backup before going on with this device's settings. */
+        const val START_SYNC_MS = 1_500L
+        /** Newer settings found this soon after coming back (and before a key press) load at once. */
+        const val RESUME_SYNC_MS = 4_000L
+        /** A changed setting is backed up this long after the last change (changes in a row go together). */
+        const val LIVE_BACKUP_MS = 3_000L
+        /** Coming back to the app checks the account for newer settings at most this often. */
+        const val RESUME_CHECK_MS = 30_000L
         /** The app's website. Until the site itself exists it forwards to the GitHub page. */
         const val WEBSITE = "https://nabrio.rajput.cc"
         /** Where people reach the developer: forms served by server/backup. */
@@ -8211,6 +8294,16 @@ class MainActivity : Activity() {
                 AlertDialog.Builder(this).setTitle(getString(R.string.t_player_engine))
                     .setSingleChoiceItems(PlayerEngine.CHOICES.map { PlayerEngine.label(this, it) }.toTypedArray(), PlayerEngine.CHOICES.indexOf(PlayerEngine.get(this))) { dialog, index ->
                         PlayerEngine.set(this, PlayerEngine.CHOICES[index]); dialog.dismiss(); refreshSettings()
+                    }.setNegativeButton(getString(R.string.t_cancel), null).show()
+            }
+            settingsToggle(playback, getString(R.string.t_auto_fallback), getString(R.string.t_auto_fallback_hint),
+                PlaybackFallback.enabled(this)) { on -> PlaybackFallback.setEnabled(this, on) }
+            settingsRow(playback, getString(R.string.t_start_timeout), PlaybackFallback.timeoutLabel(this),
+                getString(R.string.t_start_timeout_hint)) {
+                AlertDialog.Builder(this).setTitle(getString(R.string.t_start_timeout))
+                    .setSingleChoiceItems(PlaybackFallback.TIMEOUTS.map { PlaybackFallback.timeoutLabel(this, it) }.toTypedArray(),
+                        PlaybackFallback.TIMEOUTS.indexOf(PlaybackFallback.timeoutSeconds(this))) { dialog, index ->
+                        PlaybackFallback.setTimeoutSeconds(this, PlaybackFallback.TIMEOUTS[index]); dialog.dismiss(); refreshSettings()
                     }.setNegativeButton(getString(R.string.t_cancel), null).show()
             }
             settingsRow(playback, getString(R.string.t_play_videos_with), ExternalPlayer.label(this),

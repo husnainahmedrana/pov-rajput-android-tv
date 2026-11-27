@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="t_auto_fallback">Automatic fallback</string>
+    <string name="t_auto_fallback_hint">When a link fails, or doesn\'t start within the start timeout, the next link in your list plays by itself. Failed links are skipped until the app closes.</string>
+    <string name="t_start_timeout">Start timeout</string>
+    <string name="t_start_timeout_hint">With automatic fallback on: a link that shows no picture within this time is skipped for the next one. Off waits as long as the link needs.</string>
+    <string name="t_stream_failed_trying_next">Stream unavailable · trying the next link: %1$s</string>
+    <string name="t_start_timeout_trying_next">Didn\'t start within %1$s s · trying the next link: %2$s</string>
+</resources>

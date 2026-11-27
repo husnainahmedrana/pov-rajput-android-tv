@@ -188,6 +188,14 @@ internal class AccountDialogs(
         }
     }
 
+    /** Automatic sync: loads [remote] without asking; the app reopens to use it. */
+    fun loadNewer(remote: CloudAccount.Remote) {
+        worker.execute {
+            val failure = try { account.load(remote); null } catch (error: Exception) { uiErrorMessage(error) }
+            handler.post { if (failure == null) restart(activity.getString(R.string.bk_synced)) }
+        }
+    }
+
     fun signOut() {
         if (!alive()) return
         AlertDialog.Builder(activity).setCustomTitle(titleBar(activity.getString(R.string.t_sign_out_of_x, account.email)))

@@ -8,5 +8,6 @@
     <string name="bk_kept">As definições deste dispositivo estão agora na sua conta.</string>
     <string name="bk_loading">A carregar as definições do outro dispositivo…</string>
     <string name="bk_loaded">Definições do outro dispositivo carregadas.</string>
+    <string name="bk_synced">Sincronizado: carregadas as definições que alterou no outro dispositivo.</string>
     <string name="bk_newer_elsewhere">Outro dispositivo guardou definições mais recentes. Carregue-as ou mantenha primeiro as deste.</string>
 </resources>

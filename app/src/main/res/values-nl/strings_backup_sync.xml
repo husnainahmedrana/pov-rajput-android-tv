@@ -8,5 +8,6 @@
     <string name="bk_kept">De instellingen van dit apparaat staan nu in je account.</string>
     <string name="bk_loading">Instellingen van het andere apparaat laden…</string>
     <string name="bk_loaded">Instellingen van je andere apparaat geladen.</string>
+    <string name="bk_synced">Gesynchroniseerd: de instellingen die je op je andere apparaat hebt gewijzigd zijn geladen.</string>
     <string name="bk_newer_elsewhere">Een ander apparaat heeft nieuwere instellingen opgeslagen. Laad ze of houd eerst die van dit apparaat.</string>
 </resources>

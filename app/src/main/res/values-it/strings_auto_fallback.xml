@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="t_auto_fallback">Passaggio automatico</string>
+    <string name="t_auto_fallback_hint">Se un link non funziona o non parte entro il tempo limite, parte da solo il link successivo della lista. I link falliti vengono saltati fino alla chiusura dell\'app.</string>
+    <string name="t_start_timeout">Tempo limite di avvio</string>
+    <string name="t_start_timeout_hint">Con il passaggio automatico attivo: un link che non mostra immagini entro questo tempo viene saltato per il successivo. Disattivato attende quanto serve.</string>
+    <string name="t_stream_failed_trying_next">Stream non disponibile · provo il link successivo: %1$s</string>
+    <string name="t_start_timeout_trying_next">Non partito entro %1$s s · provo il link successivo: %2$s</string>
+</resources>

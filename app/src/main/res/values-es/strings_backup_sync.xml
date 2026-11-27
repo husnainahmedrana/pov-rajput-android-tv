@@ -8,5 +8,6 @@
     <string name="bk_kept">Los ajustes de este dispositivo ya están en tu cuenta.</string>
     <string name="bk_loading">Cargando los ajustes del otro dispositivo…</string>
     <string name="bk_loaded">Se cargaron los ajustes de tu otro dispositivo.</string>
+    <string name="bk_synced">Sincronizado: se cargaron los ajustes que cambiaste en tu otro dispositivo.</string>
     <string name="bk_newer_elsewhere">Otro dispositivo guardó ajustes más recientes. Cárgalos o conserva primero los de este.</string>
 </resources>

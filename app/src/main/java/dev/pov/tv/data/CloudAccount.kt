@@ -161,6 +161,24 @@ class CloudAccount(private val context: Context, private val store: Store) {
     /** This device has changes it hasn't backed up yet. */
     fun changedHere() = collect().fingerprint() != store.get(LAST_HASH)
 
+    /** When this device's changes that aren't backed up yet were first found (device clock), 0 when there are none. */
+    val changedHereAt: Long get() = store.get(DIRTY_AT).toLongOrNull() ?: 0L
+
+    /** Notes the time of this device's not-yet-backed-up changes, once (the first time they are seen). */
+    fun markChangedHere() { if (changedHereAt == 0L && changedHere()) store.put(DIRTY_AT, System.currentTimeMillis().toString()) }
+
+    /**
+     * Automatic sync, the last change wins: [remote] (saved by another device after this one last synced) replaces
+     * this device's setup unless this device changed something later. Changes here seen only now (not stamped yet)
+     * were made in this session, so they are the newer ones.
+     */
+    fun remoteWins(remote: Remote): Boolean {
+        if (!newerElsewhere(remote)) return false
+        if (!changedHere()) return true
+        val at = changedHereAt
+        return at > 0 && remote.updated > at
+    }
+
     /** Loads another device's newer backup over this device's setup; the next backup then starts from it. */
     fun load(remote: Remote) {
         apply(remote.restored)
@@ -217,7 +235,7 @@ class CloudAccount(private val context: Context, private val store: Store) {
     }
 
     /** Signs this device out. Its settings stay; nothing is removed from the account. */
-    fun forget() = listOf(EMAIL, AUTH, DATA_KEY, SETTINGS_KEY, LAST_HASH, LAST_AT).forEach(store::remove)
+    fun forget() = listOf(EMAIL, AUTH, DATA_KEY, SETTINGS_KEY, LAST_HASH, LAST_AT, DIRTY_AT).forEach(store::remove)
 
     // ---------- phone sign-in ----------
 
@@ -278,8 +296,10 @@ class CloudAccount(private val context: Context, private val store: Store) {
     private fun remember(email: String, auth: String, dataKey: ByteArray, settingsKey: ByteArray) = store.putAll(mapOf(
         EMAIL to email, AUTH to auth, DATA_KEY to BackupCrypto.encode(dataKey), SETTINGS_KEY to BackupCrypto.encode(settingsKey)))
 
-    private fun backedUp(fingerprint: String, updated: Long) = store.putAll(mapOf(LAST_HASH to fingerprint,
-        LAST_AT to (if (updated > 0) updated else System.currentTimeMillis()).toString()))
+    private fun backedUp(fingerprint: String, updated: Long) {
+        store.putAll(mapOf(LAST_HASH to fingerprint, LAST_AT to (if (updated > 0) updated else System.currentTimeMillis()).toString()))
+        store.remove(DIRTY_AT)
+    }
 
     private fun sealLayer(key: ByteArray, layer: JSONObject, label: String) =
         BackupCrypto.seal(key, deflate(layer.toString().toByteArray(Charsets.UTF_8)), label)
@@ -333,6 +353,7 @@ class CloudAccount(private val context: Context, private val store: Store) {
         private const val SETTINGS_KEY = "account.settings_key"
         private const val LAST_HASH = "account.last_hash"
         private const val LAST_AT = "account.last_at"
+        private const val DIRTY_AT = "account.dirty_at"
         private const val AUTO = "account.auto"
         private const val WELCOME = "account.welcome"
         private const val SERVER = "account.server"

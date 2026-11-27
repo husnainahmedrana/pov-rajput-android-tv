@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="t_auto_fallback">Automatisch terugvallen</string>
+    <string name="t_auto_fallback_hint">Als een link mislukt of niet binnen de starttijd start, speelt de volgende link in je lijst vanzelf. Mislukte links worden overgeslagen tot de app sluit.</string>
+    <string name="t_start_timeout">Starttijdlimiet</string>
+    <string name="t_start_timeout_hint">Met automatisch terugvallen aan: een link die binnen deze tijd geen beeld toont, wordt overgeslagen voor de volgende. Uit wacht zo lang als nodig.</string>
+    <string name="t_stream_failed_trying_next">Stream niet beschikbaar · volgende link proberen: %1$s</string>
+    <string name="t_start_timeout_trying_next">Niet gestart binnen %1$s s · volgende link proberen: %2$s</string>
+</resources>

@@ -8,5 +8,6 @@
     <string name="bk_kept">Les réglages de cet appareil sont maintenant dans votre compte.</string>
     <string name="bk_loading">Chargement des réglages de l\'autre appareil…</string>
     <string name="bk_loaded">Réglages de votre autre appareil chargés.</string>
+    <string name="bk_synced">Synchronisé : les réglages modifiés sur votre autre appareil ont été chargés.</string>
     <string name="bk_newer_elsewhere">Un autre appareil a enregistré des réglages plus récents. Chargez-les ou gardez d\'abord ceux de cet appareil.</string>
 </resources>

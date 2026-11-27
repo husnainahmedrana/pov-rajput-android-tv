@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="t_auto_fallback">Alternativa automática</string>
+    <string name="t_auto_fallback_hint">Se um link falhar ou não começar dentro do tempo limite, o próximo link da lista é reproduzido sozinho. Os links com falha são ignorados até fechar a app.</string>
+    <string name="t_start_timeout">Tempo limite de início</string>
+    <string name="t_start_timeout_hint">Com a alternativa automática ligada: um link sem imagem dentro deste tempo é trocado pelo seguinte. Desligado espera o que for preciso.</string>
+    <string name="t_stream_failed_trying_next">Stream indisponível · a tentar o próximo link: %1$s</string>
+    <string name="t_start_timeout_trying_next">Não começou em %1$s s · a tentar o próximo link: %2$s</string>
+</resources>
