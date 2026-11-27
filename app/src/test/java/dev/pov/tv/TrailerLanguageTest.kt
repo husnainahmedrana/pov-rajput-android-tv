@@ -72,6 +72,37 @@ class TrailerLanguageTest {
         assertEquals("https://rr1.googlevideo.com/140", dev.pov.tv.data.NativeTrailerSource.parse(response)?.audio?.url)
     }
 
+    @Test fun `a one-word title takes only trailers that name it, not similar names YouTube ranks first`() {
+        val results = listOf(
+            TrailerLanguage.Result("digger00000", "DIGGER | Tráiler Oficial", 150, "Warner Bros. Pictures España"),
+            TrailerLanguage.Result("digger11111", "DIGGER Tráiler Oficial Español (2026) Tom Cruise", 150, "Trailers In Spanish"),
+            TrailerLanguage.Result("dig00000000", "DIG | Tráiler oficial en español", 120, "Someone"),
+        )
+        assertEquals(listOf("dig00000000"), TrailerLanguage.pick(results, choice("es-ES"), "DIG"))
+        // Two words or more: YouTube's first places are trusted (a Spanish title can differ completely).
+        val odyssey = listOf(TrailerLanguage.Result("spain000000", "LA ODISEA - Tráiler Oficial (Universal Pictures) HD", 145, "Universal Spain"))
+        assertEquals(listOf("spain000000"), TrailerLanguage.pick(odyssey, choice("es-ES"), "The Odyssey"))
+    }
+
+    @Test fun `a title of a similar name is another title, even among YouTube's first places`() {
+        val results = listOf(
+            TrailerLanguage.Result("english0000", "Hansel & Gretel's Halloween Exclusive Trailer (2026)", 118, "Fandango"),
+            TrailerLanguage.Result("subtitled00", "Hansel & Gretel's Halloween (2026) HD Trailer Teaser Subtitulado Español", 31, "Medianoche Macabra"),
+            TrailerLanguage.Result("sleeping000", "Hansel y Gretel: Misión Bella Durmiente - Trailer español", 84, "Trailers y Estrenos"),
+            TrailerLanguage.Result("witchhunter", "HANSEL Y GRETEL: CAZADORES DE BRUJAS - Primer Trailer", 131, "Paramount Pictures Spain"),
+            TrailerLanguage.Result("named000000", "HANSEL AND GRETEL'S HALLOWEEN Tráiler Español (2026)", 127, "Someone"),
+        )
+        assertEquals(listOf("named000000"), TrailerLanguage.pick(results, choice("es-ES"), "Hansel & Gretel's Halloween"))
+    }
+
+    @Test fun `a one-word title must open the video's title`() {
+        val results = listOf(
+            TrailerLanguage.Result("chirp000000", "CHIRP, EL INVESTIGATOR DE HONEY HILLS Tráiler Español (2026)", 150, "ONE Media Español"),
+            TrailerLanguage.Result("honey000000", "HONEY | Tráiler oficial en español", 120, "Someone"),
+        )
+        assertEquals(listOf("honey000000"), TrailerLanguage.pick(results, choice("es-ES"), "Honey"))
+    }
+
     @Test fun `a results page is read from its initial data, not from every video id on it`() {
         val html = """<script>var ytInitialData = {"contents":{"a":[
             {"adSlotRenderer":{"videoId":"adadadadada"}},

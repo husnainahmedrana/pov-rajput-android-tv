@@ -150,10 +150,18 @@ internal object TrailerLanguage {
         // About this title: it names it (as the catalog does, usually in English), or YouTube ranks it among the first
         // few for the search (where the local title, as "Cómo conocí a vuestra madre", ranks it). A studio channel of
         // the right country further down is usually another title's trailer.
-        val named = words(name)
+        // By the title's own words: a video with all of them is this title; with some of them, another one of a
+        // similar name ("Hansel y Gretel: Misión Bella Durmiente" for "Hansel & Gretel's Halloween"); with none, maybe
+        // a fully translated title, taken only among YouTube's first places and never for a one-word title ("Dig",
+        // "Honey": YouTube fills its first places with similar names).
+        val key = significant(name)
         val usable = results.filterIndexed { rank, result ->
             val channel = " " + plain(result.channel) + " "
-            (named.isBlank() || rank < RELEVANT_RANK || " $named " in " ${words(result.title)} ") &&
+            val shared = key.count { it in significant(result.title) }
+            // A one-word title must open the video's title ("Honey | Tráiler"): a common word turns up inside
+            // other titles ("Chirp, el investigador de Honey Hills").
+            val named = if (key.size == 1) " ${words(result.title)} ".startsWith(" ${words(name)} ") else shared == key.size
+            (key.isEmpty() || named || (shared == 0 && words(name).split(' ').size >= 2 && rank < RELEVANT_RANK)) &&
                 result.seconds in 30..300 && fits(result.title, choice) && choice.otherChannels.none { plain(it) in channel }
         }
         val official = usable.filter { result -> choice.channels.any { plain(it) in " " + plain(result.channel) + " " } }
@@ -163,6 +171,13 @@ internal object TrailerLanguage {
 
     /** Search results up to this place are taken to be about the title even when they name it differently. */
     private const val RELEVANT_RANK = 5
+
+    /** Words too common to tell titles apart, in the catalog's English and the trailers' languages. */
+    private val COMMON = setOf("the", "a", "an", "and", "of", "to", "in", "on", "for", "with", "s", "y", "e", "el", "la", "los", "las",
+        "de", "del", "en", "un", "una", "le", "les", "des", "du", "et", "der", "die", "das", "und", "il", "lo", "gli", "di", "o", "os", "as", "do", "da")
+
+    /** A title's telling words: letters and digits, without the common ones. */
+    private fun significant(text: String): Set<String> = words(text).split(' ').filter { it.isNotEmpty() && it !in COMMON }.toSet()
 
     /** Letters and digits only, single-spaced ("Spider-Man: Brand New Day" → "spider man brand new day"). */
     private fun words(text: String): String = plain(text).replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
