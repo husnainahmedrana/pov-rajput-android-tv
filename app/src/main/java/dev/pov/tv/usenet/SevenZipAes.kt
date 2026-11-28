@@ -109,12 +109,18 @@ internal object SevenZipAes {
                 hash.digest()
             }
         } finally { bytes.fill(0) }
-        // Fetch the video's end now (with the 16-byte block before it, the decryption's starting point): see VIDEO_TAIL_BYTES.
-        val tail = minOf(entry.size, VIDEO_TAIL_BYTES)
-        source.prefetch(layout.start + layout.skip + entry.size - tail - 16, tail + 32)
+        // The video's seek index and opening are asked for by UsenetMedia.warmIndex through [prefetch] below, once the
+        // caller has checked the first bytes.
         return object : ByteSource {
             override val size = entry.size
             private var closed = false
+            /** The encrypted bytes behind [position], with the 16-byte block before them (the decryption's starting point). */
+            override fun prefetch(position: Long, length: Long, urgent: Boolean) {
+                if (position < 0 || length <= 0 || position >= size) return
+                val from = maxOf(0L, (layout.skip + position) / 16 * 16 - 16)
+                val to = minOf(layout.packed, layout.skip + minOf(size, position + length) + 16)
+                if (to > from) source.prefetch(layout.start + from, to - from, urgent)
+            }
             private fun exact(position: Long, out: ByteArray) {
                 var done = 0
                 while (done < out.size) {

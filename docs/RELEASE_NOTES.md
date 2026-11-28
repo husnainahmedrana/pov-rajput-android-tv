@@ -1,17 +1,29 @@
-# Nabrio 0.4.20
+# Nabrio 0.4.21
 
-**New on phones: trailers on title pages, full screen when you turn your phone, and a new floating tab bar.**
+**Faster Usenet starts and seeks, a "You're watching" screen when you pause, and real rating logos.**
 
 ## New
 
-- **Trailers on phones.** Open a title and its trailer plays in the picture at the top of the page, with sound, on Wi-Fi or mobile data. Settings → Home & appearance → **Trailers** is now on phones too, with Trailer language, sound and quality.
-  - **Full screen:** tap the full-screen button on the trailer, or simply turn your phone sideways. Turn it upright again, press Back, or tap the **←** button on screen to return to the page.
-- **New tab bar on phones.** A floating, rounded bar with five tabs: **Home**, **Search**, **Browse**, **Library** and **More**. The tab you're on shows as a coloured pill with its name.
-  - **Browse** holds Movies, Shows and Anime, with a **Movies | Shows | Anime** switch at the top. It reopens the one you used last.
-  - **More** opens your tracker and Settings.
-  - While a video plays, the mini player sits just above the bar.
-- **Swipe the Home banner** on phones to move to the next or previous title.
+- **"You're watching" when you pause.** About a second after you pause, the picture dims and Nabrio shows what's playing: the title's logo, the episode title (or a film's year and length), its synopsis, the cast with their photos, and the time. **OK** or **Play** resumes; any other key brings back the player controls. It shows once per pause.
+- **Rating logos.** With an MDBList key (Settings → Home → MDBList), the ratings on title pages and on Home now show the IMDb, TMDB, Trakt, Letterboxd and Rotten Tomatoes logos instead of text labels.
+  - Rotten Tomatoes shows **Certified Fresh**, **Fresh** or **Rotten**, and the audience score shows **Verified Hot**, **Hot** or **Stale**, following Rotten Tomatoes' own rules.
+  - Scores out of 100 now show a **%**.
 
-## Changed
+## Faster
 
-- The last row of a page now scrolls clear of the phone's tab bar.
+- **Usenet videos start sooner.** On a 22 GB film over a 13 Mbit/s line, the start went from about 22 seconds to about 13.
+  - The beginning of the video downloads at the same time as its seek index, instead of after it.
+  - Playback starts with 3 seconds of video ready instead of 5.5. After a stall Nabrio still waits for more, so playback doesn't stutter.
+  - Releases split into many RAR parts open without waiting for the last part.
+  - 7z releases get the same head start as other videos.
+- **Seeking is faster.** After you jump, playback resumes with 2 seconds of video ready, the first piece at the new spot is asked for on two connections at once, and connections that are nearly done aren't dropped.
+- **Continue watching starts faster.** Resuming partway through no longer downloads the beginning of the film first.
+- Built-in seek previews now start downloading only once the picture is showing, so they don't slow the start.
+
+## Fixed
+
+- **Rows scrolled sideways no longer cut off the first poster.** After scrolling a row to the right and back, the first poster sat half hidden on the left. It now lines up with the rows above again. Thanks to the Discord report.
+
+## Tip
+
+- **News providers:** if starts or seeks feel slow, run **Auto tune** for your provider. On most lines, pipeline 1 with a moderate number of connections is faster than more connections or a deeper pipeline.

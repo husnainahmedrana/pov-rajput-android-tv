@@ -11,8 +11,12 @@ interface ByteSource : Closeable {
     val size: Long
     /** Copies up to [length] bytes from [position]; -1 at the end. Blocks while the data downloads. */
     fun read(position: Long, target: ByteArray, offset: Int, length: Int): Int
-    /** Starts downloading [length] bytes at [position] without waiting: the player is known to want them soon. */
-    fun prefetch(position: Long, length: Long) {}
+    /**
+     * Starts downloading [length] bytes at [position] without waiting: the player is known to want them soon. They are
+     * kept until read. [urgent] puts them ahead of everything queued (what the player is about to block on); otherwise
+     * they wait their turn behind it (the video's opening, fetched while the seek index loads).
+     */
+    fun prefetch(position: Long, length: Long, urgent: Boolean = true) {}
 }
 
 /**
@@ -69,6 +73,7 @@ class UsenetStream(
             size = first.fileSize
         }
         log("stream ready: $size bytes in ${segments.size} articles of $partSize, read-ahead $window articles")
+        askPending()
     }
 
     /**
@@ -81,6 +86,7 @@ class UsenetStream(
             partSize = sibling.partSize; window = windowFor(partSize); assumed = true
             size = sibling.size
         }
+        askPending()
     }
 
     private fun windowFor(part: Long) = minOf((pool.requestCapacity + 2).toLong(), windowBytes / part).toInt().coerceAtLeast(4)
@@ -95,18 +101,39 @@ class UsenetStream(
         synchronized(lock) { if (!closed) for (index in maxOf(0, last - count + 1)..last) if (index !in slots) slots[index] = pool.fetch(segments[index].messageId) }
     }
 
-    override fun prefetch(position: Long, length: Long) {
+    override fun prefetch(position: Long, length: Long, urgent: Boolean) {
         synchronized(lock) {
-            if (closed || !prepared || partSize <= 0 || length <= 0) return
+            if (closed || length <= 0) return
+            // Not prepared yet (the last RAR volume, whose first article is still coming): asked for once it is.
+            if (!prepared || partSize <= 0) { pending += Triple(position, length, urgent); return }
             val from = (position / partSize).toInt().coerceIn(0, last)
             val to = ((position + length - 1) / partSize + 1).toInt().coerceIn(0, last)
-            // Ahead of read-ahead in the queue: these few articles are what the player is about to block on.
+            // Urgent: ahead of read-ahead in the queue, these few articles are what the player is about to block on.
             for (index in from..to) {
-                if (index !in slots) slots[index] = pool.fetch(segments[index].messageId, urgent = true)
+                if (index !in slots) slots[index] = pool.fetch(segments[index].messageId, urgent = urgent)
                 pinned += index
             }
             while (pinned.size > MAX_PINNED) pinned.remove(pinned.first())
         }
+    }
+
+    /** Prefetches asked for before the stream was prepared. */
+    private val pending = ArrayList<Triple<Long, Long, Boolean>>()
+
+    private fun askPending() {
+        val waiting = synchronized(lock) { pending.toList().also { pending.clear() } }
+        for ((position, length, urgent) in waiting) prefetch(position, length, urgent)
+    }
+
+    /**
+     * [prepare] on a thread of its own, for a volume needed only later (the last RAR volume, where an MKV keeps its seek
+     * index): opening doesn't wait for its first article, and prefetches asked for meanwhile go out when it comes. A
+     * failure here is left for the reader, whose own [prepare] then reports it.
+     */
+    fun prepareInBackground() {
+        if (prepared) return
+        begin()
+        Thread({ try { prepare() } catch (_: Exception) {} }, "usenet-volume-prepare").apply { isDaemon = true; start() }
     }
 
     /** Starts the first articles downloading without waiting for them: the reader is about to arrive here. */
@@ -128,7 +155,11 @@ class UsenetStream(
         if (length == 0) return 0
         var index = (position / partSize).toInt().coerceIn(0, last)
         repeat(24) {
-            val segment = await(index)
+            // An article nobody asked for yet (a seek's target) is asked on two connections at once, as the first one
+            // is: the player waits on it, and one slow connection made a jump take 4 s (2026-11-28). Read-ahead hits
+            // and seek-preview peeks keep the usual delay before a backup copy.
+            val cold = !PeekReads.active && synchronized(lock) { slots[index]?.cancelled ?: true }
+            val segment = await(index, hedgeMs = if (cold) 0 else HEDGE_MS)
             if (assumed && segment.fileSize != size) throw IOException(L10n.tr(R.string.t_this_part_of_the_set_is, "This part of the set is not the size the others are."))
             val end = segment.begin + segment.size
             when {
@@ -221,10 +252,12 @@ class UsenetStream(
     }
 
     override fun close() {
-        synchronized(lock) { closed = true; slots.values.forEach { it.cancel() }; slots.clear(); pinned.clear() }
+        synchronized(lock) { closed = true; slots.values.forEach { it.cancel() }; slots.clear(); pinned.clear(); pending.clear() }
     }
 
-    private companion object { const val AWAIT_MS = 60_000L; const val STALL_MS = 12_000L; const val HEDGE_MS = 3_500L; const val MAX_PINNED = 16; const val START_WINDOW = 2 }
+    // MAX_PINNED: the seek index's few articles plus the video's opening (UsenetMedia.START_BYTES: 8 MB, 22 articles
+    // of the common 384,000-byte part size).
+    private companion object { const val AWAIT_MS = 60_000L; const val STALL_MS = 12_000L; const val HEDGE_MS = 3_500L; const val MAX_PINNED = 40; const val START_WINDOW = 2 }
 }
 
 /**

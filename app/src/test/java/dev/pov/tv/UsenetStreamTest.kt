@@ -300,6 +300,29 @@ BODY evil</segment>
         assertReadsLike(file, opened.source, 5)
     }
 
+    @Test fun `the video's opening is fetched beside its seek index and survives the player's jump there`() {
+        val cuesAt = 11_000_000L
+        val head = MkvIndexTest.head(cuesAt - MkvIndexTest.segmentStart())
+        val file = head + Random(19).nextBytes(12_000_000 - head.size)
+        val server = server()
+        val nzb = Nzb(listOf(server.post(file, even(file.size, 384_000), "Film.2020.1080p.mkv")), null)
+        val opened = UsenetMedia.open(pool(server, 3), nzb)
+        // Article 20 holds byte ~7.3 MB: inside the opening that is asked for at open, before the player reads past the head.
+        val deadline = System.currentTimeMillis() + 10_000
+        while (!server.servedIds().contains("f1-p20@test") && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        assertTrue("the opening was fetched before the player asked", server.servedIds().contains("f1-p20@test"))
+        // Articles served more than once (the first article is asked twice at open, on purpose).
+        fun repeats() = server.served.get() - server.servedIds().size
+        val repeatsBefore = repeats()
+        // The player peeks at the head, jumps to the Cues, then plays from the start: the opening isn't fetched again.
+        readAll(opened.source, 0, 4_000)
+        assertArrayEquals(file.copyOfRange(cuesAt.toInt(), cuesAt.toInt() + 50_000), readAll(opened.source, cuesAt, 50_000))
+        assertArrayEquals(file.copyOfRange(0, 7_000_000), readAll(opened.source, 0, 7_000_000))
+        val again = repeats() - repeatsBefore
+        assertTrue("the opening wasn't let go when the player jumped to the Cues ($again articles fetched again)", again <= 3)
+        assertReadsLike(file, opened.source, 5)
+    }
+
     @Test fun `an MKV in RAR volumes has its seek index in the last volume fetched at open`() {
         val cuesAt = 1_150_000L
         val head = MkvIndexTest.head(cuesAt - MkvIndexTest.segmentStart())

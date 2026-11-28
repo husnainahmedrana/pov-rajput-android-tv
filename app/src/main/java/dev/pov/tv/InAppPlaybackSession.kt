@@ -195,6 +195,11 @@ object InAppPlaybackSession {
     private var inBackground = false
     private var foregroundAt = 0L
     private var networkRetryPending = false
+    /** The last seek's time and target, for the "seek … playing after" line in the Usenet log. */
+    private var seekStartedAt = 0L
+    private var seekTargetMs = 0L
+    /** The Usenet player's load control, told of seeks so resuming there needs less buffered (null: not Usenet). */
+    private var loadGuard: RebufferGuard? = null
     private var quietRetries = 0
     /** Quiet retries after a source error in the foreground; reset once the video is playing again. */
     private var sourceRetries = 0
@@ -398,7 +403,7 @@ object InAppPlaybackSession {
             // A bigger cushion after each stall (Kodi-like) for links that only just keep up with the film's bitrate.
             .setLoadControl(RebufferGuard(ReadAheadPreferences(application!!).loadControl(usenet = dev.pov.tv.data.UsenetLinks.isNzb(playing)),
                 quickStartMs = RebufferGuard.USENET_QUICK_START_MS.takeIf { dev.pov.tv.data.UsenetLinks.isNzb(playing) },
-                quickStartIf = ::heavyVideo))
+                quickStartIf = ::heavyVideo).also { guard -> loadGuard = guard.takeIf { dev.pov.tv.data.UsenetLinks.isNzb(playing) } })
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
             .setHandleAudioBecomingNoisy(true)
             .setSeekBackIncrementMs(10_000).setSeekForwardIncrementMs(10_000).build()
@@ -456,10 +461,24 @@ object InAppPlaybackSession {
                     saveLocal(); sync("pause")
                 }
             }
+            override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+                if (!isCurrent(exo) || reason != Player.DISCONTINUITY_REASON_SEEK) return
+                seekStartedAt = android.os.SystemClock.elapsedRealtime(); seekTargetMs = newPosition.positionMs
+                // Only a seek once the video has played: the jump to the resume point at a start keeps the start's buffer.
+                if (lastLinkSaved) loadGuard?.seeked()
+            }
             override fun onPlaybackStateChanged(state: Int) {
                 if (!isCurrent(exo)) return
                 if (state != Player.STATE_ENDED && enforceVideoCompatibility(exo)) return
                 if (state == Player.STATE_READY) { cachedReplay = false; quietRetries = 0; sourceRetries = 0; lookUpSkips(exo) }
+                // How long a Usenet seek took to play again (its first bytes are logged by the data source), to compare
+                // seeks between builds and apps. A seek inside what is already buffered never leaves READY: not logged.
+                if (state == Player.STATE_READY && seekStartedAt > 0) {
+                    val took = android.os.SystemClock.elapsedRealtime() - seekStartedAt
+                    seekStartedAt = 0L
+                    if (took < 120_000 && dev.pov.tv.data.UsenetLinks.isNzb(sourceUrl))
+                        UsenetLog.i("seek to ${seekTargetMs / 60_000}:${"%02d".format(java.util.Locale.ROOT, seekTargetMs / 1000 % 60)}: playing after ${"%.1f".format(java.util.Locale.ROOT, took / 1000.0)} s")
+                }
                 if (state == Player.STATE_READY && !lastLinkSaved) {
                     lastLinkSaved = true
                     val media = identity; val account = playbackAccount
@@ -557,6 +576,8 @@ object InAppPlaybackSession {
                 notifyChanged()
             }
         })
+        // A resume (Continue watching, a link switched mid-film) doesn't want the Usenet video's opening fetched early.
+        dev.pov.tv.usenet.UsenetMedia.fetchOpening = position <= 0L && remotePercent <= 0.0
         exo.setMediaItem(MediaItem.Builder().setUri(mpvServer?.address ?: routed.url)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build()).build())
         exo.seekTo(position)

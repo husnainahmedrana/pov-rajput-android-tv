@@ -39,11 +39,21 @@ internal class RebufferGuard(
     private val stalls = ArrayDeque<Long>()
     private var wasRebuffering = false
     private var waitingSince = 0L
+    /** The viewer just seeked: play again with [SEEK_START_US] buffered, set by [seeked] until playback resumes. */
+    @Volatile private var afterSeek = false
+
+    /**
+     * Called on a seek. Resuming there waits for less than a start (2 s instead of 3): the viewer is watching the
+     * screen for it, and after the keyframe gap a 4K file took 9–12 s to buffer 3 s on a 13 Mbit/s line (2026-11-28).
+     * A stall afterwards still rebuilds the full cushion.
+     */
+    fun seeked() { afterSeek = true; waitingSince = 0L }
 
     override fun shouldStartPlayback(parameters: LoadControl.Parameters): Boolean {
         if (!parameters.rebuffering) {
             wasRebuffering = false
-            if (delegate.shouldStartPlayback(parameters)) { waitingSince = 0L; return true }
+            if (delegate.shouldStartPlayback(parameters)) { waitingSince = 0L; afterSeek = false; return true }
+            if (afterSeek && parameters.bufferedDurationUs >= SEEK_START_US) { waitingSince = 0L; afterSeek = false; return true }
             val quick = quickStartMs ?: return false
             val now = SystemClock.elapsedRealtime()
             if (waitingSince == 0L) waitingSince = now
@@ -87,6 +97,8 @@ internal class RebufferGuard(
         private const val FULL_BUFFER_FLOOR_US = 2_000_000L
         /** Buffered video that a quick start still needs (the player's usual start amount). */
         private const val QUICK_MIN_US = 2_500_000L
+        /** Buffered video that resuming after a seek needs ([seeked]). */
+        private const val SEEK_START_US = 2_000_000L
         /** Usenet: waiting this long for the full start buffer is enough (see quickStartMs). */
         const val USENET_QUICK_START_MS = 3_500L
 

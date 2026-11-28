@@ -57,6 +57,10 @@ internal class NntpConnection(
     private var position = 0
     private var limit = 0
     private val pending = java.io.ByteArrayOutputStream(256)
+    /** Bytes read since the last status line: how far into the article now arriving (read by a seek on another thread). */
+    @Volatile internal var bodyRead = 0L; private set
+    /** How long the last whole article was on the wire, to tell how far [bodyRead] is through the next (0: none yet). */
+    @Volatile internal var lastBody = 0L; private set
     private val crc = CRC32()
 
     fun connect() {
@@ -88,6 +92,7 @@ internal class NntpConnection(
         if (stop > position && buffer[stop - 1] == CR) stop--
         val line = String(buffer, position, stop - position, Charsets.ISO_8859_1)
         position = end + 1
+        bodyRead = (limit - position).toLong()
         val code = line.take(3).toIntOrNull() ?: throw IOException(L10n.tr(R.string.t_the_news_server_sent_an_unreadable, "The news server sent an unreadable answer."))
         return code to line.drop(3).trim()
     }
@@ -148,6 +153,7 @@ internal class NntpConnection(
                 data[filled++] = (value - 42).toByte()
             }
         }
+        lastBody = bodyRead
         broken?.let { throw BadArticleException(it) }
         if (data === EMPTY) throw BadArticleException(L10n.tr(R.string.t_the_article_holds_no_yenc_data, "The article holds no yEnc data."))
         crc.reset(); crc.update(data, 0, filled)
@@ -172,7 +178,7 @@ internal class NntpConnection(
             if (stop > position && buffer[stop - 1] == CR) stop--
             val done = stop - position == 1 && buffer[position] == DOT
             position = end + 1
-            if (done) return
+            if (done) { lastBody = bodyRead; return }
         }
     }
 
@@ -189,6 +195,7 @@ internal class NntpConnection(
             val count = input.read(buffer, limit, buffer.size - limit)
             if (count < 0) throw IOException(L10n.tr(R.string.t_the_news_server_closed_the_connection, "The news server closed the connection."))
             limit += count
+            bodyRead += count
             received(count)
         }
     }

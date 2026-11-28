@@ -10177,27 +10177,34 @@ class MainActivity : Activity() {
             background = rounded(fill, 3); setPadding(dp(5), dp(2), dp(5), dp(2)); includeFontPadding = false
         }
         fun score(text: String) = row.addView(text(text, 12, Color.WHITE, true).apply { includeFontPadding = false }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(5) })
+        // The services' own logos, sized so none looks bigger or smaller than the others (user's pick on the TV 2026-11-28):
+        // the IMDb box and TMDB's stacked logo 18 dp, the rest the ratings line's full 20 dp, wide ones no more than 26 dp
+        // across (IMDb up to 40). Centred on the line.
+        fun logo(drawable: Int, heightDp: Int = 20, maxWidthDp: Int = 26) = row.addView(ImageView(this).apply {
+            setImageResource(drawable); adjustViewBounds = true; maxWidth = dp(maxWidthDp); scaleType = ImageView.ScaleType.FIT_CENTER
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(-2, dp(heightDp)).apply { gravity = Gravity.CENTER_VERTICAL })
         val name: String
         when (rating.source) {
-            "imdb" -> { name = "IMDb"; row.addView(label("IMDb", 0xFFF5C518.toInt(), Color.BLACK)); score(one) }
-            "tmdb" -> { name = "TMDB"; row.addView(label("TMDB", 0xFF01B4E4.toInt(), 0xFF0D253F.toInt())); score(percent) }
-            "trakt" -> { name = "Trakt"; row.addView(label("trakt", 0xFFED1C24.toInt(), Color.WHITE)); score(percent) }
-            "letterboxd" -> {
-                name = "Letterboxd"
-                row.addView(object : View(this) {
-                    private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
-                    override fun onDraw(canvas: android.graphics.Canvas) {
-                        val radius = height / 2f
-                        listOf(0xFFFF8000.toInt(), 0xFF00E054.toInt(), 0xFF40BCF4.toInt()).forEachIndexed { index, color ->
-                            paint.color = color; canvas.drawCircle(radius + index * radius * 1.55f, radius, radius, paint)
-                        }
-                    }
-                }, LinearLayout.LayoutParams(dp(19), dp(8)))
-                score(one)
+            "imdb" -> { name = "IMDb"; logo(R.drawable.pov_rating_imdb, 18, maxWidthDp = 40); score(one) }
+            "tmdb" -> { name = "TMDB"; logo(R.drawable.pov_rating_tmdb, 18); score(percent) }
+            "trakt" -> { name = "Trakt"; logo(R.drawable.pov_rating_trakt); score(percent) }
+            "letterboxd" -> { name = "Letterboxd"; logo(R.drawable.pov_rating_letterboxd); score(one) }
+            // Rotten Tomatoes' own rules: Fresh from 60%, Certified Fresh when it says so (and at least 70%), else Rotten.
+            "tomatoes" -> {
+                name = if (rating.certified && value >= 70) "Rotten Tomatoes, Certified Fresh" else "Rotten Tomatoes"
+                logo(when { rating.certified && value >= 70 -> R.drawable.pov_rating_rt_certified; value >= 60 -> R.drawable.pov_rating_rt_fresh
+                    else -> R.drawable.pov_rating_rt_rotten })
+                score(percent)
             }
-            "tomatoes" -> { name = "Rotten Tomatoes"; row.addView(text("🍅", 12, Color.WHITE).apply { includeFontPadding = false }); score(percent) }
             "kitsu" -> { name = "Kitsu"; row.addView(label("Kitsu", 0xFFF75239.toInt(), Color.WHITE)); score(percent) }
-            "popcorn" -> { name = "Rotten Tomatoes audience"; row.addView(text("🍿", 12, Color.WHITE).apply { includeFontPadding = false }); score(percent) }
+            // Audience: Hot from 60%, Verified Hot when Rotten Tomatoes says so (and at least 80%), else the spilled bucket.
+            "popcorn" -> {
+                name = "Rotten Tomatoes audience"
+                logo(when { rating.certified && value >= 80 -> R.drawable.pov_rating_popcorn_hot; value >= 60 -> R.drawable.pov_rating_popcorn
+                    else -> R.drawable.pov_rating_popcorn_stale })
+                score(percent)
+            }
             else -> {
                 name = "Metacritic"
                 val color = when { value >= 61 -> 0xFF66CC33.toInt(); value >= 40 -> 0xFFFFCC33.toInt(); else -> 0xFFFF3333.toInt() }

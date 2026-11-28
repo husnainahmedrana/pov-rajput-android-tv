@@ -43,7 +43,8 @@ internal object SevenZipMedia {
                     if (!UsenetMedia.looksLikeVideo(head.copyOf(count)))
                         throw IOException(L10n.tr(R.string.t_the_supplied_7z_password_could_not, "The supplied 7z password could not unlock a recognizable video."))
                     log("7z: first bytes checked at ${ms()} ms")
-                    return UsenetMedia.Opened(direct, entry.name, "7z · encrypted · direct")
+                    // The seek index (exactly, for an MKV) and the opening, ahead of the player, as for a plain file.
+                    return UsenetMedia.warmIndex(UsenetMedia.Opened(direct, entry.name, "7z · encrypted · direct"), log)
                 } catch (error: Exception) { direct.close(); throw error }
             }
             val readsBefore = channel.readCalls
@@ -56,9 +57,9 @@ internal object SevenZipMedia {
                 val start = channel.position()
                 if (start < 0 || entry.size > source.size - start) throw IOException(L10n.tr(R.string.t_the_stored_7z_video_exceeds_the, "The stored 7z video exceeds the archive size."))
                 log("7z: stored video ready at ${ms()} ms")
-                // The video is usually not the archive's last entry, so the set's own tail isn't its end: fetch that now.
-                source.prefetch(start + entry.size - minOf(entry.size, VIDEO_TAIL_BYTES), minOf(entry.size, VIDEO_TAIL_BYTES))
-                return UsenetMedia.Opened(Stored(source, archive, start, entry.size), entry.name, "7z · direct")
+                // The video is usually not the archive's last entry, so the set's own tail isn't its end: its seek index
+                // and its opening are fetched now, through Stored.prefetch.
+                return UsenetMedia.warmIndex(UsenetMedia.Opened(Stored(source, archive, start, entry.size), entry.name, "7z · direct"), log)
             }
             if (cache == null) throw IOException(L10n.tr(R.string.t_compressed_7z_playback_needs_a_temporary, "Compressed 7z playback needs a temporary cache directory."))
             val directory = File(cache, "usenet-decoded")
@@ -90,6 +91,10 @@ internal object SevenZipMedia {
             val got = source.read(start + position, target, offset, minOf(length.toLong(), size - position).toInt())
             if (got < 0) throw IOException(L10n.tr(R.string.t_the_stored_7z_video_ended_early, "The stored 7z video ended early."))
             return got
+        }
+        override fun prefetch(position: Long, length: Long, urgent: Boolean) {
+            if (position < 0 || length <= 0 || position >= size) return
+            source.prefetch(start + position, minOf(length, size - position), urgent)
         }
         override fun close() { closed = true; try { archive.close() } finally { source.close() } }
     }

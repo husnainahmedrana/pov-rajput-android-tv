@@ -81,7 +81,7 @@ internal class GuardedSource : ByteSource {
         failure?.let { throw dev.pov.tv.usenet.ReleaseIncompleteException(it.message.orEmpty()) }
         return source().read(position, target, offset, length)
     }
-    override fun prefetch(position: Long, length: Long) { inner?.prefetch(position, length) }
+    override fun prefetch(position: Long, length: Long, urgent: Boolean) { inner?.prefetch(position, length, urgent) }
     override fun close() { inner?.close() }
 }
 
@@ -562,6 +562,8 @@ internal object ReadWatch {
 internal class UsenetDataSource(private val session: UsenetSessions.Session) : BaseDataSource(true) {
     private companion object {
         const val PASSING_RETRIES = 4; const val STEADY_BYTES = 64L * 1024 * 1024
+        /** The speed line covers this long after the first bytes. */
+        const val SPEED_WINDOW_NS = 10_000_000_000L
         const val SMALL_BUFFER = 64 * 1024; const val SMALL_READ = 4 * 1024
     }
     private var uri: Uri? = null
@@ -574,6 +576,9 @@ internal class UsenetDataSource(private val session: UsenetSessions.Session) : B
     private var openedAt = 0L
     private var firstRead = false
     private var readSinceOpen = 0L
+    /** When the first bytes came, and whether the speed after them was logged (once per read position, e.g. a seek). */
+    private var firstBytesAt = 0L
+    private var speedLogged = false
     /**
      * The player's extractor reads an MKV's seek index (hundreds of thousands of small elements on a remux) a few bytes
      * at a time. Each of those went through the stream's article lookup; now small reads are served from this copy,
@@ -590,7 +595,7 @@ internal class UsenetDataSource(private val session: UsenetSessions.Session) : B
         if (dataSpec.position > size) throw androidx.media3.datasource.DataSourceException(androidx.media3.common.PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE)
         position = dataSpec.position
         // Where the player reads, and how long the first bytes there take: shows what a slow start waited for.
-        openedAt = System.nanoTime(); firstRead = true
+        openedAt = System.nanoTime(); firstRead = true; firstBytesAt = 0L; speedLogged = false
         if (!peeking) UsenetLog.i("player reads at %.1f%% (byte %d of %d)".format(position * 100.0 / maxOf(1L, size), position, size))
         remaining = if (dataSpec.length != C.LENGTH_UNSET.toLong()) minOf(dataSpec.length, size - position) else size - position
         opened = true
@@ -639,7 +644,13 @@ internal class UsenetDataSource(private val session: UsenetSessions.Session) : B
     }
 
     private fun delivered(count: Int): Int {
-        if (firstRead) { firstRead = false; readSinceOpen = 0; UsenetStartTimes.mark("first bytes"); UsenetLog.i("  first bytes after ${(System.nanoTime() - openedAt) / 1_000_000} ms") }
+        if (firstRead) { firstRead = false; readSinceOpen = 0; firstBytesAt = System.nanoTime(); UsenetStartTimes.mark("first bytes"); UsenetLog.i("  first bytes after ${(System.nanoTime() - openedAt) / 1_000_000} ms") }
+        // The download speed in the seconds after a start or a seek, when the player waits on it: to compare builds.
+        if (!speedLogged && firstBytesAt > 0 && System.nanoTime() - firstBytesAt >= SPEED_WINDOW_NS) {
+            speedLogged = true
+            val seconds = (System.nanoTime() - firstBytesAt) / 1e9
+            UsenetLog.i("  %.1f MB in the %.0f s after the first bytes (%.1f Mbit/s)".format(java.util.Locale.ROOT, readSinceOpen / 1e6, seconds, readSinceOpen * 8 / 1e6 / seconds))
+        }
         // A long stretch read without trouble: earlier hiccups no longer count towards giving the link up, so a
         // five-hour film (or a TV left on for days) isn't refused for a handful of unrelated timeouts.
         if (readSinceOpen < STEADY_BYTES && readSinceOpen + count >= STEADY_BYTES) UsenetSessions.steady(session.key)

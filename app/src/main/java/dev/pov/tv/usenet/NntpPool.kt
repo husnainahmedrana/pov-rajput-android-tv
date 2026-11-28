@@ -192,9 +192,12 @@ class NntpPool(
         // Everything this connection is fetching has been called off (a seek, a closed stream, a backup copy that lost):
         // close it now instead of downloading articles nobody wants (5–10 s each on a slow line); it signs in again in
         // about a second and takes the articles that are wanted.
+        // Except one past halfway through its only article: finishing that costs less than signing in again, and on a
+        // seek every connection was let go at once, so the download crawled for seconds after each jump (2026-11-28).
         val abandon = {
             val busy = signedIn.get()
-            if (busy != null && !flying.isEmpty() && flying.all { it.cancelled } && abandoning.compareAndSet(false, true)) busy.close()
+            val nearlyDone = busy != null && flying.size == 1 && busy.lastBody > 0 && busy.bodyRead * 2 >= busy.lastBody
+            if (busy != null && !nearlyDone && !flying.isEmpty() && flying.all { it.cancelled } && abandoning.compareAndSet(false, true)) busy.close()
         }
         var failures = 0
         // Diagnostics: which connection an article was on and how long it took, to tell a slow connection from a slow line.

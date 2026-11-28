@@ -13,10 +13,10 @@ android {
         manifestPlaceholders["appLabel"] = providers.gradleProperty("povAppLabel").orElse("Nabrio").get()
         minSdk = 26
         targetSdk = 35
-        versionCode = 86
+        versionCode = 87
         // Test builds can raise it (-PpovVersionCode=…) so a TV launcher reloads a changed icon; releases leave it alone.
         providers.gradleProperty("povVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
-        versionName = "0.4.20-rajput"
+        versionName = "0.4.21-rajput"
         testInstrumentationRunner = providers.gradleProperty("povTestRunner")
             .orElse("dev.pov.tv.PlaybackAuditInstrumentation").get()
     }

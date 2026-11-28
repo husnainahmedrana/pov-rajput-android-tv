@@ -121,7 +121,46 @@ class PlayerActivity : Activity() {
             val failure = InAppPlaybackSession.error
             if (failure != null && observedError !== failure) showPlaybackFailure(failure)
             if (!InAppPlaybackSession.hasActive()) finish()
+            updatePauseInfo()
         }
+    }
+
+    // ------------------------------------------------------------------------------------- Pause screen
+
+    /** The "You're watching" screen over a paused video ([PlayerPanels.paused]), and whether it is due. */
+    private var pauseInfo: Dialog? = null
+    private var pauseInfoPosted = false
+    /** Shown once per pause: closed with a key, it stays closed until the video has played again. */
+    private var pauseInfoShown = false
+
+    private fun pausedByViewer(): Boolean = player?.let { !it.playWhenReady && it.playbackState == Player.STATE_READY } == true && everReady
+
+    private fun updatePauseInfo() {
+        if (!pausedByViewer()) {
+            view.removeCallbacks(showPauseInfo); pauseInfoPosted = false; pauseInfoShown = false
+            pauseInfo?.dismiss(); pauseInfo = null
+            return
+        }
+        if (pauseInfoShown || pauseInfoPosted || pauseInfo != null) return
+        pauseInfoPosted = true
+        view.postDelayed(showPauseInfo, PAUSE_INFO_MS)
+    }
+
+    private val showPauseInfo = Runnable {
+        pauseInfoPosted = false
+        // Not over another panel, a failure, seek previews being made, or while the viewer is seeking.
+        if (stopped || isFinishing || isDestroyed || !pausedByViewer() || activeDialog != null || previewPrep != null ||
+            InAppPlaybackSession.error != null || seekKey != KeyEvent.KEYCODE_UNKNOWN) return@Runnable
+        val identity = panelIdentity() ?: return@Runnable
+        pauseInfoShown = true
+        controls.dismiss()
+        val dialog = PlayerPanels.paused(this, identity) { player?.play() }
+        pauseInfo = dialog
+        dialog.setOnDismissListener {
+            if (pauseInfo === dialog) pauseInfo = null
+            if (!stopped && activeDialog == null) controls.show()
+        }
+        dialog.show()
     }
 
     // The app's own language (Settings → Language); "Device language" leaves the context as it is.
@@ -561,6 +600,7 @@ class PlayerActivity : Activity() {
         val state = player?.playbackState
         if (state == Player.STATE_READY) {
             if (!everReady) UsenetStartTimes.firstPicture()?.let { if (BuildConfig.USENET_TIMES) Toast.makeText(this, it, Toast.LENGTH_LONG).show() }
+            if (!everReady) panelIdentity()?.let(PlayerPanels::preloadPaused)   // the pause screen is ready before a pause
             everReady = true; controlsAfterLoading()
             linkShowedPicture = true; splashHandler.removeCallbacks(startTimeout)
         }
@@ -1373,11 +1413,14 @@ class PlayerActivity : Activity() {
         return true
     }
 
-    /** Looks the playing title up on Seekr once its length is known; retried every few seconds until then. */
+    /**
+     * Looks the playing title up on Seekr once its length is known and the first picture is up (its sheets downloaded
+     * during the start and took the line from the video's opening); retried every few seconds until then.
+     */
     private val seekrLookup: Runnable = object : Runnable {
         override fun run() {
             if (stopped) return
-            player?.takeIf { it.duration > 0 }?.let { loadSeekr(it.duration) }
+            player?.takeIf { everReady && it.duration > 0 }?.let { loadSeekr(it.duration) }
             view.postDelayed(this, SEEKR_LOOKUP_MS)
         }
     }
@@ -1784,6 +1827,7 @@ class PlayerActivity : Activity() {
         stopped = true
         controls.stop()
         activeDialog?.dismiss(); activeDialog = null
+        view.removeCallbacks(showPauseInfo); pauseInfoPosted = false; pauseInfo?.dismiss(); pauseInfo = null
         InAppPlaybackSession.removeListener(sessionListener)
         StreamChoices.removeListener(streamsChanged)
         InAppPlaybackSession.detachPlayerView(view)
@@ -1802,6 +1846,11 @@ class PlayerActivity : Activity() {
 
     companion object {
         private const val SEEKR_LOOKUP_MS = 3_000L
+        /**
+         * How long after a pause the "You're watching" screen comes up: about a second to fully shown with the fade,
+         * and long enough that a quick pause (to pick subtitles) doesn't bring it up first.
+         */
+        private const val PAUSE_INFO_MS = 700L
         /** How long the seek preview stays after the key or finger is released, before the video jumps there. */
         private const val SEEK_LINGER_MS = 1_000L
         private const val CARD_FADE_MS = 200L

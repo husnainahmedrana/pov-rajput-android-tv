@@ -202,7 +202,7 @@ class VolumeSet(
         return count
     }
 
-    override fun prefetch(position: Long, length: Long) {
+    override fun prefetch(position: Long, length: Long, urgent: Boolean) {
         var at = position.coerceAtLeast(0); val end = minOf(size, position + length)
         while (at < end) {
             var index = java.util.Arrays.binarySearch(starts, at)
@@ -210,7 +210,7 @@ class VolumeSet(
             val piece = pieces[index]
             val within = at - starts[index]
             val take = minOf(end - at, piece.length - within)
-            piece.volume.prefetch(piece.offset + within, take)
+            piece.volume.prefetch(piece.offset + within, take, urgent)
             at += take
         }
     }

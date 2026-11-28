@@ -57,18 +57,36 @@ internal object PlayerPanels {
     private const val CARD = 0xFF24262B.toInt()
     private const val OPEN_MS = 260L
     private const val CLOSE_MS = 200L
+    /** The pause screen's fade in. */
+    private const val FADE_MS = 300L
+    /** The longest the pause screen waits for its text before showing anyway. */
+    private const val REVEAL_LIMIT_MS = 1_500L
     private val DATE: DateTimeFormatter get() = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.getDefault())
 
     private fun logoUrl(imdbId: String) = "https://images.metahub.space/logo/medium/$imdbId/img"
 
     /** Shared plumbing: a full-screen transparent dialog whose content slides up on open and down on close. */
-    private class Panel(val activity: Activity) {
-        val dialog = Dialog(activity)
+    private class Panel(val activity: Activity, /** Fades in and out instead of sliding (the pause screen). */ val fade: Boolean = false) {
+        // A fading panel gets a see-through window from its first frame: the default dialog window drew a light frame
+        // before the fade began, a white flicker over the paused picture (2026-11-28).
+        val dialog = if (fade) Dialog(activity, android.R.style.Theme_Translucent_NoTitleBar) else Dialog(activity)
         val density = activity.resources.displayMetrics.density
-        val content = FrameLayout(activity).apply { setBackgroundColor(0xF2000000.toInt()) }
+        val content = FrameLayout(activity).apply { setBackgroundColor(0xF2000000.toInt()); if (fade) alpha = 0f }
         val images: ExecutorService = Executors.newFixedThreadPool(3)
         @Volatile var closed = false
         private var closing = false
+        /** A fading panel stays hidden until [reveal]: shown only once its text is in, so nothing moves as it arrives. */
+        var holdReveal = false
+        private var shown = false
+        private var revealWanted = false
+        private var revealed = false
+
+        fun reveal() {
+            revealWanted = true
+            if (!shown || revealed || closing) return
+            revealed = true
+            content.animate().alpha(1f).setDuration(FADE_MS).setInterpolator(DecelerateInterpolator()).setListener(null).start()
+        }
 
         fun dp(value: Int) = (value * density).roundToInt()
 
@@ -106,6 +124,12 @@ internal object PlayerPanels {
         fun close() {
             if (closing) return
             closing = true
+            if (fade) {
+                content.animate().alpha(0f).setDuration(CLOSE_MS).setListener(object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) { runCatching { dialog.dismiss() } }
+                }).start()
+                return
+            }
             content.animate().translationY(content.height.toFloat().coerceAtLeast(dp(400).toFloat()))
                 .setDuration(CLOSE_MS).setInterpolator(AccelerateInterpolator(1.4f))
                 .setListener(object : AnimatorListenerAdapter() {
@@ -129,8 +153,14 @@ internal object PlayerPanels {
             })
             dialog.setOnShowListener {
                 activity.window?.decorView?.systemUiVisibility?.let { flags -> dialog.window?.decorView?.systemUiVisibility = flags }
-                content.translationY = activity.resources.displayMetrics.heightPixels.toFloat()
-                content.animate().translationY(0f).setDuration(OPEN_MS).setInterpolator(DecelerateInterpolator(1.6f)).setListener(null).start()
+                if (fade) {
+                    content.alpha = 0f
+                    shown = true
+                    if (!holdReveal || revealWanted) reveal()
+                } else {
+                    content.translationY = activity.resources.displayMetrics.heightPixels.toFloat()
+                    content.animate().translationY(0f).setDuration(OPEN_MS).setInterpolator(DecelerateInterpolator(1.6f)).setListener(null).start()
+                }
                 (firstFocus() ?: content).requestFocus()
             }
             return dialog
@@ -264,6 +294,151 @@ internal object PlayerPanels {
         }
         return p.build { row.getChildAt(0) }
     }
+
+    // ------------------------------------------------------------------------------------------------ Paused
+
+    /**
+     * Shown about a second after the viewer pauses, over the dimmed picture: what is playing (logo, episode, synopsis,
+     * cast) and the time, from the same sources as [info]. Any key closes it (the controls come back); play/OK also
+     * resumes through [resume].
+     */
+    fun paused(activity: Activity, identity: PlaybackIdentity, resume: () -> Unit): Dialog {
+        val p = Panel(activity, fade = true)
+        p.holdReveal = true
+        val tv = DeviceLayout.tv
+        val series = identity.type == "series" && identity.season > 0
+        p.content.setBackgroundColor(0xE6000000.toInt())
+        p.content.isFocusable = true; p.content.isFocusableInTouchMode = tv
+
+        val clock = android.widget.TextClock(activity).apply {
+            format12Hour = "h:mm a"; format24Hour = "HH:mm"
+            setTextColor(INK); setTextSize(TypedValue.COMPLEX_UNIT_SP, if (tv) 40f else 26f); includeFontPadding = false
+        }
+        p.content.addView(clock, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
+            topMargin = p.dp(if (tv) 40 else 20); rightMargin = p.dp(if (tv) 56 else 20)
+        })
+
+        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        // Anchored at the top, not centred: lines and cast photos arriving later then move nothing above them.
+        p.content.addView(column, FrameLayout.LayoutParams(-1, -2, Gravity.TOP or Gravity.START).apply {
+            topMargin = p.dp(if (tv) 64 else 40); leftMargin = p.dp(if (tv) 60 else 20); rightMargin = p.dp(if (tv) 60 else 20)
+        })
+        column.addView(p.text(L10n.tr(R.string.t_pause_watching, "You're watching"), if (tv) 17f else 14f, DIM), LinearLayout.LayoutParams(-2, -2))
+
+        val logoBox = FrameLayout(activity)
+        val logo = ImageView(activity).apply { scaleType = ImageView.ScaleType.FIT_START; adjustViewBounds = true; visibility = View.GONE }
+        val logoText = p.text(identity.title, if (tv) 40f else 26f, INK, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
+        logoBox.addView(logoText, FrameLayout.LayoutParams(-2, -2, Gravity.START or Gravity.CENTER_VERTICAL))
+        logoBox.addView(logo, FrameLayout.LayoutParams(p.dp(if (tv) 380 else 220), p.dp(if (tv) 96 else 64), Gravity.START or Gravity.CENTER_VERTICAL))
+        // A fixed height: the logo replacing the title text doesn't change it, and it fades in where the text was.
+        column.addView(logoBox, LinearLayout.LayoutParams(-1, p.dp(if (tv) 96 else 64)).apply { topMargin = p.dp(14) })
+        p.image(logoUrl(identity.imdbId), p.dp(400)) {
+            logo.setImageBitmap(it); logo.alpha = 0f; logo.visibility = View.VISIBLE
+            logo.animate().alpha(1f).setDuration(FADE_MS).start()
+            logoText.animate().alpha(0f).setDuration(FADE_MS).withEndAction { logoText.visibility = View.GONE }.start()
+        }
+
+        val heading = p.text(if (series) code(identity.season, identity.episode) else "", if (tv) 24f else 18f, INK)
+            .apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END; visibility = if (series) View.VISIBLE else View.GONE }
+        val overview = p.text("", if (tv) 18f else 14f, 0xFFDDE1E6.toInt()).apply {
+            maxLines = if (tv) 2 else 3; ellipsize = TextUtils.TruncateAt.END; setLineSpacing(0f, 1.3f); visibility = View.GONE
+        }
+        column.addView(heading, LinearLayout.LayoutParams(-1, -2).apply { topMargin = p.dp(18) })
+        column.addView(overview, LinearLayout.LayoutParams(-1, -2).apply { topMargin = p.dp(14); rightMargin = p.dp(if (tv) 160 else 0) })
+
+        val castTitle = p.text(L10n.tr(R.string.t_pause_cast, "Cast"), if (tv) 16f else 13f, DIM).apply { visibility = View.GONE }
+        column.addView(castTitle, LinearLayout.LayoutParams(-2, -2).apply { topMargin = p.dp(22) })
+        val chips = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        column.addView(chips, LinearLayout.LayoutParams(-1, -2).apply { topMargin = p.dp(10) })
+
+        // Any key closes it; play/OK also resumes. Closed on the key's release, so the press doesn't reach the player too.
+        p.dialog.setOnKeyListener { _, keyCode, event ->
+            if (event.action == KeyEvent.ACTION_UP) {
+                if (keyCode in RESUME_KEYS) resume()
+                p.close()
+            }
+            true
+        }
+        p.content.setOnClickListener { resume(); p.close() }
+
+        p.worker {
+            // Loaded while the video played ([preloadPaused]): the screen fills at once and fades straight in.
+            val known = pausedCache?.takeIf { it.first == pausedKey(identity) }?.second
+            val result = known?.details ?: PlayerShowInfo.details?.invoke(identity)
+            val episode = result?.episodes?.firstOrNull { it.season == identity.season && it.episode == identity.episode }
+            p.ui {
+                heading.text = if (series) episode?.title?.takeIf { it.isNotBlank() } ?: code(identity.season, identity.episode)
+                    else meta(result?.year.orEmpty(), result?.runtime.orEmpty())
+                heading.visibility = if (heading.text.isNullOrBlank()) View.GONE else View.VISIBLE
+                val text = (if (series) episode?.overview else result?.description).orEmpty()
+                if (text.isNotBlank()) { overview.text = text; overview.visibility = View.VISIBLE }
+                p.reveal()
+            }
+            val people = known?.people ?: pausedCast(identity)
+            pausedCache = pausedKey(identity) to PausedInfo(result, people)
+            p.ui {
+                if (people.isEmpty()) return@ui
+                castTitle.visibility = View.VISIBLE
+                // Photo cards like the Info panel's (its initials when there is no photo), smaller and not focusable.
+                val width = p.dp(if (tv) 88 else 64); val height = p.dp(if (tv) 116 else 86)
+                people.filter { it.name.isNotBlank() }.distinctBy { it.name }.take(if (tv) 6 else 4).forEach { member ->
+                    val card = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
+                    val frame = FrameLayout(activity)
+                    val photo = ImageView(activity).apply {
+                        scaleType = ImageView.ScaleType.CENTER_CROP; background = p.rounded(0xFF2A2D33.toInt(), 10)
+                        outlineProvider = ViewOutlineProvider.BACKGROUND; clipToOutline = true
+                    }
+                    frame.addView(photo, FrameLayout.LayoutParams(width, height))
+                    if (member.photo.isBlank()) frame.addView(p.text(member.name.split(' ').filter(String::isNotBlank).take(2)
+                        .joinToString("") { it.take(1).uppercase() }, 22f, DIM, true).apply { gravity = Gravity.CENTER },
+                        FrameLayout.LayoutParams(width, height))
+                    else p.image(member.photo, width) { photo.setImageBitmap(it) }
+                    card.addView(frame, LinearLayout.LayoutParams(-2, -2))
+                    card.addView(p.text(member.name, if (tv) 14f else 11f, INK, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END },
+                        LinearLayout.LayoutParams(width + p.dp(20), -2).apply { topMargin = p.dp(8) })
+                    if (member.character.isNotBlank()) card.addView(p.text(member.character, if (tv) 12f else 10f, MUTED).apply {
+                        gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+                    }, LinearLayout.LayoutParams(width + p.dp(20), -2).apply { topMargin = p.dp(3) })
+                    card.alpha = 0f
+                    chips.addView(card, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = p.dp(if (tv) 10 else 6) })
+                    card.animate().alpha(1f).setDuration(FADE_MS).start()
+                }
+            }
+        }
+        // Shown anyway when the details are slow (a slow catalog): never a blank pause.
+        p.content.postDelayed({ p.reveal() }, REVEAL_LIMIT_MS)
+        return p.build { p.content }
+    }
+
+    /** What the pause screen shows, kept for the playing video ([preloadPaused]). */
+    private class PausedInfo(val details: MediaItemData?, val people: List<TmdbCatalog.CastMember>)
+    @Volatile private var pausedCache: Pair<String, PausedInfo>? = null
+    private fun pausedKey(identity: PlaybackIdentity) = "${identity.imdbId}:${identity.season}:${identity.episode}"
+
+    private fun pausedCast(identity: PlaybackIdentity): List<TmdbCatalog.CastMember> {
+        val series = identity.type == "series" && identity.season > 0
+        val tmdb = PlayerShowInfo.tmdb?.invoke()
+        var people: List<TmdbCatalog.CastMember> = emptyList()
+        if (tmdb != null) people = if (series) runCatching { tmdb.episodeCredits(identity.imdbId, identity.season, identity.episode) }.getOrNull()?.people.orEmpty()
+            else runCatching { tmdb.cast(identity.imdbId, "movie", 12) }.getOrDefault(emptyList())
+        if (people.isEmpty()) people = runCatching { dev.pov.tv.data.FreeCast().cast(identity.imdbId, if (series) "series" else "movie") }.getOrDefault(emptyList())
+        return people
+    }
+
+    /**
+     * Loads what the pause screen shows (details and cast) on a background thread while the video plays, so pausing
+     * shows it whole at once instead of waiting on the network. Call on the first picture.
+     */
+    fun preloadPaused(identity: PlaybackIdentity) {
+        if (pausedCache?.first == pausedKey(identity)) return
+        Thread({
+            val details = runCatching { PlayerShowInfo.details?.invoke(identity) }.getOrNull()
+            pausedCache = pausedKey(identity) to PausedInfo(details, pausedCast(identity))
+        }, "pause-info-preload").apply { isDaemon = true; start() }
+    }
+
+    private val RESUME_KEYS = setOf(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
+        KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_SPACE)
 
     // ------------------------------------------------------------------------------------------------ Episodes
 

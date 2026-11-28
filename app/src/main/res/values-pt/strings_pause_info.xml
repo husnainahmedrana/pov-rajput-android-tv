@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="t_pause_watching">Você está assistindo</string>
+    <string name="t_pause_cast">Elenco</string>
+</resources>

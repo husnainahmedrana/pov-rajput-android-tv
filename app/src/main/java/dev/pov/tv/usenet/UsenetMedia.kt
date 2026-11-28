@@ -123,6 +123,14 @@ object UsenetMedia {
     private const val UNNAMED_VIDEO_MIN = 50L * 1024 * 1024
     /** From the Cues' start: two articles' worth. A bigger index (a remux) continues with the player's own read-ahead. */
     private const val CUES_BYTES = 2L * 1024 * 1024
+    /** Whether the video starts from its beginning, so [warmStart] fetches the opening; false for a resume. Set by the player. */
+    @Volatile var fetchOpening = true
+
+    /**
+     * The opening fetched beside the seek index ([warmStart]): about 3 s of a 20 Mbit/s film, what the player waits for
+     * before the first start (ReadAheadPreferences.USENET_FIRST_START_MS). Kept small so it never delays the index.
+     */
+    private const val START_BYTES = 8L * 1024 * 1024
     /** An MKV whose SeekHead doesn't list its Cues: they are nearly always at the very end. */
     private const val MKV_TAIL_BYTES = 2L * 1024 * 1024
 
@@ -142,12 +150,28 @@ object UsenetMedia {
             if (cues != null) {
                 source.prefetch(cues, minOf(CUES_BYTES, size - cues))
                 log("MKV seek index at byte $cues (${"%.1f".format(Locale.ROOT, cues * 100.0 / size)}%); fetching it now")
-                return opened
+            } else {
+                log("MKV seek index isn't listed at the start; fetching the file's last ${MKV_TAIL_BYTES / 1_048_576} MB")
+                source.prefetch(size - minOf(size, MKV_TAIL_BYTES), minOf(size, MKV_TAIL_BYTES))
             }
-            log("MKV seek index isn't listed at the start; fetching the file's last ${MKV_TAIL_BYTES / 1_048_576} MB")
-            source.prefetch(size - minOf(size, MKV_TAIL_BYTES), minOf(size, MKV_TAIL_BYTES))
         } else source.prefetch(size - minOf(size, VIDEO_TAIL_BYTES), minOf(size, VIDEO_TAIL_BYTES))
+        warmStart(source, size, log)
         return opened
+    }
+
+    /**
+     * The video's opening, asked for right behind its seek index instead of after it: the player reads the index first,
+     * then the opening, and until now only started on the opening once the index had arrived (12 s of a 22 GB film's
+     * start on a 13 Mbit/s line, while the connections had sat idle). Queued after the index, which stays first.
+     */
+    private fun warmStart(source: ByteSource, size: Long, log: (String) -> Unit) {
+        // A resume plays from further in: the opening would only take the line from where it starts (Continue
+        // watching at 20:38 took 23 s instead of 13 s, 2026-11-28).
+        if (!fetchOpening) { log("resuming: the video's opening isn't fetched"); return }
+        val bytes = minOf(START_BYTES, size)
+        if (bytes <= HEAD_PEEK) return
+        source.prefetch(0, bytes, urgent = false)
+        log("fetching the video's first ${bytes / 1_048_576} MB beside it")
     }
 
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
@@ -160,9 +184,9 @@ object UsenetMedia {
 
     private fun openPlain(file: NzbFile, stream: (NzbFile, Boolean) -> UsenetStream, log: (String) -> Unit, cache: java.io.File?, password: String?): Opened {
         val opened = stream(file, true)
-        // Ask for the opening articles now; the seek index (an MKV's Cues, an MP4's moov) is asked for as soon as the
-        // first article says where it is ([warmIndex]), ahead of the player's own jump there.
-        opened.warm()
+        // The first article alone: asked together with the next three, they shared the line and the first one, which
+        // everything waits on, took 4 s on a 13 Mbit/s line (2026-11-28). The seek index (an MKV's Cues, an MP4's moov)
+        // and the opening follow as soon as it says where they are ([warmIndex]), ahead of the player.
         opened.prepare()
         val start = head(opened)
         if (isSevenZip(start)) return sevenZip(opened, cache, password, log)
@@ -189,7 +213,7 @@ object UsenetMedia {
                 if (index == streams.lastIndex) index else leaders.getOrPut(parts[index].segments.size) { index } }
             streams.forEachIndexed { index, part -> if (leader[index] == index) part.begin() }
             streams.last().beginTail(2)
-            first.warm()
+            // No extra opening articles beside these: they slowed the first one down ([openPlain]); [warmIndex] asks.
             first.prepare()
             streams.forEachIndexed { index, part -> if (leader[index] == index) part.prepare() }
             streams.forEachIndexed { index, part -> if (leader[index] != index) part.assumeLike(streams[leader[index]]) }
@@ -258,9 +282,10 @@ object UsenetMedia {
             // Volumes asked for early but not part of the video (a set listing extra parts) are let go.
             val used = pieces.mapTo(HashSet()) { it.volume }
             early.values.filter { it !in used }.forEach { it.close(); opened -= it }
-            // The last piece's volume learns its size now (its first article was asked for at the start), so the
-            // seek index prefetch below reaches it; an unprepared volume would skip the prefetch.
-            if (pieces.size > 1) pieces.last().volume.prepare()
+            // The last piece's volume learns its size beside the opening, not before it: its first article was asked
+            // for at the start, but waiting on it held the opening up (1.6 s on a 90-part set). The seek index's
+            // prefetch below is queued in it until the size is known; the pieces' lengths come from the RAR headers.
+            if (pieces.size > 1) pieces.last().volume.prepareInBackground()
             log("RAR set: ${entry.name} · ${entry.unpackedSize} bytes in ${pieces.size} of ${volumes.size} parts")
             val set = VolumeSet(entry.unpackedSize, pieces)
             if (!named) {

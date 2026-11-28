@@ -47,6 +47,17 @@ class MdbListRatingsTest {
     @Test fun `the request names the kind of title and carries the key`() {
         var asked = ""
         MdbListRatings { url -> asked = url; """{"ratings":[]}""" }.title("abc 123", "series", "tt0903747")
-        assertEquals("https://api.mdblist.com/imdb/show/tt0903747/?apikey=abc%20123", asked)
+        assertEquals("https://api.mdblist.com/imdb/show/tt0903747/?apikey=abc%20123&append_to_response=keyword", asked)
+    }
+
+    @Test fun `certified fresh and verified hot come from the keywords`() {
+        val text = """{"ratings":[{"source":"tomatoes","value":93},{"source":"popcorn","value":88},{"source":"imdb","value":8.0}],
+            "keywords":[{"name":"rt.certified-fresh"},"certified-hot",{"name":"based-on-novel"}]}"""
+        val ratings = MdbListRatings.parse(text)
+        assertTrue(ratings.first { it.source == "tomatoes" }.certified)
+        assertTrue(ratings.first { it.source == "popcorn" }.certified)
+        assertTrue(!ratings.first { it.source == "imdb" }.certified)
+        // Without keywords nothing is certified.
+        assertTrue(MdbListRatings.parse("""{"ratings":[{"source":"tomatoes","value":93}]}""").none { it.certified })
     }
 }

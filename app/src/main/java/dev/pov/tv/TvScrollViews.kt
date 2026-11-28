@@ -45,13 +45,35 @@ internal class TvScrollView(context: Context, private val autoReveal: () -> Bool
 
 internal class TvHorizontalScrollView(context: Context, private val autoReveal: () -> Boolean) : HorizontalScrollView(context) {
     override fun requestChildFocus(child: View?, focused: View?) {
-        if (focused == null || autoReveal()) return super.requestChildFocus(child, focused)
+        if (focused == null || autoReveal()) { super.requestChildFocus(child, focused); focused?.let(::revealWhole); return }
         val hint = focused.revealOnFocusHint
         focused.revealOnFocusHint = false
         try { super.requestChildFocus(child, focused) } finally { focused.revealOnFocusHint = hint }
     }
     override fun requestChildRectangleOnScreen(child: View, rectangle: Rect, immediate: Boolean): Boolean =
         if (autoReveal()) super.requestChildRectangleOnScreen(child, rectangle, immediate) else false
+
+    /**
+     * The platform scroll stops as soon as the focused card touches the row's edge. A row keeps room on its sides for
+     * the card's zoom and outline (its padding), so after scrolling right and back the first poster sat flush against
+     * the clipped edge, its left side and outline cut off (WeTrakr shelves, Discord report 2026-11-28). Once the focus has
+     * settled, scroll on until the card and that room are in view: back on the first poster, the row starts as it did.
+     */
+    private fun revealWhole(focused: View) {
+        post {
+            if (!focused.isAttachedToWindow || !focused.hasFocus() || !autoReveal() || width == 0) return@post
+            val row = getChildAt(0) ?: return@post
+            val rect = Rect(); focused.getDrawingRect(rect)
+            runCatching { offsetDescendantRectToMyCoords(focused, rect) }.onFailure { return@post }
+            val room = row.paddingLeft
+            if (rect.width() + 2 * room >= width) return@post
+            val left = rect.left - room; val right = rect.right + room
+            when {
+                left < scrollX -> smoothScrollTo(left.coerceAtLeast(0), 0)
+                right > scrollX + width -> smoothScrollTo(right - width, 0)
+            }
+        }
+    }
 }
 
 /**
